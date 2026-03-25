@@ -21,16 +21,17 @@ import (
 	"fmt"
 	"strings"
 
+	seclangv1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
+	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
+	"github.com/buzz-it/kubewaf/internal/controller"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-
-	seclangv1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
-	"github.com/buzz-it/kubewaf/internal/controller"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // RuleSetReconciler reconciles a RuleSet object
@@ -53,11 +54,18 @@ type RuleSetReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *RuleSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-
+	l := logf.FromContext(ctx)
 	ruleSet := wafv1beta1.RuleSet{}
 
 	_, err := controller.InitHandler(ctx, req, &ruleSet, r.Client)
+
 	if err != nil {
+
+		if errors.IsNotFound(err) {
+			l.V(1).Info("RuleSet not found, skipping")
+			return ctrl.Result{}, nil
+		}
+
 		return ctrl.Result{}, err
 	}
 

@@ -27,13 +27,10 @@ import (
 const finalizer = "finalizer.kubewaf.io"
 
 func InitHandler(ctx context.Context, req ctrl.Request, obj client.Object, client client.Client) (bool, error) {
-	// get object
 	if err := client.Get(ctx, req.NamespacedName, obj); err != nil {
 		return false, err
 	}
 
-	// finizlier
 	updated := controllerutil.AddFinalizer(obj, finalizer)
-
 	return updated, nil
 }
