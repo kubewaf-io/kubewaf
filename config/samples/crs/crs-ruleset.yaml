@@ -1,0 +1,11 @@
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-crs
+spec:
+  ruleRefs:
+    - kind: "SecRule"
+      namespace: "default"
+      selector:
+        matchLabels:
+          coreruleset/version: 4.3.0
