@@ -21,12 +21,15 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+// +kubebuilder:validation:XValidation:rule="has(self.selector) || has(self.name)",message="name or selector required"
+// +kubebuilder:validation:XValidation:rule="!(has(self.selector) && has(self.name))",message="name and selector are mutually exclusive"
 type RuleRef struct {
 	// Kind specifies the type of resource being referenced.
 	// Supported kinds: "SecRule", "SecAction"
 	Kind string `json:"kind"`
 
 	// Name is the name of the referenced SecRule or SecAction.
+	// +optional
 	Name string `json:"name"`
 
 	// Namespace of the referenced resource.
@@ -44,6 +47,7 @@ type RuleRef struct {
 // WAF policy that can be attached to gateways, ingresses or other resources.
 type RuleSetSpec struct {
 	// RuleRefs lists the individual security rules and actions to include in this set.
+	// At least one of name or selector must be specified.
 	// +optional
 	RuleRefs []RuleRef `json:"ruleRefs,omitempty"`
 

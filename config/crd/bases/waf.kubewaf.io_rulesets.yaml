@@ -105,8 +105,9 @@ spec:
                     x-kubernetes-map-type: atomic
                 type: object
               ruleRefs:
-                description: RuleRefs lists the individual security rules and actions
-                  to include in this set.
+                description: |-
+                  RuleRefs lists the individual security rules and actions to include in this set.
+                  At least one of name or selector must be specified.
                 items:
                   properties:
                     kind:
@@ -171,8 +172,12 @@ spec:
                       x-kubernetes-map-type: atomic
                   required:
                   - kind
-                  - name
                   type: object
+                  x-kubernetes-validations:
+                  - message: name or selector required
+                    rule: has(self.selector) || has(self.name)
+                  - message: name and selector are mutually exclusive
+                    rule: '!(has(self.selector) && has(self.name))'
                 type: array
             type: object
           status:
