@@ -24,13 +24,29 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-const finalizer = "finalizer.kubewaf.io"
+const Finalizer = "finalizer.kubewaf.io"
+const RuleSetRefFinalizer = "ruleSetRef.kubewaf.io"
+
+var WasmRegistry = "http://172.17.0.1:3000"
 
 func InitHandler(ctx context.Context, req ctrl.Request, obj client.Object, client client.Client) (bool, error) {
 	if err := client.Get(ctx, req.NamespacedName, obj); err != nil {
 		return false, err
 	}
 
-	updated := controllerutil.AddFinalizer(obj, finalizer)
+	updated := controllerutil.AddFinalizer(obj, Finalizer)
 	return updated, nil
+}
+
+// CleanupBackReferences removes references to the owner from target SecLang objects'
+// status.RuleSetRefs and removes the RuleSetRefFinalizer when the owner is being deleted.
+// This is called from Reconcile when deletionTimestamp is set. Full implementation may
+// require additional RBAC and indexing for efficiency.
+func CleanupBackReferences(ctx context.Context, c client.Client, owner client.Object) error {
+	// TODO: List SecRule and SecAction resources that reference this owner in their
+	// status.RuleSetRefs, remove the matching entry, update status, and remove finalizer
+	// if no other references remain. The current resolver adds the back-refs; this
+	// cleans them up.
+	// For a simple start, we rely on finalizer on owner to prevent premature deletion.
+	return nil
 }

@@ -5,6 +5,46 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - seclan.kubewaf.io
   resources:
   - secrules
@@ -33,6 +73,15 @@ rules:
 - apiGroups:
   - seclang.kubewaf.io
   resources:
+  - rulesets
+  - secrules
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - seclang.kubewaf.io
+  resources:
   - secactions
   verbs:
   - create
@@ -57,9 +106,18 @@ rules:
   - patch
   - update
 - apiGroups:
+  - seclang.kubewaf.io
+  resources:
+  - secrules/status
+  verbs:
+  - patch
+  - update
+- apiGroups:
   - waf.kubewaf.io
   resources:
   - rulesets
+  - wafenvoygateways
+  - wafinstances
   verbs:
   - create
   - delete
@@ -72,12 +130,16 @@ rules:
   - waf.kubewaf.io
   resources:
   - rulesets/finalizers
+  - wafenvoygateways/finalizers
+  - wafinstances/finalizers
   verbs:
   - update
 - apiGroups:
   - waf.kubewaf.io
   resources:
   - rulesets/status
+  - wafenvoygateways/status
+  - wafinstances/status
   verbs:
   - get
   - patch

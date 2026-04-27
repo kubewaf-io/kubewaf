@@ -1,0 +1,20 @@
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAFEnvoyGateway
+metadata:
+  labels:
+    app.kubernetes.io/name: wafv2
+    app.kubernetes.io/managed-by: kustomize
+  name: wafinstance-sample
+spec:
+  parentRefs:
+    targetRef:
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: backend
+
+  ruleRefs:
+    - kind: "RuleSet"
+      name: ruleset-crs
+      namespace: default
+      group: "waf.kubewaf.io"
+      version: "v1beta1"

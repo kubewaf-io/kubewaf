@@ -37,4 +37,22 @@ resources:
   kind: SecAction
   path: github.com/buzz-it/kubewaf/api/seclang/v1beta1
   version: v1beta1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: kubewaf.io
+  group: waf
+  kind: WAFInstance
+  path: github.com/buzz-it/kubewaf/api/waf/v1beta1
+  version: v1beta1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: kubewaf.io
+  group: waf
+  kind: WAFEnvoyGateway
+  path: github.com/buzz-it/kubewaf/api/waf/v1beta1
+  version: v1beta1
 version: "3"

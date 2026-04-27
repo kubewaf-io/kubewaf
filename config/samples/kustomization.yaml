@@ -1,6 +1,7 @@
 ## Append samples of your project ##
 resources:
-- seclan_v1beta1_secrule.yaml
-- waf_v1beta1_ruleset.yaml
-- seclang_v1beta1_secaction.yaml
+  - seclang_v1beta1_secrule.yaml
+  - waf_v1beta1_ruleset.yaml
+  #- waf_v1beta1_wafinstance.yaml
+  - waf_v1beta1_wafenvoygateway.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

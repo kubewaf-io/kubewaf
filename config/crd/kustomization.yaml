@@ -5,6 +5,8 @@ resources:
 - bases/seclang.kubewaf.io_secrules.yaml
 - bases/waf.kubewaf.io_rulesets.yaml
 - bases/seclang.kubewaf.io_secactions.yaml
+- bases/waf.kubewaf.io_wafinstances.yaml
+- bases/waf.kubewaf.io_wafenvoygateways.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 # patches:

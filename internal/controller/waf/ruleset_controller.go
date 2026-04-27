@@ -21,12 +21,13 @@ import (
 	"fmt"
 	"strings"
 
-	seclangv1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
 	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
 	"github.com/buzz-it/kubewaf/internal/controller"
+	"github.com/buzz-it/kubewaf/internal/references2"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -58,31 +59,40 @@ func (r *RuleSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	ruleSet := wafv1beta1.RuleSet{}
 
 	_, err := controller.InitHandler(ctx, req, &ruleSet, r.Client)
-
 	if err != nil {
-
 		if errors.IsNotFound(err) {
 			l.V(1).Info("RuleSet not found, skipping")
 			return ctrl.Result{}, nil
 		}
-
 		return ctrl.Result{}, err
 	}
 
-	// getRefs
-	_, err = r.ruleRefHandler(ctx, &ruleSet)
+	// Handle deletion
+	if !ruleSet.DeletionTimestamp.IsZero() {
+		fmt.Println("hi")
+		if err := controller.CleanupBackReferences(ctx, r.Client, &ruleSet); err != nil {
+			return ctrl.Result{}, err
+		}
+		if controllerutil.RemoveFinalizer(&ruleSet, controller.Finalizer) {
+			if err := r.Update(ctx, &ruleSet); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	_, _, err = r.ruleRefHandler(ctx, &ruleSet)
+	fmt.Println(ruleSet.Status.Conditions)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// TODO(user): your logic here
-	// err = r.Client.Update(ctx, &ruleSet)
-	// if err != nil {
-	// 	return ctrl.Result{}, err
-	// }
+	// TODO(user): your logic here (use resolved rules from ruleRefHandler if needed)
 
-	err = r.Client.Status().Update(ctx, &ruleSet)
-	return ctrl.Result{}, err
+	if err = r.Status().Update(ctx, &ruleSet); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -93,97 +103,46 @@ func (r *RuleSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *RuleSetReconciler) ruleRefHandler(ctx context.Context, ruleSet *wafv1beta1.RuleSet) ([]seclangv1beta1.SecRule, error) {
+// ruleRefHandler uses the shared references.RuleRefResolver to resolve RuleRefs
+// (RuleSets can reference any kind; non-RuleSet owners restricted to RuleSet only),
+// manage automatic back-references (finalizers + status.RuleSetRefs on targets),
+// recursively flatten RuleSet references, aggregate errors, and set the
+// ReferencesResolved condition on the RuleSet.
+func (r *RuleSetReconciler) ruleRefHandler(ctx context.Context, ruleSet *wafv1beta1.RuleSet) (bool, []unstructured.Unstructured, error) {
 	var (
-		errs     []string
-		secRules []seclangv1beta1.SecRule
+		updated      bool
+		newCondition metav1.Condition
 	)
-	const conditionType = "ReferencesResolved"
+	resolver := references2.NewRuleRefResolver(r.Client, r.Scheme)
 
-	for i, ruleRef := range ruleSet.Spec.RuleRefs {
-		switch ruleRef.Kind {
-		case "SecRule":
-			var secRuleList seclangv1beta1.SecRuleList
-			if ruleRef.Selector != nil {
-				if err := r.Client.List(ctx, &secRuleList, client.InNamespace(ruleRef.Namespace), client.MatchingLabels(ruleRef.Selector.MatchLabels)); err != nil {
-					return secRules, err
-
-				}
-				for _, secRule := range secRuleList.Items {
-					if err := r.ruleRefHandlerAdd(ctx, &secRule, ruleSet); err != nil {
-						return secRules, err
-					}
-				}
-			}
-		// case "RuleSet":
-		// 	var ruleSetList wafv1beta1.RuleSetList
-		// 	if ruleRef.Selector != nil {
-		// 		if err := r.Client.List(ctx, &ruleSetList, client.InNamespace(ruleRef.Namespace), client.MatchingLabels(ruleRef.Selector.MatchLabels)); err != nil {
-		// 			return secRules, err
-		// 		}
-		// 		for _, ref := range ruleSetList.Items {
-		// 			// var secLangRules []string
-		// 			for _, ruleRefs := range ref.Status.RuleRefs {
-		// 				if ruleRefs.Kind == ref.Kind && ruleRefs.Name == ref.Name && ruleRefs.Namespace == ref.Namespace {
-		// 					return secRules, nil
-		// 				}
-		// 			}
-		// 			ruleRefStatus := wafv1beta1.RuleRefStatus{Name: ref.GetName(), Namespace: ref.GetNamespace(), SecLangRule: ref.GetSecLangRule(), Kind: "RuleSet"}
-		// 			ruleSet.Status.RuleRefs = append(ruleSet.Status.RuleRefs, ruleRefStatus)
-		// 		}
-
-		// 	}
-
-		default:
-			errs = append(errs, fmt.Sprintf("RuleRef[%d]: unsupported kind %q (only SecLang allowed)", i, ruleRef.Kind))
-		}
+	resolved, errs, err := resolver.AddUpdateReconcile(ctx, ruleSet.Spec.RuleRefs, ruleSet)
+	if err != nil {
+		return updated, nil, err
 	}
 
-	// Condition Handler
 	if len(errs) > 0 {
-		meta.SetStatusCondition(&ruleSet.Status.Conditions, metav1.Condition{
-			Type:               conditionType,
+		msgs := make([]string, len(errs))
+		for i, e := range errs {
+			msgs[i] = e.Error()
+		}
+		message := strings.Join(msgs, " ")
+		newCondition = metav1.Condition{
+			Type:               "ResolvedRefs",
 			Status:             metav1.ConditionFalse,
-			Reason:             "InvalidReferences",
-			Message:            fmt.Sprintf("Invalid RuleRefs: %s", strings.Join(errs, "; ")),
 			ObservedGeneration: ruleSet.Generation,
-			LastTransitionTime: metav1.Now(),
-		})
+			Reason:             "ResolvedRefs",
+			Message:            message,
+		}
+
 	} else {
-		meta.SetStatusCondition(&ruleSet.Status.Conditions, metav1.Condition{
-			Type:               conditionType,
+		newCondition = metav1.Condition{
+			Type:               "ResolvedRefs",
 			Status:             metav1.ConditionTrue,
-			Reason:             "Resolved",
-			Message:            "All RuleRefs are valid",
 			ObservedGeneration: ruleSet.Generation,
-			LastTransitionTime: metav1.Now(),
-		})
-	}
-
-	return secRules, nil
-
-}
-
-func (r *RuleSetReconciler) ruleRefHandlerAdd(ctx context.Context, obj seclangv1beta1.SecLang, ruleSet *wafv1beta1.RuleSet) error {
-	if updated := controllerutil.AddFinalizer(obj, "secrule.waf.kubewaf.io"); updated {
-		err := r.Client.Update(ctx, obj)
-		if err != nil {
-			return err
+			Reason:             "ResolvedRefs",
 		}
 	}
-	if updated := obj.AddRuleSetRef(seclangv1beta1.RuleSetRef{Name: ruleSet.Name, Namespace: ruleSet.Namespace}); updated {
-		err := r.Client.Status().Update(ctx, obj)
-		if err != nil {
-			return err
-		}
-	}
-	ruleRefStatus := wafv1beta1.RuleRefStatus{Name: obj.GetName(), Namespace: obj.GetNamespace(), Kind: obj.GetObjectKind().GroupVersionKind().Kind}
+	updated = meta.SetStatusCondition(&ruleSet.Status.Conditions, newCondition)
 
-	for _, ref := range ruleSet.Status.RuleRefs {
-		if ref.Kind == ruleRefStatus.Kind && ref.Namespace == ruleRefStatus.Namespace && ref.Name == ruleRefStatus.Name {
-			return nil
-		}
-	}
-	ruleSet.Status.RuleRefs = append(ruleSet.Status.RuleRefs, ruleRefStatus)
-	return nil
+	return updated, resolved, nil
 }

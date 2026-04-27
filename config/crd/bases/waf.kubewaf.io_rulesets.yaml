@@ -110,18 +110,22 @@ spec:
                   At least one of name or selector must be specified.
                 items:
                   properties:
+                    group:
+                      type: string
                     kind:
                       description: |-
                         Kind specifies the type of resource being referenced.
-                        Supported kinds: "SecRule", "SecAction"
+                        Supported: "SecRule", "SecAction", "RuleSet", "ConfigMap".
+                        Note: non-RuleSet owners (e.g. WAFInstance) may ONLY reference "RuleSet"
+                        (enforced in internal/references/resolver.go; future webhook planned).
                       type: string
                     name:
-                      description: Name is the name of the referenced SecRule or SecAction.
+                      description: Name is the name of the referenced resource (SecRule/SecAction/RuleSet).
                       type: string
                     namespace:
                       description: |-
                         Namespace of the referenced resource.
-                        Defaults to the namespace of the RuleSet if omitted.
+                        Defaults to the namespace of the referencing object if omitted.
                       type: string
                     selector:
                       description: Selector selects resources by labels. If set, Name
@@ -170,8 +174,8 @@ spec:
                           type: object
                       type: object
                       x-kubernetes-map-type: atomic
-                  required:
-                  - kind
+                    version:
+                      type: string
                   type: object
                   x-kubernetes-validations:
                   - message: name or selector required

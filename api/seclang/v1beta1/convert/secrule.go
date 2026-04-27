@@ -224,3 +224,14 @@ func ConvertCrsRule(source types.RuleWithCondition, secMarker string) (v1beta1.S
 	target.SecMarker = secMarker
 	return target, nil
 }
+
+func ConvertToSecLangString(rules []types.SeclangDirective) string {
+	configList := types.ConfigurationList{
+		DirectiveList: []types.DirectiveList{{
+			Directives: rules,
+		}},
+	}
+
+	unformatted := types.FromCRSLangToUnformattedDirectives(configList)
+	return unformatted.DirectiveList[0].ToSeclang()
+}

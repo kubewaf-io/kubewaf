@@ -83,3 +83,19 @@ type SecActionList struct {
 func init() {
 	SchemeBuilder.Register(&SecAction{}, &SecActionList{})
 }
+
+// AddRuleSetRef implements SecLang.
+func (s *SecAction) AddRuleSetRef(r RuleSetRef) bool {
+	for _, ruleRef := range s.Status.RuleSetRefs {
+		if ruleRef.Name == r.Name && ruleRef.Namespace == r.Namespace && ruleRef.Kind == r.Kind {
+			return false
+		}
+	}
+	s.Status.RuleSetRefs = append(s.Status.RuleSetRefs, r)
+	return true
+}
+
+// GetSecLangRule implements SecLang.
+func (s *SecAction) GetSecLangRule() string {
+	return s.Status.SecRuleString
+}

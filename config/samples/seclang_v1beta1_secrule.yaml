@@ -1,0 +1,24 @@
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  labels:
+    test: "true"
+  name: test-rule-a
+spec:
+  secLangRules:
+    - actions:
+        non-disruptive:
+          - nonDisruptiveActionType: setvar
+            value: tx.blocking_paranoia_level=4
+
+          - nonDisruptiveActionType: setvar
+            value: tx.inbound_anomaly_score_threshold=5
+
+          - nonDisruptiveActionType: setvar
+            value: tx.outbound_anomaly_score_threshold=5
+
+      conditions:
+        - always-match: true
+      metadata:
+        id: 900100
+        phase: "1"
