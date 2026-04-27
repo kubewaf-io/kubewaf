@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/coreruleset/crslang v0.1.1-0.20260303143455-a43f8af8e803
 	github.com/jinzhu/copier v0.4.0
-	github.com/onsi/ginkgo/v2 v2.28.0
+	github.com/onsi/ginkgo/v2 v2.28.2
 	github.com/onsi/gomega v1.39.1
 	go.yaml.in/yaml/v2 v2.4.3
 	k8s.io/apimachinery v0.35.3
