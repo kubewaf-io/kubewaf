@@ -18,6 +18,7 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // SecActionSpec defines the desired state of SecAction.
@@ -27,7 +28,7 @@ type SecActionSpec struct {
 	Metadata *SecRuleMetadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 
 	// Embedded actions to apply unconditionally.
-	SecRuleActions `json:"inline"`
+	SecRuleActions `json:",inline"`
 
 	// Transformations to apply before other processing.
 	// +optional
@@ -52,6 +53,7 @@ type SecActionStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:path=secactions,scope=Namespaced,categories=waf;security,shortName=sa
 
 // SecAction is the Schema for the secactions API.
 // SecAction defines an unconditional action (like a global SecAction) in the WAF.
@@ -82,4 +84,25 @@ type SecActionList struct {
 
 func init() {
 	SchemeBuilder.Register(&SecAction{}, &SecActionList{})
+}
+
+// AddRuleSetRef implements SecLang.
+func (s *SecAction) AddRuleSetRef(r client.Object) bool {
+	for _, ruleRef := range s.Status.RuleSetRefs {
+		if ruleRef.Name == r.GetName() && ruleRef.Namespace == r.GetNamespace() && ruleRef.Kind == r.GetObjectKind().GroupVersionKind().Kind {
+			return false
+		}
+	}
+	ruleSetRef := RuleSetRef{
+		Kind:      r.GetObjectKind().GroupVersionKind().Kind,
+		Name:      r.GetName(),
+		Namespace: r.GetNamespace(),
+	}
+	s.Status.RuleSetRefs = append(s.Status.RuleSetRefs, ruleSetRef)
+	return true
+}
+
+// GetSecLangRule implements SecLang.
+func (s *SecAction) GetSecLangRule() string {
+	return s.Status.SecRuleString
 }

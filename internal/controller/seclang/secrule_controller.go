@@ -18,17 +18,23 @@ package seclang
 
 import (
 	"context"
+	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	seclangv1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
 	"github.com/buzz-it/kubewaf/api/seclang/v1beta1/convert"
+	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
 	"github.com/buzz-it/kubewaf/internal/controller"
-	types "github.com/coreruleset/crslang/types"
+	"github.com/buzz-it/kubewaf/internal/coraza"
 )
 
 // SecRuleReconciler reconciles a SecRule object
@@ -62,15 +68,68 @@ func (r *SecRuleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
+	// delete
+	if !secRule.DeletionTimestamp.IsZero() {
+		var refNotDeleted map[string]bool
+		for _, ruleSetRef := range secRule.Status.RuleSetRefs {
+			var ruleSet wafv1beta1.RuleSet
+			if err := r.Client.Get(ctx, types.NamespacedName{Name: ruleSetRef.Name, Namespace: ruleSetRef.Namespace}, &ruleSet); !errors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			} else if err != nil {
+				refNotDeleted[fmt.Sprintf("%s/%s", ruleSet.Namespace, ruleSetRef.Name)] = false
+			}
+		}
+
+		if refNotDeleted == nil {
+			updated := controllerutil.RemoveFinalizer(secRule, controller.RuleSetRefFinalizer)
+			updated2 := controllerutil.RemoveFinalizer(secRule, controller.Finalizer)
+			if updated || updated2 {
+				if err := r.Client.Delete(ctx, secRule); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+		}
+	}
+
+	if updated {
+		if err := r.Client.Update(ctx, secRule); err != nil {
+			return ctrl.Result{}, err
+		}
+		l.Info("Added finalizer to SecRule")
+	}
+
 	crslangSecRule, err := convert.ConvertSecRule(*secRule)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	currentSecRuleString := secRule.Status.SecRuleString
-	secRuleString := convertToSecLangString(crslangSecRule)
 
-	secRule.Status.SecRuleString = secRuleString
-	if updated || secRule.Status.SecRuleString != currentSecRuleString {
+	// validate Rule
+	_, validateErr := coraza.LoadAndValidateSeclangDirectives(crslangSecRule)
+	var conditionChanged bool
+	if validateErr == nil {
+		conditionChanged = meta.SetStatusCondition(&secRule.Status.Conditions, metav1.Condition{
+			Type:               controller.ConditionTypeReady,
+			Status:             metav1.ConditionTrue,
+			Reason:             "CouldLoadRulesToCoraza",
+			ObservedGeneration: secRule.Generation,
+		})
+		if conditionChanged {
+			l.Info("Updated Ready condition to True")
+		}
+	} else {
+		conditionChanged = meta.SetStatusCondition(&secRule.Status.Conditions, metav1.Condition{
+			Type:               controller.ConditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "CouldNotLoadRulesToCoraza",
+			Message:            fmt.Sprintf("Could load Rules to Coraza: %v", validateErr),
+			ObservedGeneration: secRule.Generation,
+		})
+		if conditionChanged {
+			l.Info("Updated Ready condition to False")
+		}
+	}
+
+	if conditionChanged {
 		l.Info("Updated SecRule status with generated SecLang string")
 		if err := r.Client.Status().Update(ctx, secRule); err != nil {
 			return ctrl.Result{}, err
@@ -110,13 +169,3 @@ func (r *SecRuleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 //	func copySecRuleSpecToCRS(secRule *seclangv1beta1.SecRule) crslang_types.SecRule {
 //		return crslang_types.SecRule{}
 //	}
-func convertToSecLangString(rules []types.SeclangDirective) string {
-	configList := types.ConfigurationList{
-		DirectiveList: []types.DirectiveList{{
-			Directives: rules,
-		}},
-	}
-
-	unformatted := types.FromCRSLangToUnformattedDirectives(configList)
-	return unformatted.DirectiveList[0].ToSeclang()
-}

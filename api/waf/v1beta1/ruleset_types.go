@@ -25,17 +25,23 @@ import (
 // +kubebuilder:validation:XValidation:rule="!(has(self.selector) && has(self.name))",message="name and selector are mutually exclusive"
 type RuleRef struct {
 	// Kind specifies the type of resource being referenced.
-	// Supported kinds: "SecRule", "SecAction"
-	Kind string `json:"kind"`
+	// Supported: "SecRule", "SecAction", "RuleSet", "ConfigMap".
+	// Note: non-RuleSet owners (e.g. WAFInstance) may ONLY reference "RuleSet"
+	// (enforced in internal/references2/resolver.go; future webhook planned).
+	Kind string `json:"kind,omitempty"`
 
-	// Name is the name of the referenced SecRule or SecAction.
+	// Name is the name of the referenced resource (SecRule/SecAction/RuleSet).
 	// +optional
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 
 	// Namespace of the referenced resource.
-	// Defaults to the namespace of the RuleSet if omitted.
+	// Defaults to the namespace of the referencing object if omitted.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	Version string `json:"version,omitempty"`
+
+	Group string `json:"group,omitempty"`
 
 	// Selector selects resources by labels. If set, Name is ignored.
 	// +optional
@@ -96,6 +102,7 @@ type RuleRefStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:path=rulesets,scope=Namespaced,categories=waf;security,shortName=rs
 
 // RuleSet is the Schema for the rulesets API
 type RuleSet struct {
@@ -125,4 +132,9 @@ type RuleSetList struct {
 
 func init() {
 	SchemeBuilder.Register(&RuleSet{}, &RuleSetList{})
+}
+
+// GetRuleNamespaces implements CrossNamespaceObject.
+func (r *RuleSet) GetRuleNamespaces() RuleNamespaces {
+	return r.Spec.AllowedRules
 }

@@ -14,7 +14,11 @@ spec:
     singular: secrule
   scope: Namespaced
   versions:
-  - name: v1beta1
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    name: v1beta1
     schema:
       openAPIV3Schema:
         description: |-
@@ -521,13 +525,22 @@ spec:
                   description: RuleSetRef identifies a RuleSet that references this
                     SecLang resource.
                   properties:
+                    group:
+                      type: string
+                    kind:
+                      type: string
                     name:
                       type: string
                     namespace:
                       type: string
+                    version:
+                      type: string
                   required:
+                  - group
+                  - kind
                   - name
                   - namespace
+                  - version
                   type: object
                 type: array
               secRuleString:

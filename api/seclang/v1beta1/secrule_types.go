@@ -18,6 +18,7 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // SecRuleSpec defines the desired state of SecRule.
@@ -72,9 +73,11 @@ type SecRuleStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 
 // SecRule is the Schema for the secrules API.
 // SecRule represents a single ModSecurity/Coraza security rule in Kubernetes.
+// +kubebuilder:resource:path=secrules,scope=Namespaced,categories=waf;security,shortName=sr
 type SecRule struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -104,13 +107,18 @@ func init() {
 	SchemeBuilder.Register(&SecRule{}, &SecRuleList{})
 }
 
-func (s *SecRule) AddRuleSetRef(r RuleSetRef) bool {
+func (s *SecRule) AddRuleSetRef(r client.Object) bool {
 	for _, ruleRef := range s.Status.RuleSetRefs {
-		if ruleRef.Name == r.Name && ruleRef.Namespace == r.Namespace {
+		if ruleRef.Name == r.GetName() && ruleRef.Namespace == r.GetNamespace() && ruleRef.Kind == r.GetObjectKind().GroupVersionKind().Kind {
 			return false
 		}
 	}
-	s.Status.RuleSetRefs = append(s.Status.RuleSetRefs, r)
+	ruleSetRef := RuleSetRef{
+		Kind:      r.GetObjectKind().GroupVersionKind().Kind,
+		Name:      r.GetName(),
+		Namespace: r.GetNamespace(),
+	}
+	s.Status.RuleSetRefs = append(s.Status.RuleSetRefs, ruleSetRef)
 	return true
 }
 

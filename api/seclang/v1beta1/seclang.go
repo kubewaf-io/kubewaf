@@ -25,14 +25,17 @@ import (
 // +kubebuilder:object:generate=false
 type SecLang interface {
 	client.Object
-	AddRuleSetRef(r RuleSetRef) bool
+	AddRuleSetRef(r client.Object) bool
 	GetSecLangRule() string
 }
 
-// RuleSetRef identifies a RuleSet that references this SecLang resource.
+// RuleSetRef identifies a RuleSet or a SecRule.
 type RuleSetRef struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	Kind      string `json:"kind"`
+	Group     string `json:"group"`
+	Version   string `json:"version"`
 }
 
 // SecLangActions is implemented by the various action types (DisruptiveAction,

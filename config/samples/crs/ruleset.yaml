@@ -1,0 +1,14 @@
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: 4.3.0
+  name: coreruleset-4-3-0
+spec:
+  ruleRefs:
+    - kind: "SecRule"
+      selector:
+        matchLabels:
+          app.kubernetes.io/part-of: coreruleset
+          coreruleset/version: 4.3.0

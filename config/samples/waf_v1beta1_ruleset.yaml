@@ -1,37 +1,12 @@
 apiVersion: waf.kubewaf.io/v1beta1
 kind: RuleSet
 metadata:
-  labels:
-    app.kubernetes.io/name: wafv2
-    app.kubernetes.io/managed-by: kustomize
   name: ruleset-sample
 spec:
   ruleRefs:
     - kind: "SecRule"
-      name: "bla"
-      namespace: "default"
+      group: "seclang.kubewaf.io"
+      version: "v1beta1"
       selector:
         matchLabels:
-          app.kubernetes.io/name: wafv2
-    - kind: "RuleSet"
-      name: "bla"
-      namespace: "default"
-      selector:
-        matchLabels:
-          app.kubernetes.io/name: wafv4
----
-apiVersion: waf.kubewaf.io/v1beta1
-kind: RuleSet
-metadata:
-  labels:
-    app.kubernetes.io/name: wafv4
-    app.kubernetes.io/managed-by: kustomize
-  name: ruleset-sample2
-spec:
-  ruleRefs:
-    - kind: "SecRule"
-      name: "bla"
-      namespace: "default"
-      selector:
-        matchLabels:
-          app.kubernetes.io/name: wafv4
+          test: "true"

@@ -40,6 +40,7 @@ import (
 	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
 	seclangcontroller "github.com/buzz-it/kubewaf/internal/controller/seclang"
 	wafcontroller "github.com/buzz-it/kubewaf/internal/controller/waf"
+	envoygatewayv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -53,6 +54,7 @@ func init() {
 
 	utilruntime.Must(seclangv1beta1.AddToScheme(scheme))
 	utilruntime.Must(wafv1beta1.AddToScheme(scheme))
+	utilruntime.Must(envoygatewayv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -214,11 +216,19 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "RuleSet")
 		os.Exit(1)
 	}
-	if err := (&seclangcontroller.SecActionReconciler{
+
+	if err := (&wafcontroller.WAFInstanceReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "SecAction")
+		setupLog.Error(err, "Failed to create controller", "controller", "WAFInstance")
+		os.Exit(1)
+	}
+	if err := (&wafcontroller.WAFEnvoyGatewayReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "WAFEnvoyGateway")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

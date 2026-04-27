@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package seclang
+package waf
 
 import (
 	"context"
@@ -27,10 +27,10 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	seclangv1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
+	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
 )
 
-var _ = Describe("SecAction Controller", func() {
+var _ = Describe("WAFInstance Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 
@@ -40,13 +40,13 @@ var _ = Describe("SecAction Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		secaction := &seclangv1beta1.SecAction{}
+		wafinstance := &wafv1beta1.WAFInstance{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind SecAction")
-			err := k8sClient.Get(ctx, typeNamespacedName, secaction)
+			By("creating the custom resource for the Kind WAFInstance")
+			err := k8sClient.Get(ctx, typeNamespacedName, wafinstance)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &seclangv1beta1.SecAction{
+				resource := &wafv1beta1.WAFInstance{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
@@ -59,16 +59,16 @@ var _ = Describe("SecAction Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &seclangv1beta1.SecAction{}
+			resource := &wafv1beta1.WAFInstance{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Cleanup the specific resource instance SecAction")
+			By("Cleanup the specific resource instance WAFInstance")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &SecActionReconciler{
+			controllerReconciler := &WAFInstanceReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
