@@ -7,7 +7,7 @@ require (
 	github.com/jinzhu/copier v0.4.0
 	github.com/onsi/ginkgo/v2 v2.28.0
 	github.com/onsi/gomega v1.39.1
-	go.yaml.in/yaml/v2 v2.4.3
+	go.yaml.in/yaml/v2 v2.4.4
 	k8s.io/apimachinery v0.35.3
 	k8s.io/cli-runtime v0.35.3
 	k8s.io/client-go v0.35.3
