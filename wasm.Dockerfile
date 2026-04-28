@@ -6,7 +6,7 @@ RUN git clone https://github.com/corazawaf/coraza-proxy-wasm.git /tmp/coraza-pro
 
 FROM golang:1.23
 
-FROM tinygo/tinygo:0.34.0
+FROM tinygo/tinygo:0.41.1
 
 FROM scratch
 
