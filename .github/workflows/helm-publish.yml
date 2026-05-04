@@ -4,7 +4,7 @@ permissions: read-all
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,7 +26,7 @@ jobs:
         id: extract_version
         run: |
           GIT_TAG=${GITHUB_REF##*/}
-          VERSION=${GIT_TAG##*v}
+          VERSION=${GIT_TAG}
           echo "version=$(echo $VERSION)" >> $GITHUB_OUTPUT
       - name: Helm | Publish
         id: helm_publish
@@ -39,15 +39,15 @@ jobs:
           app-version: ${{ steps.extract_version.outputs.version }}
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
-          update-dependencies: 'true' # Defaults to false
-          sign-image: 'true'
+          update-dependencies: "true" # Defaults to false
+          sign-image: "true"
           signature-repository: ghcr.io/${{ github.repository_owner }}/charts/kubewaf
   helm-provenance:
     needs: publish-helm-oci
     permissions:
-      id-token: write   # To sign the provenance.
-      packages: write   # To upload assets to release.
-      actions: read     # To read the workflow path.
+      id-token: write # To sign the provenance.
+      packages: write # To upload assets to release.
+      actions: read # To read the workflow path.
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
     with:
       image: ghcr.io/${{ github.repository_owner }}/charts/kubewaf
