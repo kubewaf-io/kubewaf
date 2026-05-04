@@ -1,3 +1,7 @@
+# Version
+GIT_HEAD_COMMIT ?= $(shell git rev-parse --short HEAD)
+VERSION         ?= $(or $(shell git describe --abbrev=0 --tags --match "v*" 2>/dev/null),$(GIT_HEAD_COMMIT))
+
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 
@@ -95,7 +99,7 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 	esac
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: kind setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
@@ -219,7 +223,7 @@ GOLANGCI_LINT_VERSION ?= v2.5.0
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
-	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
+	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@$(KUSTOMIZE_VERSION))
 
 .PHONY: setup-envtest
 setup-envtest: envtest ## Download the binaries required for ENVTEST in the local bin directory.
@@ -245,7 +249,6 @@ KO_PLATFORM     ?= $(GOOS)/$(GO_ARCH)
 KOCACHE         ?= /tmp/ko-cache
 KO_TAGS         ?= "latest"
 
-KO_TAGS         ?= "latest"
 ifdef VERSION
 KO_TAGS         := $(KO_TAGS),$(VERSION)
 endif

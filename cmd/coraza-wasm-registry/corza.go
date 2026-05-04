@@ -37,9 +37,9 @@ func createCorazaHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, err.Error())
 	}
 	if err := copy.Copy(src, f); err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, err.Error())
 	}
-	if err := os.Mkdir(fmt.Sprintf("%s/wasmplugin/rules/kubewaf/", f), 0755); err != nil  {
+	if err := os.Mkdir(fmt.Sprintf("%s/wasmplugin/rules/kubewaf/", f), 0755); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 	}
 	rules, err := GetSecRule(input.Objects)

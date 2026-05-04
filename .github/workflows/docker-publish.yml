@@ -24,11 +24,11 @@ jobs:
       - name: Run Trivy vulnerability (Repo)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          scan-type: 'fs'
+          scan-type: "fs"
           ignore-unfixed: true
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
       - name: Install Cosign
         uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
       - name: Publish Controller
@@ -51,9 +51,9 @@ jobs:
   generate-provenance:
     needs: publish-images
     permissions:
-      id-token: write   # To sign the provenance.
-      packages: write   # To upload assets to release.
-      actions: read     # To read the workflow path.
+      id-token: write # To sign the provenance.
+      packages: write # To upload assets to release.
+      actions: read # To read the workflow path.
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
     with:
       image: ghcr.io/${{ github.repository_owner }}/kubewaf

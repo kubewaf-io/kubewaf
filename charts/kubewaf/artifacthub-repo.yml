@@ -1,7 +1,6 @@
 repositoryID: f356aa5f-67eb-40ac-ac9b-2126f935028b
-owners: # (optional, used to claim repository ownership)
+owners:
   - name: chifu1234
     email: kk@sudo-i.net
   - name: oliverbaehler
     email: oliver@sudo-i.net
-
