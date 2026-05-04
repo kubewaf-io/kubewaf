@@ -107,7 +107,3 @@ type WAFEnvoyGatewayList struct {
 	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []WAFEnvoyGateway `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&WAFEnvoyGateway{}, &WAFEnvoyGatewayList{})
-}

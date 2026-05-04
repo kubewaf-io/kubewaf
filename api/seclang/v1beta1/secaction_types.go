@@ -82,10 +82,6 @@ type SecActionList struct {
 	Items           []SecAction `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&SecAction{}, &SecActionList{})
-}
-
 // AddRuleSetRef implements SecLang.
 func (s *SecAction) AddRuleSetRef(r client.Object) bool {
 	for _, ruleRef := range s.Status.RuleSetRefs {

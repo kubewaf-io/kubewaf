@@ -130,10 +130,6 @@ type RuleSetList struct {
 	Items           []RuleSet `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&RuleSet{}, &RuleSetList{})
-}
-
 // GetRuleNamespaces implements CrossNamespaceObject.
 func (r *RuleSet) GetRuleNamespaces() RuleNamespaces {
 	return r.Spec.AllowedRules

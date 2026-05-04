@@ -92,7 +92,3 @@ type WAFInstanceList struct {
 	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []WAFInstance `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&WAFInstance{}, &WAFInstanceList{})
-}

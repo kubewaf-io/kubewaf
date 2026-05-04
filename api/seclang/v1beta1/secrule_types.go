@@ -103,10 +103,6 @@ type SecRuleList struct {
 	Items           []SecRule `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&SecRule{}, &SecRuleList{})
-}
-
 func (s *SecRule) AddRuleSetRef(r client.Object) bool {
 	for _, ruleRef := range s.Status.RuleSetRefs {
 		if ruleRef.Name == r.GetName() && ruleRef.Namespace == r.GetNamespace() && ruleRef.Kind == r.GetObjectKind().GroupVersionKind().Kind {
