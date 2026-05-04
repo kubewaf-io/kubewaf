@@ -54,7 +54,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExample:\n")
-		fmt.Fprintf(os.Stderr, "  %s -input=hack/crs-converted -output-dir=hack/crs-converted -crs-version=4.3.0\n", os.Args[0])
+		fmt.Fprint(os.Stderr, "  "+os.Args[0]+" -input=hack/crs-converted \\\n")
+		fmt.Fprint(os.Stderr, "    -output-dir=hack/crs-converted -crs-version=4.3.0\n")
 	}
 	flag.Parse()
 
@@ -83,7 +84,7 @@ func processInput(inputPath, outputDir, crsVersion, namePrefix, ns string) error
 	if info.IsDir() {
 		return processDirectory(inputPath, outputDir, crsVersion, namePrefix, ns)
 	}
-	return processFile(inputPath, outputDir, crsVersion, namePrefix, ns, info.Name())
+	return processFile(inputPath, outputDir, crsVersion, ns, info.Name())
 }
 
 func processDirectory(dir, outputDir, crsVersion, namePrefix, ns string) error {
@@ -91,7 +92,11 @@ func processDirectory(dir, outputDir, crsVersion, namePrefix, ns string) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() || (!strings.HasSuffix(strings.ToLower(info.Name()), ".conf") && !strings.HasSuffix(info.Name(), ".rules")) {
+		if info.IsDir() {
+			return nil
+		}
+		nameLower := strings.ToLower(info.Name())
+		if !strings.HasSuffix(nameLower, ".conf") && !strings.HasSuffix(info.Name(), ".rules") {
 			return nil
 		}
 
@@ -101,11 +106,11 @@ func processDirectory(dir, outputDir, crsVersion, namePrefix, ns string) error {
 			outName = namePrefix + outName
 		}
 
-		return processFile(path, outputDir, crsVersion, namePrefix, ns, outName)
+		return processFile(path, outputDir, crsVersion, ns, outName)
 	})
 }
 
-func processFile(inputFile, outputDir, crsVersion, namePrefix, ns, crName string) error {
+func processFile(inputFile, outputDir, crsVersion, ns, crName string) error {
 	fmt.Printf("Processing %s...\n", inputFile)
 
 	secLangs, err := translator.LoadSeclang(inputFile)
@@ -192,7 +197,7 @@ func writeAsYAML(obj runtime.Object, outputPath string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	printer := printers.NewTypeSetter(customScheme).
 		ToPrinter(&printers.YAMLPrinter{})

@@ -82,7 +82,7 @@ func TestDataActionToAPI(t *testing.T) {
 	tests := []struct {
 		name   string
 		source types.Action
-		want   v1beta1.FlowAction // Note: function returns FlowAction, but probably should be DataAction
+		want   v1beta1.DataAction
 	}{
 		{
 			name: "status action with value",
@@ -91,21 +91,21 @@ func TestDataActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(da, "403")
 				return a
 			}(),
-			want: v1beta1.FlowAction{
-				Type:  v1beta1.FlowActionType("status"), // since GetKey() is "status"
-				Value: "",                               // switch doesn't handle it
+			want: v1beta1.DataAction{
+				Type:  v1beta1.Status,
+				Value: "403",
 			},
 		},
 		{
-			name: "xlmns action with value",
+			name: "xmlns action with value",
 			source: func() types.Action {
 				da := dataActionMapper.Convert(v1beta1.XLMNS)
 				a, _ := types.NewActionWithParam(da, "soap='http://...'")
 				return a
 			}(),
-			want: v1beta1.FlowAction{
-				Type:  v1beta1.FlowActionType("xlmns"),
-				Value: "",
+			want: v1beta1.DataAction{
+				Type:  v1beta1.XLMNS,
+				Value: "soap='http://...",
 			},
 		},
 	}
@@ -124,7 +124,7 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 	tests := []struct {
 		name   string
 		source types.Action
-		want   v1beta1.NonDisruptiveAction
+		want   []v1beta1.NonDisruptiveAction
 	}{
 		// Actions without parameters
 		{
@@ -134,10 +134,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.Append,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "auditlog action",
@@ -146,10 +146,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.AuditLog,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "capture action",
@@ -158,10 +158,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.Capture,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "deprecatevar action",
@@ -170,10 +170,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.DeprecateVar,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "log action",
@@ -182,10 +182,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.Log,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "multimatch action",
@@ -194,10 +194,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.MultiMatch,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "noauditlog action",
@@ -206,10 +206,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.NoAuditLog,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "nolog action",
@@ -218,10 +218,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.NoLog,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "sanitiseArg action",
@@ -230,10 +230,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SanitiseArg,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "sanitiseMatched action",
@@ -242,10 +242,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SanitiseMatched,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "sanitiseMatchedBytes action",
@@ -254,10 +254,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SanitiseMatchedBytes,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "sanitiseRequestHeader action",
@@ -266,10 +266,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SanitiseRequestHeader,
 				Value: "",
-			},
+			}},
 		},
 		{
 			name: "sanitiseResponseHeader action",
@@ -278,10 +278,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionOnly(nda)
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SanitiseResponseHeader,
 				Value: "",
-			},
+			}},
 		},
 		// Actions with parameters
 		{
@@ -291,10 +291,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "ruleRemoveById=123")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.Ctl,
 				Value: "ruleRemoveById=123",
-			},
+			}},
 		},
 		{
 			name: "exec action with value",
@@ -303,10 +303,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "/path/to/script")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.Exec,
 				Value: "/path/to/script",
-			},
+			}},
 		},
 		{
 			name: "expirevar action with value",
@@ -315,10 +315,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "TX.test=10")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.ExpireVar,
 				Value: "TX.test=10",
-			},
+			}},
 		},
 		{
 			name: "initcol action with value",
@@ -327,10 +327,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "RESOURCE=10")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.InitCol,
 				Value: "RESOURCE=10",
-			},
+			}},
 		},
 		{
 			name: "logdata action with value",
@@ -339,10 +339,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "Logged data")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.LogData,
 				Value: "Logged data",
-			},
+			}},
 		},
 		{
 			name: "setenv action with value",
@@ -351,10 +351,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "VAR=value")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SetEnv,
 				Value: "VAR=value",
-			},
+			}},
 		},
 		{
 			name: "setrsc action with value",
@@ -363,10 +363,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "5")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SetRsc,
 				Value: "5",
-			},
+			}},
 		},
 		{
 			name: "setsid action with value",
@@ -375,10 +375,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "12345")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SetSid,
 				Value: "12345",
-			},
+			}},
 		},
 		{
 			name: "setuid action with value",
@@ -387,10 +387,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "user123")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SetUid,
 				Value: "user123",
-			},
+			}},
 		},
 		{
 			name: "setvar action with value",
@@ -399,10 +399,10 @@ func TestNonDisruptiveActionToAPI(t *testing.T) {
 				a, _ := types.NewActionWithParam(nda, "TX.test=1")
 				return a
 			}(),
-			want: v1beta1.NonDisruptiveAction{
+			want: []v1beta1.NonDisruptiveAction{{
 				Type:  v1beta1.SetVar,
 				Value: "TX.test=1",
-			},
+			}},
 		},
 	}
 

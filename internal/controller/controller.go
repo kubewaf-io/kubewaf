@@ -29,8 +29,8 @@ const RuleSetRefFinalizer = "ruleSetRef.kubewaf.io"
 
 var WasmRegistry = "http://172.17.0.1:3000"
 
-func InitHandler(ctx context.Context, req ctrl.Request, obj client.Object, client client.Client) (bool, error) {
-	if err := client.Get(ctx, req.NamespacedName, obj); err != nil {
+func InitHandler(ctx context.Context, req ctrl.Request, obj client.Object, c client.Client) (bool, error) {
+	if err := c.Get(ctx, req.NamespacedName, obj); err != nil {
 		return false, err
 	}
 

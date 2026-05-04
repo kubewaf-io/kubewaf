@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
+	envoygatewayv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -61,12 +62,14 @@ var _ = BeforeSuite(func() {
 	var err error
 	err = wafv1beta1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = envoygatewayv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases"), filepath.Join("..", "..", "..", "test", "crds", "envoygateway")},
 		ErrorIfCRDPathMissing: true,
 	}
 

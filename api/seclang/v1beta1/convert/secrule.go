@@ -29,7 +29,6 @@ var (
 	operatorForwardMapper   = OperatorMapperImpl{}
 	collectionReverseMapper = CollectionReverseMapperImpl{}
 	collectionMapper        = CollectionMapperImpl{}
-	transformationMapper    = TransformationMapperImpl{}
 )
 
 func ConvertSecRule(source v1beta1.SecRule) ([]types.SeclangDirective, error) {

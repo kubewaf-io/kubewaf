@@ -51,14 +51,15 @@ func DataActionToAPI(source types.Action) v1beta1.DataAction {
 
 	target.Type = v1beta1.DataActionType(source.GetKey())
 
-	switch target.Type {
-	case v1beta1.XLMNS, v1beta1.Status:
-		target.Value = strings.Trim(strings.TrimPrefix(source.ToString(), source.GetKey()+":"), "'")
-	default:
+	// Extract value from ToString() output, trimming outer single quotes added by the library
+	s := source.ToString()
+	if idx := strings.Index(s, ":"); idx != -1 {
+		target.Value = strings.Trim(strings.TrimSpace(s[idx+1:]), "'")
+	} else if len(s) > len(source.GetKey()) {
+		target.Value = strings.Trim(strings.TrimSpace(strings.TrimPrefix(s, source.GetKey())), "'")
 	}
 
 	return target
-
 }
 
 func NonDisruptiveActionToAPI(source types.Action) []v1beta1.NonDisruptiveAction {
@@ -68,7 +69,7 @@ func NonDisruptiveActionToAPI(source types.Action) []v1beta1.NonDisruptiveAction
 
 	switch source := source.(type) {
 	case types.SetvarAction:
-		results := []v1beta1.NonDisruptiveAction{}
+		results := make([]v1beta1.NonDisruptiveAction, 0, len(source.Assignments))
 
 		for _, asg := range source.Assignments {
 			result := v1beta1.NonDisruptiveAction{
@@ -112,39 +113,35 @@ func ActionToCSR(source v1beta1.SecLangActions) (types.Action, error) {
 
 	switch targetKind {
 	case "DataAction":
-		a, ok := source.(v1beta1.DataAction)
-		if !ok {
-			return nil, fmt.Errorf("Could not translate DataAction obj=%v a=%v", source, a)
-
-		} else {
+		if a, ok := source.(v1beta1.DataAction); ok {
+			return actionToCSR(dataActionMapper.Convert(a.Type), a.Value)
+		} else if a, ok := source.(*v1beta1.DataAction); ok {
 			return actionToCSR(dataActionMapper.Convert(a.Type), a.Value)
 		}
+		return nil, fmt.Errorf("could not translate data action obj=%v", source)
 	case "FlowAction":
-		a, ok := source.(v1beta1.FlowAction)
-		if !ok {
-			return nil, fmt.Errorf("Could not translate FlowAction obj=%s", source)
-
-		} else {
+		if a, ok := source.(v1beta1.FlowAction); ok {
+			return actionToCSR(flowActionMapper.Convert(a.Type), a.Value)
+		} else if a, ok := source.(*v1beta1.FlowAction); ok {
 			return actionToCSR(flowActionMapper.Convert(a.Type), a.Value)
 		}
+		return nil, fmt.Errorf("could not translate flow action obj=%v", source)
 	case "NonDisruptiveAction":
-		a, ok := source.(v1beta1.NonDisruptiveAction)
-		if !ok {
-			return nil, fmt.Errorf("Could not translate NonDisruptiveAction obj=%s", source)
-
-		} else {
+		if a, ok := source.(v1beta1.NonDisruptiveAction); ok {
+			return actionToCSR(nonDisruptiveActionMapper.Convert(a.Type), a.Value)
+		} else if a, ok := source.(*v1beta1.NonDisruptiveAction); ok {
 			return actionToCSR(nonDisruptiveActionMapper.Convert(a.Type), a.Value)
 		}
+		return nil, fmt.Errorf("could not translate NonDisruptiveAction obj=%v", source)
 	case "DisruptiveAction":
-		a, ok := source.(v1beta1.DisruptiveAction)
-		if !ok {
-			return nil, fmt.Errorf("Could not translate DisruptiveAction obj=%s", source)
-
-		} else {
+		if a, ok := source.(v1beta1.DisruptiveAction); ok {
+			return actionToCSR(disruptiveActionMapper.Convert(a.Type), a.Value)
+		} else if a, ok := source.(*v1beta1.DisruptiveAction); ok {
 			return actionToCSR(disruptiveActionMapper.Convert(a.Type), a.Value)
 		}
+		return nil, fmt.Errorf("could not translate DisruptiveAction obj=%v", source)
 	default:
-		return nil, fmt.Errorf("Could not translate action obj=%s", source)
+		return nil, fmt.Errorf("could not translate action obj=%v", source)
 	}
 
 }

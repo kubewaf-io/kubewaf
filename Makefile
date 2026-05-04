@@ -236,7 +236,7 @@ setup-envtest: envtest ## Download the binaries required for ENVTEST in the loca
 .PHONY: envtest
 envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
 $(ENVTEST): $(LOCALBIN)
-	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION))
 
 license-headers: nwa
 	$(NWA) config
@@ -400,3 +400,8 @@ endef
 define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
+
+# Linting code as PR is expecting
+.PHONY: golint
+golint: golangci-lint
+	$(GOLANGCI_LINT) run -c .golangci.yaml --verbose

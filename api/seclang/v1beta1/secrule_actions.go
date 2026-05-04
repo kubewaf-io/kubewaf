@@ -533,7 +533,7 @@ const (
 	//
 	// ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#xmlns
 	// Coraza:     https://coraza.io/docs/seclang/actions#xmlns
-	XLMNS DataActionType = "xlmns"
+	XLMNS DataActionType = "xmlns"
 )
 
 //go:generate goverter gen .

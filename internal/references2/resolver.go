@@ -92,7 +92,7 @@ func (r *RuleRefResolver) lookupRef(ctx context.Context, ref wafv1beta1.RuleRef)
 		return r.getDynamicObjects(ctx, groupVersionKind, ref.Name, ref.Namespace)
 	}
 
-	return nil, fmt.Errorf("Wrong refernce defintion")
+	return nil, fmt.Errorf("wrong reference definition")
 }
 
 func (r *RuleRefResolver) getDynamicObjects(ctx context.Context, gvk schema.GroupVersionKind, name, namespace string) (*unstructured.UnstructuredList, error) {

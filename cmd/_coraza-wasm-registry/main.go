@@ -49,7 +49,7 @@ func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, http.StatusOK, APIResponse{
+	_ = respondJSON(w, http.StatusOK, APIResponse{
 		Success: true,
 		Message: "API is healthy ✅",
 	})
@@ -61,13 +61,13 @@ func respondJSON(w http.ResponseWriter, status int, payload interface{}) error {
 }
 
 func respondData(w http.ResponseWriter, status int, payload []byte) (int, error) {
-	//w.Header().Set("Content-Type", "application/json")
+	// w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	return w.Write(payload)
 }
 
 func respondError(w http.ResponseWriter, status int, message string) {
-	respondJSON(w, status, APIError{
+	_ = respondJSON(w, status, APIError{
 		Success: false,
 		Error:   message,
 		Code:    status,
@@ -104,12 +104,7 @@ func main() {
 	// mux.HandleFunc("DELETE /api/v1/items/", loggingMiddleware(deleteCorazaHandler))
 
 	// Optional: simple root
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		respondJSON(w, http.StatusOK, APIResponse{
-			Success: true,
-			Message: "Welcome to the Go REST API! Try /health or /api/v1/coraza",
-		})
-	})
+	mux.HandleFunc("GET /
 
 	server := &http.Server{
 		Addr:    ":3000",

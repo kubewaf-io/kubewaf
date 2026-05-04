@@ -22,7 +22,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
 )
@@ -97,167 +96,122 @@ func (r *WAFInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{}, nil
 }
 
-// workloadHandler handles the workload stuff from WAFInstance.Spec.Workload.
-// It switches on the workload type, reconciles the corresponding Kubernetes resource
-// (Deployment, StatefulSet, DaemonSet or HPA), integrates the resolved rules (e.g. by
-// creating a ConfigMap with Coraza/ModSecurity config derived from resolved RuleSets),
-// sets appropriate owner references, and updates the status conditions.
-//
-// Yes, we can (and do) overwrite specific pod template fields here. The user's
-// provided template (via Workload.Deployment etc.) is used as a base, but the
-// operator *always* merges/overwrites key pod spec elements (sidecar container,
-// volumes for rules, labels, securityContext, etc.) to enforce WAF behavior. This
-// is done via direct mutation before CreateOrUpdate (strategic merge or mergo lib
-// could be used for more complex cases).
-func (r *WAFInstanceReconciler) workloadHandler(ctx context.Context, wafInstance *wafv1beta1.WAFInstance, resolved []client.Object) (bool, error) {
-	_ = logf.FromContext(ctx)
-	// var updated bool
+// // Example: always create a rules ConfigMap (placeholder for now; in full impl use
+// // internal/coraza to flatten resolved rules into valid seclang string).
+// cm := &corev1.ConfigMap{
+// 	ObjectMeta: metav1.ObjectMeta{
+// 		Name:      wafInstance.Name + "-rules",
+// 		Namespace: wafInstance.Namespace,
+// 	},
+// 	Data: map[string]string{
+// 		"waf.conf": "# Generated from " + fmt.Sprintf("%d", len(resolved)) + " resolved RuleSets\nSecRuleEngine On\n",
+// 	},
+// }
+// if err := controllerutil.SetControllerReference(wafInstance, cm, r.Scheme); err != nil {
+// 	return false, err
+// }
+// // Reconcile the ConfigMap (standard pattern; overwrites if exists via controller ref)
+// if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
+// 	// CM data already set above; could merge more fields here if needed
+// 	return nil
+// }); err != nil {
+// 	return false, fmt.Errorf("failed to reconcile rules ConfigMap: %w", err)
+// }
 
-	// if wafInstance.Spec.Workload.Type == "" {
-	// 	l.Info("No workload.type specified in WAFInstance, skipping workload reconciliation")
-	// 	// Still set a condition
-	// 	newCondition := metav1.Condition{
-	// 		Type:               "WorkloadConfigured",
-	// 		Status:             metav1.ConditionFalse,
-	// 		ObservedGeneration: wafInstance.Generation,
-	// 		Reason:             "NoWorkloadSpecified",
-	// 		Message:            "Workload field not configured in spec",
-	// 	}
-	// 	updated = meta.SetStatusCondition(&wafInstance.Status.Conditions, newCondition)
-	// 	return updated, nil
-	// }
+// switch wafInstance.Spec.Workload.Type {
+// case wafv1beta1.WorkloadTypeDeployment:
+// 	deploy := &appsv1.Deployment{
+// 		ObjectMeta: metav1.ObjectMeta{
+// 			Name:      wafInstance.Name + "-deployment",
+// 			Namespace: wafInstance.Namespace,
+// 			Labels:    map[string]string{"app": "kubewaf"},
+// 		},
+// 	}
+// 	// Base from user template (overwrites most of spec)
+// 	if wafInstance.Spec.Workload.Deployment != nil {
+// 		if wafInstance.Spec.Workload.Deployment.DeploymentSpec != nil {
+// 			deploy.Spec = *wafInstance.Spec.Workload.Deployment.DeploymentSpec
+// 		}
+// 	}
 
-	// l.Info("Handling workload for WAFInstance", "workloadType", wafInstance.Spec.Workload.Type, "name", wafInstance.Name)
+// 	// Overwrite pod template stuff (this is the key part answering the query).
+// 	// User's pod spec is respected where possible, but we mutate to inject WAF.
+// 	if len(deploy.Spec.Template.Spec.Containers) == 0 {
+// 		deploy.Spec.Template.Spec.Containers = []corev1.Container{}
+// 	}
+// 	podSpec := &deploy.Spec.Template.Spec
 
-	// // Example: always create a rules ConfigMap (placeholder for now; in full impl use
-	// // internal/coraza to flatten resolved rules into valid seclang string).
-	// cm := &corev1.ConfigMap{
-	// 	ObjectMeta: metav1.ObjectMeta{
-	// 		Name:      wafInstance.Name + "-rules",
-	// 		Namespace: wafInstance.Namespace,
-	// 	},
-	// 	Data: map[string]string{
-	// 		"waf.conf": "# Generated from " + fmt.Sprintf("%d", len(resolved)) + " resolved RuleSets\nSecRuleEngine On\n",
-	// 	},
-	// }
-	// if err := controllerutil.SetControllerReference(wafInstance, cm, r.Scheme); err != nil {
-	// 	return false, err
-	// }
-	// // Reconcile the ConfigMap (standard pattern; overwrites if exists via controller ref)
-	// if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
-	// 	// CM data already set above; could merge more fields here if needed
-	// 	return nil
-	// }); err != nil {
-	// 	return false, fmt.Errorf("failed to reconcile rules ConfigMap: %w", err)
-	// }
+// 	// Example overwrite: ensure WAF sidecar container (appends if missing; could replace image etc.)
+// 	wafContainer := corev1.Container{
+// 		Name:  "waf-sidecar",
+// 		Image: "ghcr.io/corazawaf/coraza-proxy:0.0.1", // example; make configurable
+// 		Ports: []corev1.ContainerPort{{ContainerPort: 8080}},
+// 		VolumeMounts: []corev1.VolumeMount{
+// 			{Name: "waf-rules", MountPath: "/etc/coraza/rules"},
+// 		},
+// 		// Could overwrite securityContext, resources, env from template too
+// 	}
+// 	overwrote := false
+// 	for i, c := range podSpec.Containers {
+// 		if c.Name == "waf-sidecar" {
+// 			podSpec.Containers[i] = wafContainer // full overwrite of our container
+// 			overwrote = true
+// 			break
+// 		}
+// 	}
+// 	if !overwrote {
+// 		podSpec.Containers = append(podSpec.Containers, wafContainer)
+// 	}
 
-	// switch wafInstance.Spec.Workload.Type {
-	// case wafv1beta1.WorkloadTypeDeployment:
-	// 	deploy := &appsv1.Deployment{
-	// 		ObjectMeta: metav1.ObjectMeta{
-	// 			Name:      wafInstance.Name + "-deployment",
-	// 			Namespace: wafInstance.Namespace,
-	// 			Labels:    map[string]string{"app": "kubewaf"},
-	// 		},
-	// 	}
-	// 	// Base from user template (overwrites most of spec)
-	// 	if wafInstance.Spec.Workload.Deployment != nil {
-	// 		if wafInstance.Spec.Workload.Deployment.DeploymentSpec != nil {
-	// 			deploy.Spec = *wafInstance.Spec.Workload.Deployment.DeploymentSpec
-	// 		}
-	// 	}
+// 	// Overwrite/add volume for the rules ConfigMap (always ensures this pod config)
+// 	volume := corev1.Volume{
+// 		Name: "waf-rules",
+// 		VolumeSource: corev1.VolumeSource{
+// 			ConfigMap: &corev1.ConfigMapVolumeSource{
+// 				LocalObjectReference: corev1.LocalObjectReference{Name: cm.Name},
+// 			},
+// 		},
+// 	}
+// 	volOverwrote := false
+// 	for i, v := range podSpec.Volumes {
+// 		if v.Name == "waf-rules" {
+// 			podSpec.Volumes[i] = volume
+// 			volOverwrote = true
+// 			break
+// 		}
+// 	}
+// 	if !volOverwrote {
+// 		podSpec.Volumes = append(podSpec.Volumes, volume)
+// 	}
 
-	// 	// Overwrite pod template stuff (this is the key part answering the query).
-	// 	// User's pod spec is respected where possible, but we mutate to inject WAF.
-	// 	if len(deploy.Spec.Template.Spec.Containers) == 0 {
-	// 		deploy.Spec.Template.Spec.Containers = []corev1.Container{}
-	// 	}
-	// 	podSpec := &deploy.Spec.Template.Spec
+// 	// Additional pod overwrites: labels, annotations for WAF/gateway, securityContext, etc.
+// 	if deploy.Spec.Template.Labels == nil {
+// 		deploy.Spec.Template.Labels = map[string]string{}
+// 	}
+// 	deploy.Spec.Template.Labels["kubewaf.io/injected"] = "true"
 
-	// 	// Example overwrite: ensure WAF sidecar container (appends if missing; could replace image etc.)
-	// 	wafContainer := corev1.Container{
-	// 		Name:  "waf-sidecar",
-	// 		Image: "ghcr.io/corazawaf/coraza-proxy:0.0.1", // example; make configurable
-	// 		Ports: []corev1.ContainerPort{{ContainerPort: 8080}},
-	// 		VolumeMounts: []corev1.VolumeMount{
-	// 			{Name: "waf-rules", MountPath: "/etc/coraza/rules"},
-	// 		},
-	// 		// Could overwrite securityContext, resources, env from template too
-	// 	}
-	// 	overwrote := false
-	// 	for i, c := range podSpec.Containers {
-	// 		if c.Name == "waf-sidecar" {
-	// 			podSpec.Containers[i] = wafContainer // full overwrite of our container
-	// 			overwrote = true
-	// 			break
-	// 		}
-	// 	}
-	// 	if !overwrote {
-	// 		podSpec.Containers = append(podSpec.Containers, wafContainer)
-	// 	}
+// 	if err := controllerutil.SetControllerReference(wafInstance, deploy, r.Scheme); err != nil {
+// 		return false, err
+// 	}
+// 	// Reconcile the Deployment (user template base + our pod overwrites)
+// 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
+// 		// Pod template already mutated above; further mutations could go in this func
+// 		return nil
+// 	}); err != nil {
+// 		return false, fmt.Errorf("failed to reconcile Deployment: %w", err)
+// 	}
+// 	l.Info("Overwrote pod template in Deployment with WAF sidecar + rules volume")
 
-	// 	// Overwrite/add volume for the rules ConfigMap (always ensures this pod config)
-	// 	volume := corev1.Volume{
-	// 		Name: "waf-rules",
-	// 		VolumeSource: corev1.VolumeSource{
-	// 			ConfigMap: &corev1.ConfigMapVolumeSource{
-	// 				LocalObjectReference: corev1.LocalObjectReference{Name: cm.Name},
-	// 			},
-	// 		},
-	// 	}
-	// 	volOverwrote := false
-	// 	for i, v := range podSpec.Volumes {
-	// 		if v.Name == "waf-rules" {
-	// 			podSpec.Volumes[i] = volume
-	// 			volOverwrote = true
-	// 			break
-	// 		}
-	// 	}
-	// 	if !volOverwrote {
-	// 		podSpec.Volumes = append(podSpec.Volumes, volume)
-	// 	}
-
-	// 	// Additional pod overwrites: labels, annotations for WAF/gateway, securityContext, etc.
-	// 	if deploy.Spec.Template.Labels == nil {
-	// 		deploy.Spec.Template.Labels = map[string]string{}
-	// 	}
-	// 	deploy.Spec.Template.Labels["kubewaf.io/injected"] = "true"
-
-	// 	if err := controllerutil.SetControllerReference(wafInstance, deploy, r.Scheme); err != nil {
-	// 		return false, err
-	// 	}
-	// 	// Reconcile the Deployment (user template base + our pod overwrites)
-	// 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
-	// 		// Pod template already mutated above; further mutations could go in this func
-	// 		return nil
-	// 	}); err != nil {
-	// 		return false, fmt.Errorf("failed to reconcile Deployment: %w", err)
-	// 	}
-	// 	l.Info("Overwrote pod template in Deployment with WAF sidecar + rules volume")
-
-	// case wafv1beta1.WorkloadTypeStatefulSet:
-	// 	// Similar pattern: base from template + overwrite podSpec.Containers/Volumes
-	// 	l.Info("StatefulSet workload handling not fully implemented yet")
-	// case wafv1beta1.WorkloadTypeDaemonSet:
-	// 	l.Info("DaemonSet workload handling not fully implemented yet")
-	// case wafv1beta1.WorkloadTypeHPA:
-	// 	l.Info("HPA workload handling not fully implemented yet")
-	// default:
-	// 	return false, fmt.Errorf("unsupported workload type: %s", wafInstance.Spec.Workload.Type)
-	// }
-
-	// // Set status condition for workload
-	// newCondition := metav1.Condition{
-	// 	Type:               "WorkloadConfigured",
-	// 	Status:             metav1.ConditionTrue,
-	// 	ObservedGeneration: wafInstance.Generation,
-	// 	Reason:             "WorkloadReconciled",
-	// 	Message:            fmt.Sprintf("Successfully reconciled %s workload with %d resolved references", wafInstance.Spec.Workload.Type, len(resolved)),
-	// }
-	// updated = meta.SetStatusCondition(&wafInstance.Status.Conditions, newCondition)
-
-	return false, nil
-}
+// case wafv1beta1.WorkloadTypeStatefulSet:
+// 	// Similar pattern: base from template + overwrite podSpec.Containers/Volumes
+// 	l.Info("StatefulSet workload handling not fully implemented yet")
+// case wafv1beta1.WorkloadTypeDaemonSet:
+// 	l.Info("DaemonSet workload handling not fully implemented yet")
+// case wafv1beta1.WorkloadTypeHPA:
+// 	l.Info("HPA workload handling not fully implemented yet")
+// default:
+// 	return false, fmt.Errorf("unsupported workload type: %s", wafInstance.Spec.Workload.Type)
+// }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *WAFInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {

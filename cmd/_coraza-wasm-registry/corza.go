@@ -57,7 +57,7 @@ func createCorazaHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 	}
-	respondJSON(w, http.StatusCreated, APIResponse{
+	_ = respondJSON(w, http.StatusCreated, APIResponse{
 		Success: true,
 	})
 }

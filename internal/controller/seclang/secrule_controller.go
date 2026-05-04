@@ -70,29 +70,24 @@ func (r *SecRuleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// delete
 	if !secRule.DeletionTimestamp.IsZero() {
-		var refNotDeleted map[string]bool
 		for _, ruleSetRef := range secRule.Status.RuleSetRefs {
 			var ruleSet wafv1beta1.RuleSet
-			if err := r.Client.Get(ctx, types.NamespacedName{Name: ruleSetRef.Name, Namespace: ruleSetRef.Namespace}, &ruleSet); !errors.IsNotFound(err) {
+			if err := r.Get(ctx, types.NamespacedName{Name: ruleSetRef.Name, Namespace: ruleSetRef.Namespace}, &ruleSet); !errors.IsNotFound(err) {
 				return ctrl.Result{}, err
-			} else if err != nil {
-				refNotDeleted[fmt.Sprintf("%s/%s", ruleSet.Namespace, ruleSetRef.Name)] = false
 			}
 		}
 
-		if refNotDeleted == nil {
-			updated := controllerutil.RemoveFinalizer(secRule, controller.RuleSetRefFinalizer)
-			updated2 := controllerutil.RemoveFinalizer(secRule, controller.Finalizer)
-			if updated || updated2 {
-				if err := r.Client.Delete(ctx, secRule); err != nil {
-					return ctrl.Result{}, err
-				}
+		updated := controllerutil.RemoveFinalizer(secRule, controller.RuleSetRefFinalizer)
+		updated2 := controllerutil.RemoveFinalizer(secRule, controller.Finalizer)
+		if updated || updated2 {
+			if err := r.Delete(ctx, secRule); err != nil {
+				return ctrl.Result{}, err
 			}
 		}
 	}
 
 	if updated {
-		if err := r.Client.Update(ctx, secRule); err != nil {
+		if err := r.Update(ctx, secRule); err != nil {
 			return ctrl.Result{}, err
 		}
 		l.Info("Added finalizer to SecRule")

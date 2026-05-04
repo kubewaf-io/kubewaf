@@ -45,7 +45,10 @@ type WAFEnvoyGatewayReconciler struct {
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafenvoygateways,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafenvoygateways/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafenvoygateways/finalizers,verbs=update
-
+// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=envoyextensionpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=envoyextensionpolicies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=envoyextensionpolicies/finalizers,verbs=update
+//
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
@@ -60,7 +63,7 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	var (
 		wafEnvoyGateway            wafv1beta1.WAFEnvoyGateway
 		envoyExtensionPolicy       envoygatewayv1alpha1.EnvoyExtensionPolicy
-		envoyExtensionPolicyCreate bool = false
+		envoyExtensionPolicyCreate = false
 	)
 
 	_, err := controller.InitHandler(ctx, req, &wafEnvoyGateway, r.Client)
@@ -68,7 +71,7 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: wafEnvoyGateway.Namespace, Name: wafEnvoyGateway.Name}, &envoyExtensionPolicy); errors.IsNotFound(err) {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: wafEnvoyGateway.Namespace, Name: wafEnvoyGateway.Name}, &envoyExtensionPolicy); errors.IsNotFound(err) {
 		envoyExtensionPolicyCreate = true
 	} else if err != nil {
 		return ctrl.Result{}, err
@@ -85,14 +88,14 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	resolver := references2.NewRuleRefResolver(r.Client, r.Scheme)
 	objects, _, err := resolver.AddUpdateReconcile(ctx, wafEnvoyGateway.Spec.RuleSetRefs, &wafEnvoyGateway)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	rules, err := references2.GetSecRule(objects)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	fmt.Println(rules)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
 
 	name := "kubewaf.io"
 	defaultCfg := []string{
@@ -109,12 +112,7 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	cfg := map[string]any{
 		"default_directives": "default",
 		"directives_map": map[string]any{
-			"default": append([]string{
-				"SecDebugLogLevel 9",
-				"SecRuleEngine On",
-				"Include @crs-setup-conf",
-				"Include @owasp_crs/*.conf",
-			}, rules...),
+			"default": append(defaultCfg, rules...),
 		},
 	}
 
@@ -123,7 +121,7 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 	envoyExtensionPolicy.Spec.Wasm = []envoygatewayv1alpha1.Wasm{
-		envoygatewayv1alpha1.Wasm{
+		{
 			Name: &name,
 			Code: envoygatewayv1alpha1.WasmCodeSource{
 				Type: envoygatewayv1alpha1.ImageWasmCodeSourceType,
@@ -135,16 +133,16 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		},
 	}
 
-	if err := r.Client.Update(ctx, &wafEnvoyGateway); err != nil {
+	if err := r.Update(ctx, &wafEnvoyGateway); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	if envoyExtensionPolicyCreate {
-		if err := r.Client.Create(ctx, &envoyExtensionPolicy); err != nil {
+		if err := r.Create(ctx, &envoyExtensionPolicy); err != nil {
 			return ctrl.Result{}, err
 		}
 	} else {
-		if err := r.Client.Update(ctx, &envoyExtensionPolicy); err != nil {
+		if err := r.Update(ctx, &envoyExtensionPolicy); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
