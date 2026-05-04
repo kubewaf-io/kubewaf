@@ -41,6 +41,10 @@ rules:
   resources:
   - "rulesets"
   - "rulesets/status"
+  - "wafinstances"
+  - "wafinstances/status"
+  - "wafenvoygateways"
+  - "wafenvoygateways/status"
   verbs:
   - "*"
 - apiGroups:
