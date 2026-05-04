@@ -38,7 +38,7 @@ var _ = Describe("WAFInstance Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: metav1.NamespaceDefault, // TODO(user):Modify as needed
 		}
 		wafinstance := &wafv1beta1.WAFInstance{}
 
@@ -49,7 +49,7 @@ var _ = Describe("WAFInstance Controller", func() {
 				resource := &wafv1beta1.WAFInstance{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: metav1.NamespaceDefault,
 					},
 					// TODO(user): Specify other spec details if needed.
 				}

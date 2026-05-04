@@ -18,7 +18,7 @@ var _ = Describe("WAFEnvoyGateway Controller", func() {
 		ctx := context.Background()
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default",
+			Namespace: metav1.NamespaceDefault,
 		}
 		wafenvoygateway := &wafv1beta1.WAFEnvoyGateway{}
 		BeforeEach(func() {
@@ -28,7 +28,7 @@ var _ = Describe("WAFEnvoyGateway Controller", func() {
 				resource := &wafv1beta1.WAFEnvoyGateway{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: metav1.NamespaceDefault,
 					},
 					Spec: wafv1beta1.WAFEnvoyGatewaySpec{
 						CRSEnable: true,
