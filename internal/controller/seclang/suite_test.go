@@ -32,8 +32,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	seclangv1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
+	seclangv1beta1 "github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
 

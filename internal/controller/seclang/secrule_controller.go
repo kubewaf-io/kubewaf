@@ -30,11 +30,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	seclangv1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
-	"github.com/buzz-it/kubewaf/api/seclang/v1beta1/convert"
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
-	"github.com/buzz-it/kubewaf/internal/controller"
-	"github.com/buzz-it/kubewaf/internal/coraza"
+	seclangv1beta1 "github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
+	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1/convert"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
+	"github.com/kubewaf-io/kubewaf/internal/controller"
+	"github.com/kubewaf-io/kubewaf/internal/coraza"
 )
 
 // SecRuleReconciler reconciles a SecRule object

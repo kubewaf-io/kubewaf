@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/buzz-it/kubewaf/api/seclang/v1beta1"
-	"github.com/buzz-it/kubewaf/api/seclang/v1beta1/convert"
-	"github.com/buzz-it/kubewaf/internal/wasmregistry"
+	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
+	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1/convert"
+	"github.com/kubewaf-io/kubewaf/internal/wasmregistry"
 	"github.com/otiai10/copy"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"

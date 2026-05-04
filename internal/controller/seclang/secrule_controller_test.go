@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	seclangv1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
+	seclangv1beta1 "github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
 )
 
 var _ = Describe("SecRule Controller", func() {

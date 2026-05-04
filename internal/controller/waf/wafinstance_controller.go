@@ -23,7 +23,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 )
 
 // WAFInstanceReconciler reconciles a WAFInstance object

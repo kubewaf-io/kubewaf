@@ -36,11 +36,11 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	seclangv1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
-	seclangcontroller "github.com/buzz-it/kubewaf/internal/controller/seclang"
-	wafcontroller "github.com/buzz-it/kubewaf/internal/controller/waf"
 	envoygatewayv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
+	seclangv1beta1 "github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
+	seclangcontroller "github.com/kubewaf-io/kubewaf/internal/controller/seclang"
+	wafcontroller "github.com/kubewaf-io/kubewaf/internal/controller/waf"
 	// +kubebuilder:scaffold:imports
 )
 

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buzz-it/kubewaf/api/seclang/v1beta1"
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
-	"github.com/buzz-it/kubewaf/internal/controller"
+	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
+	"github.com/kubewaf-io/kubewaf/internal/controller"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"

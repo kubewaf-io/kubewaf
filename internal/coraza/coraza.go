@@ -3,9 +3,9 @@ package coraza
 import (
 	"fmt"
 
-	"github.com/buzz-it/kubewaf/api/seclang/v1beta1/convert"
 	"github.com/corazawaf/coraza/v3"
 	"github.com/coreruleset/crslang/types"
+	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1/convert"
 )
 
 // LoadAndValidateSeclangDirectives takes a slice of parsed SeclangDirective

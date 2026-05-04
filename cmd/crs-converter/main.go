@@ -24,10 +24,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/buzz-it/kubewaf/api/seclang/v1beta1"
-	"github.com/buzz-it/kubewaf/api/seclang/v1beta1/convert"
 	"github.com/coreruleset/crslang/translator"
 	types "github.com/coreruleset/crslang/types"
+	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
+	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1/convert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/cli-runtime/pkg/printers"

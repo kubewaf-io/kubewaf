@@ -32,8 +32,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
 	envoygatewayv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
 

@@ -3,7 +3,7 @@ package waf
 import (
 	"context"
 
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"

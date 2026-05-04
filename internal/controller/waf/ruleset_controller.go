@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"strings"
 
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
-	"github.com/buzz-it/kubewaf/internal/controller"
-	"github.com/buzz-it/kubewaf/internal/references2"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
+	"github.com/kubewaf-io/kubewaf/internal/controller"
+	"github.com/kubewaf-io/kubewaf/internal/references2"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

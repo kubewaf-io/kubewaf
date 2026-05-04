@@ -29,10 +29,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
-	"github.com/buzz-it/kubewaf/internal/controller"
-	"github.com/buzz-it/kubewaf/internal/references2"
 	envoygatewayv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
+	"github.com/kubewaf-io/kubewaf/internal/controller"
+	"github.com/kubewaf-io/kubewaf/internal/references2"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 

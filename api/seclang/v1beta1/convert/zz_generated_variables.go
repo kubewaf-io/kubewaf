@@ -4,8 +4,8 @@
 package convert
 
 import (
-	v1beta1 "github.com/buzz-it/kubewaf/api/seclang/v1beta1"
 	types "github.com/coreruleset/crslang/types"
+	v1beta1 "github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
 )
 
 type VariableMapperImpl struct{}

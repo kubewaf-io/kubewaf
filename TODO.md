@@ -17,7 +17,7 @@ This document lists tasks to complete before publishing the repository publicly 
   - Run `make lint` and fix any issues
 
 - **Module and Import Paths**:
-  - Decide on final GitHub location: currently `github.com/buzz-it/kubewaf`, README suggests `github.com/kubewaf-io/kubewaf`
+  - Decide on final GitHub location: currently `github.com/kubewaf-io/kubewaf`, README suggests `github.com/kubewaf-io/kubewaf`
   - If changing, update go.mod, all imports, PROJECT file, and references
 
 ## Code Implementation TODOs
@@ -78,15 +78,13 @@ This document lists tasks to complete before publishing the repository publicly 
 
 ## GitHub Repo Setup
 
-- Create repo under kubewaf-io or buzz-it
-- Add topics: kubernetes, operator, waf, modsecurity, owasp-crs, security
-- Enable issues, discussions, projects
-- Set up GitHub Actions if not already (there are some workflows)
-- Add release workflow or use goreleaser later
-- Update website links once live
+- Repo is now at https://github.com/kubewaf-io/kubewaf
+- Topics: kubernetes, operator, waf, modsecurity, owasp-crs, security
+- Enable issues, discussions, projects (if not already)
+- GitHub Actions and workflows are present
+- Consider adding release workflow with goreleaser later
+- Update any website links once live
 
-Run `make help` and test the build/deploy process locally before pushing.
-
-After cleanup, the project demonstrates a solid foundation for Kubernetes-native WAF rules management using structured CRDs.
+The project demonstrates a solid foundation for Kubernetes-native WAF rules management using structured CRDs.
 
 Last updated: 2025-03-24

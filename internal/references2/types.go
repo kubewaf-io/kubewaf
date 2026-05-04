@@ -19,7 +19,7 @@ package references2
 import (
 	"fmt"
 
-	wafv1beta1 "github.com/buzz-it/kubewaf/api/waf/v1beta1"
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )

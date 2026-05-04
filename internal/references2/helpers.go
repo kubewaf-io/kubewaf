@@ -1,8 +1,8 @@
 package references2
 
 import (
-	"github.com/buzz-it/kubewaf/api/seclang/v1beta1"
-	"github.com/buzz-it/kubewaf/api/seclang/v1beta1/convert"
+	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
+	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1/convert"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
