@@ -63,6 +63,12 @@ spec:
           args:
             - --leader-elect
             - --health-probe-bind-address=:8081
+          # Disable WatchListClient feature gate to prevent noisy fallback logs on
+          # clusters where the apiserver WatchList feature gate is not enabled.
+          # See: https://github.com/kubernetes/kubernetes/issues/135583
+          env:
+            - name: KUBE_FEATURE_WatchListClient
+              value: "false"
           image: controller:latest
           name: manager
           ports: []

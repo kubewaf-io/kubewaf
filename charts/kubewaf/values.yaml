@@ -168,7 +168,11 @@ affinity: {}
 topologySpreadConstraints: []
 
 # -- Environment variables
-env: []
+env:
+  # Disable WatchListClient to avoid noisy cache fallback logs when apiserver
+  # does not have the WatchList feature gate enabled (common on older clusters).
+  - name: KUBE_FEATURE_WatchListClient
+    value: "false"
 
 # -- VolumeMounts
 volumeMounts: []
