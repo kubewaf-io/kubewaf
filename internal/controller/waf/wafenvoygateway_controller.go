@@ -19,10 +19,11 @@ package waf
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -59,7 +60,7 @@ type WAFEnvoyGatewayReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/reconcile
 func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	logger := logf.FromContext(ctx)
 	var (
 		wafEnvoyGateway            wafv1beta1.WAFEnvoyGateway
 		envoyExtensionPolicy       envoygatewayv1alpha1.EnvoyExtensionPolicy
@@ -87,15 +88,40 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	resolver := references2.NewRuleRefResolver(r.Client, r.Scheme)
-	objects, _, err := resolver.AddUpdateReconcile(ctx, wafEnvoyGateway.Spec.RuleSetRefs, &wafEnvoyGateway)
+	objects, errs, err := resolver.AddUpdateReconcile(ctx, wafEnvoyGateway.Spec.RuleSetRefs, &wafEnvoyGateway)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+
+	var changed = false
+	if len(errs) > 0 {
+		logger.Info("%v", errs)
+		changed = meta.SetStatusCondition(&wafEnvoyGateway.Status.Conditions, metav1.Condition{
+			Type:               controller.ConditionTypeReferencesResolved,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReferenceResolve",
+			ObservedGeneration: wafEnvoyGateway.Generation,
+		})
+	} else {
+		changed = meta.SetStatusCondition(&wafEnvoyGateway.Status.Conditions, metav1.Condition{
+			Type:               controller.ConditionTypeReferencesResolved,
+			Status:             metav1.ConditionTrue,
+			Reason:             "ReferenceResolve",
+			ObservedGeneration: wafEnvoyGateway.Generation,
+		})
+	}
+
+	if changed {
+		if err := r.Status().Update(ctx, &wafEnvoyGateway); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	rules, err := references2.GetSecRule(objects)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	fmt.Println(rules)
+	logger.V(3).Info("Rules=%s", rules)
 
 	name := "kubewaf.io"
 	defaultCfg := []string{
@@ -150,6 +176,17 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	} else {
 		if err := r.Update(ctx, &envoyExtensionPolicy); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	if meta.SetStatusCondition(&wafEnvoyGateway.Status.Conditions, metav1.Condition{
+		Type:               controller.ConditionTypeReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		ObservedGeneration: wafEnvoyGateway.Generation,
+	}) {
+		if err := r.Status().Update(ctx, &wafEnvoyGateway); err != nil {
 			return ctrl.Result{}, err
 		}
 	}

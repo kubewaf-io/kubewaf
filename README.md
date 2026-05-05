@@ -4,6 +4,7 @@
 [![Go](https://img.shields.io/badge/Go-1.25-blue)](https://go.dev/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-%23161616.svg?logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/kubewaf)](https://artifacthub.io/packages/search?repo=kubewaf)
+[![Go Reference](https://pkg.go.dev/badge/github.com/kubewaf-io/kubewaf.svg)](https://pkg.go.dev/github.com/kubewaf-io/kubewaf)
 
 **Kubernetes-native Web Application Firewall**
 
