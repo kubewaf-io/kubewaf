@@ -3,14 +3,20 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: wafenvoygateways.waf.kubewaf.io
 spec:
   group: waf.kubewaf.io
   names:
+    categories:
+    - waf
+    - security
+    - gateway
     kind: WAFEnvoyGateway
     listKind: WAFEnvoyGatewayList
     plural: wafenvoygateways
+    shortNames:
+    - wafeg
     singular: wafenvoygateway
   scope: Namespaced
   versions:
@@ -37,11 +43,38 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of WAFEnvoyGateway
+            description: |-
+              spec defines the desired state of WAFEnvoyGateway.
+              See WAFEnvoyGatewaySpec for details on policy attachment, RuleSet
+              resolution (with CRS support), and logging configuration.
             properties:
+              corazaProxyWasmImage:
+                default: ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0
+                description: |-
+                  CorazaProxyWasmImage specifies the OCI image (including tag) for the
+                  coraza-proxy-wasm module loaded by Envoy Gateway's Wasm filter.
+                  This makes the previously hardcoded ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0
+                  fully customizable while preserving the original as default.
+                type: string
               crsEnable:
+                default: false
+                description: |-
+                  CRSEnable enables the OWASP Core Rule Set (v4.x recommended).
+                  When true, CRS rules are merged with those from RuleSetRefs.
                 type: boolean
+              logLevel:
+                default: 2
+                description: |-
+                  LogLevel controls verbosity of the Envoy WAF filter logs.
+                  Common values: 0=off, 1=error, 2=warn, 3=info, 4=debug (up to 7).
+                maximum: 7
+                minimum: 0
+                type: integer
               parentRefs:
+                description: |-
+                  ParentRefs specifies the target resources (typically Gateways or
+                  GatewayClasses) to which this WAF policy should be attached.
+                  Follows Envoy Gateway policy attachment semantics.
                 properties:
                   targetRef:
                     description: |-
@@ -212,6 +245,10 @@ spec:
                     type: array
                 type: object
               ruleRefs:
+                description: |-
+                  RuleSetRefs references RuleSets (or other RuleSets recursively).
+                  Resolution, back-references, and status conditions are handled
+                  automatically by the shared RuleRefResolver.
                 items:
                   properties:
                     group:
@@ -292,16 +329,8 @@ spec:
             description: status defines the observed state of WAFEnvoyGateway
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the WAFEnvoyGateway resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: Conditions represent the current state of the WAFEnvoyGateway
+                  resource.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

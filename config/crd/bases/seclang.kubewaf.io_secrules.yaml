@@ -3,14 +3,19 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: secrules.seclang.kubewaf.io
 spec:
   group: seclang.kubewaf.io
   names:
+    categories:
+    - waf
+    - security
     kind: SecRule
     listKind: SecRuleList
     plural: secrules
+    shortNames:
+    - sr
     singular: secrule
   scope: Namespaced
   versions:
@@ -522,8 +527,7 @@ spec:
               ruleSetRefs:
                 description: RuleSetRefs tracks which RuleSets reference this SecRule.
                 items:
-                  description: RuleSetRef identifies a RuleSet that references this
-                    SecLang resource.
+                  description: RuleSetRef identifies a RuleSet or a SecRule.
                   properties:
                     group:
                       type: string

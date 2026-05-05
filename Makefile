@@ -127,7 +127,7 @@ build: manifests generate fmt vet ## Build manager binary.
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
+	KUBE_FEATURE_WatchListClient=false go run ./cmd/main.go
 
 .PHONY: crs-converter
 crs-converter: fmt vet ## Build the CRS converter tool.
@@ -348,6 +348,21 @@ CONTROLLER_GEN_LOOKUP  := kubernetes-sigs/controller-tools
 controller-gen:
 	@test -s $(CONTROLLER_GEN) && $(CONTROLLER_GEN) --version | grep -q $(CONTROLLER_GEN_VERSION) || \
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION))
+
+CRD_REF_DOCS           := $(LOCALBIN)/crd-ref-docs
+CRD_REF_DOCS_VERSION   ?= latest
+
+.PHONY: crd-ref-docs
+crd-ref-docs: $(CRD_REF_DOCS) ## Download crd-ref-docs locally if necessary.
+	@test -s $(CRD_REF_DOCS) || $(call go-install-tool,$(CRD_REF_DOCS),github.com/elastic/crd-ref-docs@$(CRD_REF_DOCS_VERSION))
+
+.PHONY: generate-crd-docs
+generate-crd-docs: crd-ref-docs ## Generate CRD API reference documentation (for the docs website).
+	$(CRD_REF_DOCS) \
+		--config hack/crd-ref-docs-config.yaml \
+		--source-path . \
+		--renderer markdown \
+		--output-path docs/docs/crd-reference.mdx
 
 
 CT         := $(LOCALBIN)/ct
