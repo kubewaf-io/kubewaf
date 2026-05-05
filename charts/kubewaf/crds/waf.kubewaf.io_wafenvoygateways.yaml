@@ -48,6 +48,14 @@ spec:
               See WAFEnvoyGatewaySpec for details on policy attachment, RuleSet
               resolution (with CRS support), and logging configuration.
             properties:
+              corazaProxyWasmImage:
+                default: ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0
+                description: |-
+                  CorazaProxyWasmImage specifies the OCI image (including tag) for the
+                  coraza-proxy-wasm module loaded by Envoy Gateway's Wasm filter.
+                  This makes the previously hardcoded ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0
+                  fully customizable while preserving the original as default.
+                type: string
               crsEnable:
                 default: false
                 description: |-

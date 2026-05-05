@@ -120,13 +120,20 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+
+	// Use spec value (defaulted by CRD) or fallback to original default
+	wasmImage := wafEnvoyGateway.Spec.CorazaProxyWasmImage
+	if wasmImage == "" {
+		wasmImage = "ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0"
+	}
+
 	envoyExtensionPolicy.Spec.Wasm = []envoygatewayv1alpha1.Wasm{
 		{
 			Name: &name,
 			Code: envoygatewayv1alpha1.WasmCodeSource{
 				Type: envoygatewayv1alpha1.ImageWasmCodeSourceType,
 				Image: &envoygatewayv1alpha1.ImageWasmCodeSource{
-					URL: "ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0",
+					URL: wasmImage,
 				},
 			},
 			Config: cfgJson,

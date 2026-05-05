@@ -33,6 +33,9 @@ import (
 //
 // When CRSEnable=true, the OWASP Core Rule Set (CRS) is automatically
 // included alongside user RuleSets.
+//
+// CorazaProxyWasmImage allows overriding the Wasm module image (default:
+// ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0).
 type WAFEnvoyGatewaySpec struct {
 	// ParentRefs specifies the target resources (typically Gateways or
 	// GatewayClasses) to which this WAF policy should be attached.
@@ -59,6 +62,14 @@ type WAFEnvoyGatewaySpec struct {
 	// +kubebuilder:validation:Maximum=7
 	// +kubebuilder:default=2
 	LogLevel int `json:"logLevel,omitempty"`
+
+	// CorazaProxyWasmImage specifies the OCI image (including tag) for the
+	// coraza-proxy-wasm module loaded by Envoy Gateway's Wasm filter.
+	// This makes the previously hardcoded ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0
+	// fully customizable while preserving the original as default.
+	// +optional
+	// +kubebuilder:default="ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0"
+	CorazaProxyWasmImage string `json:"corazaProxyWasmImage,omitempty"`
 }
 
 // WAFEnvoyGatewayStatus defines the observed state of WAFEnvoyGateway.

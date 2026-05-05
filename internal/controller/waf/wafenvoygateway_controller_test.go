@@ -31,8 +31,9 @@ var _ = Describe("WAFEnvoyGateway Controller", func() {
 						Namespace: metav1.NamespaceDefault,
 					},
 					Spec: wafv1beta1.WAFEnvoyGatewaySpec{
-						CRSEnable: true,
-						LogLevel:  2,
+						CRSEnable:            true,
+						LogLevel:             2,
+						CorazaProxyWasmImage: "ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0",
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
