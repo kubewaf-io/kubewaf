@@ -40,7 +40,7 @@ global:
         allowPrivilegeEscalation: false
         capabilities:
           drop:
-          - ALL
+            - ALL
         readOnlyRootFilesystem: true
         runAsGroup: 1002
         runAsNonRoot: true
@@ -105,7 +105,7 @@ serviceAccount:
   annotations: {}
   # The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
-   # -- The name of the service account to use.
+  # -- The name of the service account to use.
   name: ""
 
 # -- Annotations to add to pod
@@ -126,7 +126,7 @@ securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop:
-    - ALL
+      - ALL
   readOnlyRootFilesystem: true
   runAsNonRoot: true
   runAsUser: 1000
@@ -153,7 +153,7 @@ resources: {}
 #   memory: 128Mi
 
 # -- Set the priority class name
-priorityClassName: '' # system-cluster-critical
+priorityClassName: "" # system-cluster-critical
 
 # -- Set the node selector
 nodeSelector: {}
@@ -175,10 +175,16 @@ env:
     value: "false"
 
 # -- VolumeMounts
-volumeMounts: []
+volumeMounts:
+  - name: tmpfs-vol
+    mountPath: /tmp
 
 # -- Volumes
-volumes: []
+volumes:
+  - name: tmpfs-vol
+    emptyDir:
+      medium: Memory
+      sizeLimit: 50Mi
 
 # Monitoring Values
 monitoring:
@@ -189,7 +195,7 @@ monitoring:
     # -- Enable deployment of PrometheusRules
     enabled: false
     # -- Install the rules into a different Namespace, as the monitoring stack one (default: the release one)
-    namespace: ''
+    namespace: ""
     # -- Assign additional labels
     labels: {}
     # -- Assign additional Annotations
@@ -202,7 +208,7 @@ monitoring:
     # -- Enable ServiceMonitor
     enabled: true
     # -- Install the ServiceMonitor into a different Namespace, as the monitoring stack one (default: the release one)
-    namespace: ''
+    namespace: ""
     # -- Assign additional labels according to Prometheus' serviceMonitorSelector matching labels
     labels: {}
     # -- Assign additional Annotations
