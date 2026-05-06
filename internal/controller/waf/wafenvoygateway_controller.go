@@ -121,8 +121,7 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	rules, err := references2.GetSecRule(objects)
-	logger.Info("hi", "ho", "ho")
-	logger.Info("Rules", "rules", rules)
+	logger.V(3).Info("Rules", "rules", rules)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

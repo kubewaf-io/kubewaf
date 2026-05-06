@@ -143,7 +143,6 @@ func (r *RuleRefResolver) lockObject(ctx context.Context, refObject client.Objec
 	}
 
 	if updatedFirst || updatedSecond {
-		fmt.Println("HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII")
 		if err := r.Update(ctx, refObject); err != nil {
 			return err
 		}
@@ -155,7 +154,6 @@ func (r *RuleRefResolver) lockObject(ctx context.Context, refObject client.Objec
 func (r *RuleRefResolver) allowedObject(ctx context.Context, refObject client.Object, source client.Object) error {
 	// in same ns always allowed
 	if source.GetNamespace() == refObject.GetNamespace() {
-		fmt.Println(source.GetNamespace(), source.GetName(), refObject.GetNamespace(), refObject.GetName())
 		return nil
 	}
 	switch v := refObject.(type) {
@@ -173,7 +171,6 @@ func (r *RuleRefResolver) allowedObject(ctx context.Context, refObject client.Ob
 			if source.GetNamespace() == refObject.GetNamespace() {
 				return nil
 			}
-			fmt.Println("4")
 			return fmt.Errorf("CrossNamespace Reference not allowed")
 		case "Selector":
 			if policy.Selector == nil {
@@ -182,16 +179,13 @@ func (r *RuleRefResolver) allowedObject(ctx context.Context, refObject client.Ob
 
 			ns := &corev1.Namespace{}
 			if err := r.Get(ctx, types.NamespacedName{Name: refObject.GetNamespace()}, ns); err != nil {
-				fmt.Println("1")
 				return fmt.Errorf("failed to get namespace %s: %w", refObject.GetNamespace(), err)
 			}
 			selector, err := metav1.LabelSelectorAsSelector(policy.Selector)
 			if err != nil {
-				fmt.Println("2")
 				return fmt.Errorf("invalid selector: %w", err)
 			}
 			if !selector.Matches(labels.Set(ns.Labels)) {
-				fmt.Println("3")
 				return fmt.Errorf("namespace %s does not match the allowed selector", refObject.GetNamespace())
 			}
 		}
