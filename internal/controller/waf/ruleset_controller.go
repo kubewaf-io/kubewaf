@@ -18,7 +18,6 @@ package waf
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
@@ -69,7 +68,6 @@ func (r *RuleSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Handle deletion
 	if !ruleSet.DeletionTimestamp.IsZero() {
-		fmt.Println("hi")
 		if err := controller.CleanupBackReferences(ctx, r.Client, &ruleSet); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -82,7 +80,6 @@ func (r *RuleSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	_, _, err = r.ruleRefHandler(ctx, &ruleSet)
-	fmt.Println(ruleSet.Status.Conditions)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

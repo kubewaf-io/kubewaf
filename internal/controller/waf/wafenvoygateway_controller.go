@@ -19,6 +19,7 @@ package waf
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -92,10 +93,12 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	logger.V(3).Info("Resolver", "objects", objects)
+	logger.V(3).Info("Resolver", "errs", errs)
 
 	var changed = false
 	if len(errs) > 0 {
-		logger.Info("%v", errs)
+		logger.Error(fmt.Errorf("Error"), "Resolver", "errs", errs)
 		changed = meta.SetStatusCondition(&wafEnvoyGateway.Status.Conditions, metav1.Condition{
 			Type:               controller.ConditionTypeReferencesResolved,
 			Status:             metav1.ConditionFalse,
@@ -118,10 +121,11 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	rules, err := references2.GetSecRule(objects)
+	logger.Info("hi", "ho", "ho")
+	logger.Info("Rules", "rules", rules)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	logger.V(3).Info("Rules=%s", rules)
 
 	name := "kubewaf.io"
 	defaultCfg := []string{

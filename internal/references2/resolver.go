@@ -31,7 +31,7 @@ func (r *RuleRefResolver) AddUpdateReconcile(
 		refObjects []unstructured.Unstructured
 	)
 
-	for idx, ref := range refs {
+	for _, ref := range refs {
 		// allowed is used to verify if object ref is allowed
 		var (
 			//	refObject client.Object
@@ -41,17 +41,17 @@ func (r *RuleRefResolver) AddUpdateReconcile(
 
 		// get ref
 		if uList, err = r.lookupRef(ctx, ref); err != nil {
-			refError = append(refError, ReferenceError{Index: idx, Ref: ref, Err: err})
+			refError = append(refError, ReferenceError{Index: 0, Ref: ref, Err: fmt.Errorf("lookupRef=%s",err)})
 			continue
 		}
 		for _, refObject := range uList.Items {
 			if err := r.allowedObject(ctx, &refObject, source); err != nil {
-				refError = append(refError, ReferenceError{Index: idx, Ref: ref, Err: err})
+				refError = append(refError, ReferenceError{Index: 1, Ref: ref, Err: fmt.Errorf("allowedObject=%s",err)})
 				continue
 			}
 
 			if err := r.lockObject(ctx, &refObject, source); err != nil {
-				refError = append(refError, ReferenceError{Index: idx, Ref: ref, Err: err})
+				refError = append(refError, ReferenceError{Index: 2, Ref: ref, Err: fmt.Errorf("lockObject=%s",err)})
 				continue
 			}
 
@@ -78,9 +78,7 @@ func (r *RuleRefResolver) AddUpdateReconcile(
 
 }
 func (r *RuleRefResolver) lookupRef(ctx context.Context, ref wafv1beta1.RuleRef) (*unstructured.UnstructuredList, error) {
-	fmt.Println(ref.Version)
 	groupVersionKind := schema.GroupVersionKind{Kind: ref.Kind, Group: ref.Group, Version: ref.Version}
-	fmt.Println(groupVersionKind)
 	if ref.Selector != nil {
 		selector, err := metav1.LabelSelectorAsSelector(ref.Selector)
 		if err != nil {
@@ -145,6 +143,7 @@ func (r *RuleRefResolver) lockObject(ctx context.Context, refObject client.Objec
 	}
 
 	if updatedFirst || updatedSecond {
+		fmt.Println("HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII")
 		if err := r.Update(ctx, refObject); err != nil {
 			return err
 		}
@@ -155,8 +154,9 @@ func (r *RuleRefResolver) lockObject(ctx context.Context, refObject client.Objec
 
 func (r *RuleRefResolver) allowedObject(ctx context.Context, refObject client.Object, source client.Object) error {
 	// in same ns always allowed
-	if source.GetNamespace() != refObject.GetNamespace() {
-		return fmt.Errorf("CrossNamespace Reference not allowed")
+	if source.GetNamespace() == refObject.GetNamespace() {
+		fmt.Println(source.GetNamespace(), source.GetName(), refObject.GetNamespace(), refObject.GetName())
+		return nil
 	}
 	switch v := refObject.(type) {
 	case wafv1beta1.CrossNamespaceObject:
@@ -173,6 +173,7 @@ func (r *RuleRefResolver) allowedObject(ctx context.Context, refObject client.Ob
 			if source.GetNamespace() == refObject.GetNamespace() {
 				return nil
 			}
+			fmt.Println("4")
 			return fmt.Errorf("CrossNamespace Reference not allowed")
 		case "Selector":
 			if policy.Selector == nil {
@@ -181,13 +182,16 @@ func (r *RuleRefResolver) allowedObject(ctx context.Context, refObject client.Ob
 
 			ns := &corev1.Namespace{}
 			if err := r.Get(ctx, types.NamespacedName{Name: refObject.GetNamespace()}, ns); err != nil {
+				fmt.Println("1")
 				return fmt.Errorf("failed to get namespace %s: %w", refObject.GetNamespace(), err)
 			}
 			selector, err := metav1.LabelSelectorAsSelector(policy.Selector)
 			if err != nil {
+				fmt.Println("2")
 				return fmt.Errorf("invalid selector: %w", err)
 			}
 			if !selector.Matches(labels.Set(ns.Labels)) {
+				fmt.Println("3")
 				return fmt.Errorf("namespace %s does not match the allowed selector", refObject.GetNamespace())
 			}
 		}
