@@ -60,7 +60,7 @@ type WAFEnvoyGatewaySpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=7
-	// +kubebuilder:default=2
+	// +kubebuilder:default=7
 	LogLevel int `json:"logLevel,omitempty"`
 
 	// CorazaProxyWasmImage specifies the OCI image (including tag) for the
