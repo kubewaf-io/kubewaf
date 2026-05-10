@@ -35,6 +35,8 @@ github.com/emicklei/go-restful/v3 v3.13.0 h1:C4Bl2xDndpU6nJ4bc1jXd+uTmYPVUwkD6bF
 github.com/emicklei/go-restful/v3 v3.13.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/envoyproxy/gateway v1.7.2 h1:mIC52fBLZKO8ahwwh5hNbpWP++HLC7I7RO+6n6JcJbI=
 github.com/envoyproxy/gateway v1.7.2/go.mod h1:EiXhtwv0xkFE17KDXmchFF60jg0y9H9Ou3V7pIIzyUc=
+github.com/envoyproxy/gateway v1.7.3 h1:9tFKbq0G8IJUELxg2Ra4ECSOZf7mu+CjuA977gV1h4Y=
+github.com/envoyproxy/gateway v1.7.3/go.mod h1:Qv8zMS8mhQ2luIY1EBjOc0K2tj/WbRv3hT6mawgjq5I=
 github.com/evanphx/json-patch v5.9.11+incompatible h1:ixHHqfcGvxhWkniF1tWxBHA0yb4Z+d1UQi45df52xW8=
 github.com/evanphx/json-patch v5.9.11+incompatible/go.mod h1:50XU6AFN0ol/bzJsmQLiYLvXMP4fmwYFNcr97nuDLSk=
 github.com/evanphx/json-patch/v5 v5.9.11 h1:/8HVnzMq13/3x9TPvjG08wUGqBTmZBsCWzjTM0wiaDU=
