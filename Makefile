@@ -84,10 +84,17 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= wafv2-test-e2e
 
+# Version of Envoy Gateway to install during e2e environment setup
+ENVOY_GATEWAY_VERSION ?= v1.8.0
+
 .PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
+setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist, and install a simple test application + Envoy Gateway + Gateway/HTTPRoute
 	@command -v $(KIND) >/dev/null 2>&1 || { \
 		echo "Kind is not installed. Please install Kind manually."; \
+		exit 1; \
+	}
+	@command -v $(HELM) >/dev/null 2>&1 || { \
+		echo "Helm is not installed. Please install Helm: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"; \
 		exit 1; \
 	}
 	@case "$$($(KIND) get clusters)" in \
@@ -97,6 +104,20 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
+	@echo "Installing Envoy Gateway (version $(ENVOY_GATEWAY_VERSION))..."
+	@$(HELM) upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
+		--version $(ENVOY_GATEWAY_VERSION) \
+		--namespace envoy-gateway-system \
+		--create-namespace \
+		--wait --timeout=5m
+	@echo "Installing test application (httpbin) and Gateway API resources (Gateway + HTTPRoute)..."
+	@$(KUBECTL) apply -f test/e2e/manifests/00-test-application.yaml
+	@$(KUBECTL) apply -f test/e2e/manifests/10-gateway-api.yaml
+	@echo "Waiting for test application and Gateway to be ready..."
+	@$(KUBECTL) wait --for=condition=Ready pod/httpbin -n demo --timeout=2m
+	@$(KUBECTL) wait --for=condition=Programmed gateway/demo-gateway -n demo --timeout=2m
+	@echo "E2E test environment ready (demo namespace + httpbin + Envoy Gateway + demo-gateway/httpbin route)."
+
 
 .PHONY: test-e2e
 test-e2e: kind setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
@@ -343,7 +364,7 @@ helm-doc:
 	$(call go-install-tool,$(HELM_DOCS),github.com/$(HELM_DOCS_LOOKUP)/cmd/helm-docs@$(HELM_DOCS_VERSION))
 
 CONTROLLER_GEN         := $(LOCALBIN)/controller-gen
-CONTROLLER_GEN_VERSION ?= v0.20.1
+CONTROLLER_GEN_VERSION ?= v0.21.0
 CONTROLLER_GEN_LOOKUP  := kubernetes-sigs/controller-tools
 controller-gen:
 	@test -s $(CONTROLLER_GEN) && $(CONTROLLER_GEN) --version | grep -q $(CONTROLLER_GEN_VERSION) || \
@@ -363,6 +384,31 @@ generate-crd-docs: crd-ref-docs ## Generate CRD API reference documentation (for
 		--source-path . \
 		--renderer markdown \
 		--output-path docs/docs/crd-reference.mdx
+
+
+##@ Documentation
+
+.PHONY: docs-serve
+docs-serve: ## Serve the documentation site locally with live reload (MkDocs)
+	python3 -m pip install --upgrade pip
+	pip install -r docs/requirements.txt
+	mkdocs serve
+
+.PHONY: docs-build
+docs-build: ## Build the static documentation site into ./site/ (for hosting)
+	python3 -m pip install --upgrade pip
+	pip install -r docs/requirements.txt
+	mkdocs build --clean --strict
+
+.PHONY: netlify
+netlify: docs-build ## Build target for Netlify deployment (set this as your Netlify "Build command")
+	@echo ""
+	@echo "✅ Netlify build complete."
+	@echo "   → Static site is ready in ./site/"
+	@echo "   → In Netlify, set:"
+	@echo "        Build command:    make netlify"
+	@echo "        Publish directory: site"
+	@echo ""
 
 
 CT         := $(LOCALBIN)/ct
@@ -394,7 +440,7 @@ nwa:
 	$(call go-install-tool,$(NWA),github.com/$(NWA_LOOKUP)@$(NWA_VERSION))
 
 GOLANGCI_LINT          := $(LOCALBIN)/golangci-lint
-GOLANGCI_LINT_VERSION  := v2.12.1
+GOLANGCI_LINT_VERSION  := v2.12.2
 GOLANGCI_LINT_LOOKUP   := golangci/golangci-lint
 golangci-lint: ## Download golangci-lint locally if necessary.
 	@test -s $(GOLANGCI_LINT) && $(GOLANGCI_LINT) -h | grep -q $(GOLANGCI_LINT_VERSION) || \
