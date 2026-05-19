@@ -1,12 +1,12 @@
-FROM golang:1.25.9
+FROM golang:1.26.3
 COPY . /app
 WORKDIR /app/cmd/coraza-wasm-registry
 RUN CGO_ENABLED=0 go build
 RUN git clone https://github.com/corazawaf/coraza-proxy-wasm.git /tmp/coraza-proxy-wasm
 
-FROM golang:1.23
+FROM golang:1.26
 
-FROM tinygo/tinygo:0.34.0
+FROM tinygo/tinygo:0.41.1
 
 FROM scratch
 
