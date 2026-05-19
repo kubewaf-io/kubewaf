@@ -1,5 +1,5 @@
 apiVersion: waf.kubewaf.io/v1beta1
-kind: WAFEnvoyGateway
+kind: WAF
 metadata:
   name: shop-waf-with-metrics
   namespace: shop

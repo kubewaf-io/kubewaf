@@ -1,0 +1,4 @@
+# Documentation build dependencies
+mkdocs>=1.6
+mkdocs-material[imaging]>=9.6
+pymdown-extensions>=10.0

@@ -21,6 +21,7 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -41,6 +42,7 @@ import (
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	seclangcontroller "github.com/kubewaf-io/kubewaf/internal/controller/seclang"
 	wafcontroller "github.com/kubewaf-io/kubewaf/internal/controller/waf"
+	"github.com/kubewaf-io/kubewaf/internal/metrics"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -224,14 +226,21 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "WAFInstance")
 		os.Exit(1)
 	}
-	if err := (&wafcontroller.WAFEnvoyGatewayReconciler{
+	if err := (&wafcontroller.WAFReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "WAFEnvoyGateway")
+		setupLog.Error(err, "Failed to create controller", "controller", "WAF")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+
+	// Start the inventory metrics updater (leader-elected background task)
+	inventoryUpdater := metrics.NewInventoryUpdater(mgr.GetClient(), 60*time.Second)
+	if err := mgr.Add(inventoryUpdater); err != nil {
+		setupLog.Error(err, "unable to add inventory updater")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")

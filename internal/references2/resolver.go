@@ -41,17 +41,17 @@ func (r *RuleRefResolver) AddUpdateReconcile(
 
 		// get ref
 		if uList, err = r.lookupRef(ctx, ref); err != nil {
-			refError = append(refError, ReferenceError{Index: 0, Ref: ref, Err: fmt.Errorf("lookupRef=%s",err)})
+			refError = append(refError, ReferenceError{Index: 0, Ref: ref, Err: fmt.Errorf("lookupRef=%s", err)})
 			continue
 		}
 		for _, refObject := range uList.Items {
 			if err := r.allowedObject(ctx, &refObject, source); err != nil {
-				refError = append(refError, ReferenceError{Index: 1, Ref: ref, Err: fmt.Errorf("allowedObject=%s",err)})
+				refError = append(refError, ReferenceError{Index: 1, Ref: ref, Err: fmt.Errorf("allowedObject=%s", err)})
 				continue
 			}
 
 			if err := r.lockObject(ctx, &refObject, source); err != nil {
-				refError = append(refError, ReferenceError{Index: 2, Ref: ref, Err: fmt.Errorf("lockObject=%s",err)})
+				refError = append(refError, ReferenceError{Index: 2, Ref: ref, Err: fmt.Errorf("lockObject=%s", err)})
 				continue
 			}
 

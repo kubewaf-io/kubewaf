@@ -1,0 +1,35 @@
+# Simple test application used by e2e tests (httpbin)
+# This provides a backend that e2e tests can send traffic to through Envoy Gateway.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: httpbin
+  namespace: demo
+  labels:
+    app: httpbin
+spec:
+  containers:
+  - name: httpbin
+    image: kennethreitz/httpbin
+    ports:
+    - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbin
+  namespace: demo
+spec:
+  selector:
+    app: httpbin
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP

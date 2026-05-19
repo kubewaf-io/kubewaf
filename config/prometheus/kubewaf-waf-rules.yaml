@@ -1,0 +1,191 @@
+# PrometheusRule for kubeWAF - WAF data-plane + operator metrics
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubewaf-waf-alerts
+  namespace: kubewaf-system
+  labels:
+    app.kubernetes.io/part-of: kubewaf
+    app.kubernetes.io/component: monitoring
+    release: prometheus
+spec:
+  groups:
+    # =====================
+    # RECORDING RULES
+    # =====================
+    - name: kubewaf.waf.recording
+      interval: 30s
+      rules:
+        # WAF effectiveness (percentage of requests blocked)
+        - record: kubewaf:waf_effectiveness:ratio
+          expr: |
+            sum(rate(waf_filter_tx_interruptions[5m])) / clamp_min(sum(rate(waf_filter_tx_total[5m])), 1)
+
+        # Blocked requests per second by rule
+        - record: kubewaf:blocked_by_rule:rate5m
+          expr: |
+            sum by (rule_id, phase, namespace) (rate(waf_filter_tx_interruptions[5m]))
+
+        # Total WAF traffic
+        - record: kubewaf:total_traffic:rate5m
+          expr: |
+            sum by (namespace) (rate(waf_filter_tx_total[5m]))
+
+        # Top 10 noisiest rules (by blocks) per namespace - very useful for dashboards
+        - record: kubewaf:top10_noisy_rules:rate5m
+          expr: |
+            topk by (namespace) (10,
+              sum by (namespace, rule_id, phase) (rate(waf_filter_tx_interruptions[5m]))
+            )
+
+    # =====================
+    # ALERTS - Data Plane
+    # =====================
+    - name: kubewaf.waf.alerts
+      rules:
+        # High WAF block rate - possible ongoing attack or mis-tuned rules
+        - alert: KubeWAFHighBlockRate
+          expr: |
+            kubewaf:waf_effectiveness:ratio > 0.15
+          for: 5m
+          labels:
+            severity: warning
+            team: security
+          annotations:
+            summary: "High WAF block rate detected"
+            description: |
+              The WAF is currently blocking {{ $value | humanizePercentage }} of requests.
+              This may indicate an attack in progress or overly aggressive rules.
+              Check top blocked rule_ids with:
+              topk(10, kubewaf:blocked_by_rule:rate5m)
+
+        # Very high block rate - critical
+        - alert: KubeWAFVeryHighBlockRate
+          expr: |
+            kubewaf:waf_effectiveness:ratio > 0.40
+          for: 2m
+          labels:
+            severity: critical
+            team: security
+          annotations:
+            summary: "Critical WAF block rate"
+            description: |
+              More than 40% of traffic is being blocked by the WAF in namespace {{ $labels.namespace }}.
+              Immediate investigation required.
+
+        # WAF appears to be dropping traffic (sudden drop in total transactions)
+        - alert: KubeWAFTrafficDrop
+          expr: |
+            (
+              avg_over_time(sum by (namespace) (rate(waf_filter_tx_total[5m]))[10m:1m])
+              /
+              avg_over_time(sum by (namespace) (rate(waf_filter_tx_total[5m]))[60m:1m])
+            ) < 0.6
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Significant drop in WAF-protected traffic"
+            description: |
+              Traffic volume through the WAF in namespace {{ $labels.namespace }} has dropped by more than 40% compared to the previous hour.
+
+        # Specific rule firing at very high rate (possible bypass or false positive storm)
+        - alert: KubeWAFHighRuleActivity
+          expr: |
+            rate(waf_filter_tx_interruptions[5m]) > 50
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Rule {{ $labels.rule_id }} is firing very frequently"
+            description: |
+              Rule ID {{ $labels.rule_id }} in phase {{ $labels.phase }} is blocking > 50 requests/sec.
+              This may be a false positive or an active attack using that technique.
+
+    # =====================
+    # ALERTS - Operator / Policy Health
+    # =====================
+    - name: kubewaf.operator.alerts
+      rules:
+        # WAF policy is not Ready for a long time
+        - alert: KubeWAFPolicyNotReady
+          expr: |
+            kubewaf_wafenvoygateway_ready == 0
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "WAF {{ $labels.name }} is not Ready"
+            description: |
+              The WAF policy {{ $labels.name }} in namespace {{ $labels.namespace }} has been in a non-Ready state for more than 15 minutes.
+              Check status.conditions and reference resolution.
+
+        # References failed to resolve
+        - alert: KubeWAFReferenceResolutionFailing
+          expr: |
+            increase(kubewaf_reference_resolve_errors_total[10m]) > 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Frequent reference resolution errors"
+            description: |
+              The operator is failing to resolve RuleRefs for WAF policies.
+              This usually means missing SecRules or RuleSets.
+
+        # No rules loaded in an active WAF policy
+        - alert: KubeWAFNoRulesLoaded
+          expr: |
+            kubewaf_rules_loaded == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "WAF policy has zero rules loaded"
+            description: |
+              WAF {{ $labels.name }} has 0 rules after resolution.
+              It will not protect any traffic.
+
+        # Very high reconciliation duration (performance problem)
+        - alert: KubeWAFHighReconciliationDuration
+          expr: |
+            histogram_quantile(0.95, sum(rate(kubewaf_reconcile_duration_seconds_bucket[5m])) by (le, controller)) > 2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Slow WAF controller reconciliation"
+            description: |
+              The 95th percentile reconciliation time for controller {{ $labels.controller }} is over 2 seconds.
+
+        # A single rule is responsible for the majority of blocks (possible tuning opportunity)
+        - alert: KubeWAFDominantRule
+          expr: |
+            topk(1, sum by (rule_id, namespace) (rate(waf_filter_tx_interruptions[10m])))
+              >
+            (sum by (namespace) (rate(waf_filter_tx_interruptions[10m])) * 0.6)
+          for: 15m
+          labels:
+            severity: info
+          annotations:
+            summary: "One rule dominates blocking in namespace {{ $labels.namespace }}"
+            description: |
+              Rule {{ $labels.rule_id }} is responsible for >60% of all blocks.
+              This is often a sign that the rule needs tuning or an exclusion.
+
+        # Sudden spike in blocks from a previously quiet rule (possible new attack pattern)
+        - alert: KubeWAFRuleSpike
+          expr: |
+            (
+              rate(waf_filter_tx_interruptions[5m])
+              /
+              clamp_min(avg_over_time(rate(waf_filter_tx_interruptions[5m])[1h:5m]), 0.1)
+            ) > 8
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Sudden spike in blocks from rule {{ $labels.rule_id }}"
+            description: |
+              Rule {{ $labels.rule_id }} is blocking 8x more than its recent average.
+              Possible new attack technique or false positive introduced by a recent change.

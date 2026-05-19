@@ -200,8 +200,14 @@ monitoring:
     labels: {}
     # -- Assign additional Annotations
     annotations: {}
-    # -- Prometheus Groups for the rule
+    # -- Prometheus Groups for the rule.
+    #   You can also enable the built-in WAF alerts below.
     groups: []
+
+    # -- Enable the recommended WAF data-plane + operator alerts and recording rules.
+    #   When true, a solid set of alerts for waf_filter_* and kubewaf_* metrics is included.
+    wafAlerts:
+      enabled: false
 
   # ServiceMonitor
   serviceMonitor:

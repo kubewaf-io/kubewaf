@@ -1,0 +1,48 @@
+# ServiceMonitor for scraping Coraza WAF metrics from Envoy data plane
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: envoy-waf-metrics
+  namespace: envoy-gateway-system
+  labels:
+    app.kubernetes.io/part-of: kubewaf
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: envoy
+  namespaceSelector:
+    matchNames:
+      - envoy-gateway-system
+  endpoints:
+    - port: admin
+      path: /stats/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      honorLabels: true
+      metricRelabelings:
+        # Only keep WAF and Wasm related metrics
+        - sourceLabels: [__name__]
+          regex: 'waf_filter.*|wasm.*|http.*waf.*'
+          action: keep
+        # Example: drop very high cardinality rule_id if needed
+        # - sourceLabels: [__name__]
+        #   regex: 'waf_filter_tx_interruptions'
+        #   action: drop
+---
+# Also scrape the operator metrics (already partially supported in the chart)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubewaf-operator
+  namespace: kubewaf-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kubewaf
+  namespaceSelector:
+    matchNames:
+      - kubewaf-system
+  endpoints:
+    - port: metrics
+      interval: 30s

@@ -1,0 +1,95 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "title": "kubeWAF - Coraza WASM Metrics",
+  "tags": ["kubewaf", "waf", "coraza", "security"],
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "title": "WAF Effectiveness (Blocked / Total)",
+      "type": "stat",
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [
+        {
+          "expr": "sum(rate(waf_filter_tx_interruptions[5m])) / sum(rate(waf_filter_tx_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 }
+    },
+    {
+      "title": "Total Transactions / sec",
+      "type": "stat",
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "sum(rate(waf_filter_tx_total[5m]))", "refId": "A" }],
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 }
+    },
+    {
+      "title": "Blocked Requests / sec",
+      "type": "stat",
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [{ "expr": "sum(rate(waf_filter_tx_interruptions[5m]))", "refId": "A" }],
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 }
+    },
+    {
+      "title": "Top 15 Rules Triggering Blocks",
+      "type": "bargauge",
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [
+        {
+          "expr": "topk(15, sum by (rule_id, phase) (rate(waf_filter_tx_interruptions[5m])))",
+          "legendFormat": "{{rule_id}} ({{phase}})",
+          "refId": "A"
+        }
+      ],
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 4 }
+    },
+    {
+      "title": "Blocks by Phase",
+      "type": "piechart",
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [
+        {
+          "expr": "sum by (phase) (rate(waf_filter_tx_interruptions[5m]))",
+          "legendFormat": "{{phase}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": { "h": 10, "w": 6, "x": 12, "y": 4 }
+    },
+    {
+      "title": "Blocks by Team / Environment (from extraLabels)",
+      "type": "timeseries",
+      "datasource": "${DS_PROMETHEUS}",
+      "targets": [
+        {
+          "expr": "sum by (team, environment) (rate(waf_filter_tx_interruptions[5m]))",
+          "legendFormat": "{{team}} / {{environment}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 }
+    }
+  ],
+  "schemaVersion": 38
+}

@@ -21,7 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// WAFEnvoyGatewaySpec defines the desired state of WAFEnvoyGateway.
+// WAFSpec defines the desired state of WAF.
 // It attaches WAF policies (via RuleSets) to Envoy Gateway using the
 // Gateway API policy attachment mechanism (PolicyTargetReferences).
 //
@@ -36,7 +36,7 @@ import (
 //
 // CorazaProxyWasmImage allows overriding the Wasm module image (default:
 // ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0).
-type WAFEnvoyGatewaySpec struct {
+type WAFSpec struct {
 	// ParentRefs specifies the target resources (typically Gateways or
 	// GatewayClasses) to which this WAF policy should be attached.
 	// Follows Envoy Gateway policy attachment semantics.
@@ -70,17 +70,56 @@ type WAFEnvoyGatewaySpec struct {
 	// +optional
 	// +kubebuilder:default="ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0"
 	CorazaProxyWasmImage string `json:"corazaProxyWasmImage,omitempty"`
+
+	// Metrics configures observability for the Coraza WASM filter.
+	// Allows controlling metric names, extra labels on interruption metrics,
+	// and whether to include high-cardinality rule_id labels.
+	// +optional
+	Metrics *WAFMetrics `json:"metrics,omitempty"`
 }
 
-// WAFEnvoyGatewayStatus defines the observed state of WAFEnvoyGateway.
+// WAFMetrics configures how metrics from the coraza-proxy-wasm filter are emitted.
+type WAFMetrics struct {
+	// Name sets the logical name / VM ID of the Wasm filter inside Envoy.
+	// This influences metric prefixes (e.g. wasm.<name>.*).
+	// If unset, the controller uses "kubewaf.io".
+	// +optional
+	Name *string `json:"name,omitempty"`
+
+	// RootID matches the root_id expected by the Wasm module for stats/context.
+	// +optional
+	RootID *string `json:"rootID,omitempty"`
+
+	// ExtraLabels are key/value pairs passed to coraza-proxy-wasm.
+	// They will be attached to waf_filter_tx_interruptions metrics.
+	// Example: { "team": "payments", "env": "prod", "gateway": "external" }
+	// +optional
+	ExtraLabels map[string]string `json:"extraLabels,omitempty"`
+
+	// IncludeRuleID controls whether the specific `rule_id` label is included
+	// on waf_filter_tx_interruptions metrics.
+	// Disabling this significantly reduces cardinality in high-traffic environments.
+	// Default: true
+	// +optional
+	// +kubebuilder:default=true
+	IncludeRuleID *bool `json:"includeRuleID,omitempty"`
+
+	// EnableStats enables the core WAF metrics (tx total + interruptions).
+	// Default: true
+	// +optional
+	// +kubebuilder:default=true
+	EnableStats *bool `json:"enableStats,omitempty"`
+}
+
+// WAFStatus defines the observed state of WAF.
 // It follows Kubernetes API conventions for status (see
 // https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties).
 //
 // The controller sets standard conditions including:
 // - ReferencesResolved: whether all RuleSetRefs were successfully resolved.
 // - Ready/Available: overall health of the WAF policy attachment.
-type WAFEnvoyGatewayStatus struct {
-	// Conditions represent the current state of the WAFEnvoyGateway resource.
+type WAFStatus struct {
+	// Conditions represent the current state of the WAF resource.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -89,32 +128,32 @@ type WAFEnvoyGatewayStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:path=wafenvoygateways,scope=Namespaced,categories=waf;security;gateway,shortName=wafeg
+// +kubebuilder:resource:path=wafs,scope=Namespaced,categories=waf;security;gateway,shortName=waf
 
-// WAFEnvoyGateway is the Schema for the wafenvoygateways API
-type WAFEnvoyGateway struct {
+// WAF is the Schema for the wafs API
+type WAF struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// metadata is a standard object metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of WAFEnvoyGateway.
-	// See WAFEnvoyGatewaySpec for details on policy attachment, RuleSet
+	// spec defines the desired state of WAF.
+	// See WAFSpec for details on policy attachment, RuleSet
 	// resolution (with CRS support), and logging configuration.
 	// +required
-	Spec WAFEnvoyGatewaySpec `json:"spec"`
+	Spec WAFSpec `json:"spec"`
 
-	// status defines the observed state of WAFEnvoyGateway
+	// status defines the observed state of WAF
 	// +optional
-	Status WAFEnvoyGatewayStatus `json:"status,omitzero"`
+	Status WAFStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// WAFEnvoyGatewayList contains a list of WAFEnvoyGateway
-type WAFEnvoyGatewayList struct {
+// WAFList contains a list of WAF
+type WAFList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitzero"`
-	Items           []WAFEnvoyGateway `json:"items"`
+	Items           []WAF `json:"items"`
 }

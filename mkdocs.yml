@@ -1,0 +1,130 @@
+site_name: kubeWAF
+site_description: Kubernetes-native Web Application Firewall using ModSecurity-compatible rules and OWASP CRS
+site_url: https://kubewaf.io
+repo_url: https://github.com/kubewaf-io/kubewaf
+repo_name: kubewaf-io/kubewaf
+edit_uri: edit/main/docs/
+
+extra_css:
+  - stylesheets/extra.css
+
+theme:
+  name: material
+  logo: assets/logo-icon.svg
+  favicon: assets/favicon.ico
+  palette:
+    # Palette toggle for light mode
+    - scheme: default
+      primary: indigo
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Palette toggle for dark mode
+    - scheme: slate
+      primary: indigo
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    # Modern navigation
+    - navigation.tabs              # Top-level section tabs (very modern look)
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.tracking
+    - navigation.instant
+    # Content enhancements
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+    - content.tooltips             # Nice hover tooltips on links
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  homepage: https://kubewaf.io   # Makes the logo in the header link to the main website
+
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/kubewaf-io/kubewaf
+    - icon: fontawesome/solid/globe
+      link: https://kubewaf.io
+
+  # Modern announcement bar (honest status + call to action)
+  announce:
+    content: "kubeWAF is under active development — feedback and stars on GitHub are very welcome!"
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  # Enables :fontawesome-*, :material-*, and other icon syntax in markdown
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - Concepts:
+    - Architecture: concepts/architecture.md
+    - Core Concepts: concepts/core-concepts.md
+  - Guides:
+    - Writing Security Rules: guides/writing-rules.md
+    - Using RuleSets: guides/rulesets.md
+    - OWASP Core Rule Set (CRS): guides/using-crs.md
+    - Envoy Gateway Integration: guides/envoy-gateway.md
+    - Observability & Metrics: guides/observability.md
+    - AI Assistance:
+      - Overview: ai/README.md
+      - SecRule Expert Prompt: ai/kubewaf-secrule-expert.md
+  - Reference:
+    - CRDs:
+      - SecRule: reference/crds/secrule.md
+      - RuleSet: reference/crds/ruleset.md
+      - WAF: reference/crds/waf.md
+      - WAFInstance: reference/crds/wafinstance.md
+    - SecLang YAML Structure: reference/seclang-structure.md
+  - Troubleshooting: troubleshooting.md
+  - Contributing: contributing.md
+
+plugins:
+  - search
+  # Generates beautiful social preview cards (Twitter, LinkedIn, Discord, etc.)
+  # Requires: pip install "mkdocs-material[imaging]"
+  - social:
+      cards: true
+      cards_layout_options:
+        background_color: "#0d47a1"   # Deep blue for security tooling feel
+        color: "#ffffff"
+        font_family: Roboto
+
+# For future versioning support with mike:
+# extra:
+#   version:
+#     provider: mike
+
+# Copyright
+copyright: Copyright &copy; 2025 Buzz-IT GmbH. Licensed under Apache 2.0.

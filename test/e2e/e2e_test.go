@@ -145,7 +145,8 @@ var _ = Describe("Manager", Ordered, func() {
 			By("validating that the controller-manager pod is running as expected")
 			verifyControllerUp := func(g Gomega) {
 				// Get the name of the controller-manager pod
-				cmd := exec.Command("kubectl", "get",
+				cmd := exec.Command(
+					"kubectl", "get",
 					"pods", "-l", "control-plane=controller-manager",
 					"-o", "go-template={{ range .items }}"+
 						"{{ if not .metadata.deletionTimestamp }}"+
@@ -162,7 +163,8 @@ var _ = Describe("Manager", Ordered, func() {
 				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
 
 				// Validate the pod's status
-				cmd = exec.Command("kubectl", "get",
+				cmd = exec.Command(
+					"kubectl", "get",
 					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
 					"-n", namespace,
 				)
@@ -175,7 +177,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 		It("should ensure the metrics endpoint is serving metrics", func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
-			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
+			cmd := exec.Command(
+				"kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
 				"--clusterrole=wafv2-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
 			)
@@ -265,6 +268,25 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
+
+		//		It("should expose kubeWAF custom operator metrics", func() {
+		//			By("verifying that custom kubewaf_* metrics are present")
+		//			verifyKubeWAFMetrics := func(g Gomega) {
+		//				metricsOutput, err := getMetricsOutput()
+		//				g.Expect(err).NotTo(HaveOccurred())
+		//
+		//				// Core inventory and policy metrics
+		//				g.Expect(metricsOutput).To(ContainSubstring("kubewaf_wafenvoygateway_total"))
+		//				g.Expect(metricsOutput).To(ContainSubstring("kubewaf_wafenvoygateway_ready"))
+		//				g.Expect(metricsOutput).To(ContainSubstring("kubewaf_rules_loaded"))
+		//				g.Expect(metricsOutput).To(ContainSubstring("kubewaf_reconcile_total"))
+		//				g.Expect(metricsOutput).To(ContainSubstring("kubewaf_reconcile_duration_seconds"))
+		//
+		//				// Reconciliation activity should have been recorded
+		//				g.Expect(metricsOutput).To(ContainSubstring(`controller="waf-wafenvoygateway"`))
+		//			}
+		//			Eventually(verifyKubeWAFMetrics, 2*time.Minute, time.Second).Should(Succeed())
+		//		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 

@@ -4,7 +4,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: wafenvoygateways.waf.kubewaf.io
+  name: wafs.waf.kubewaf.io
 spec:
   group: waf.kubewaf.io
   names:
@@ -12,18 +12,18 @@ spec:
     - waf
     - security
     - gateway
-    kind: WAFEnvoyGateway
-    listKind: WAFEnvoyGatewayList
-    plural: wafenvoygateways
+    kind: WAF
+    listKind: WAFList
+    plural: wafs
     shortNames:
-    - wafeg
-    singular: wafenvoygateway
+    - waf
+    singular: waf
   scope: Namespaced
   versions:
   - name: v1beta1
     schema:
       openAPIV3Schema:
-        description: WAFEnvoyGateway is the Schema for the wafenvoygateways API
+        description: WAF is the Schema for the wafs API
         properties:
           apiVersion:
             description: |-
@@ -44,8 +44,8 @@ spec:
             type: object
           spec:
             description: |-
-              spec defines the desired state of WAFEnvoyGateway.
-              See WAFEnvoyGatewaySpec for details on policy attachment, RuleSet
+              spec defines the desired state of WAF.
+              See WAFSpec for details on policy attachment, RuleSet
               resolution (with CRS support), and logging configuration.
             properties:
               corazaProxyWasmImage:
@@ -63,13 +63,52 @@ spec:
                   When true, CRS rules are merged with those from RuleSetRefs.
                 type: boolean
               logLevel:
-                default: 2
+                default: 7
                 description: |-
                   LogLevel controls verbosity of the Envoy WAF filter logs.
                   Common values: 0=off, 1=error, 2=warn, 3=info, 4=debug (up to 7).
                 maximum: 7
                 minimum: 0
                 type: integer
+              metrics:
+                description: |-
+                  Metrics configures observability for the Coraza WASM filter.
+                  Allows controlling metric names, extra labels on interruption metrics,
+                  and whether to include high-cardinality rule_id labels.
+                properties:
+                  enableStats:
+                    default: true
+                    description: |-
+                      EnableStats enables the core WAF metrics (tx total + interruptions).
+                      Default: true
+                    type: boolean
+                  extraLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      ExtraLabels are key/value pairs passed to coraza-proxy-wasm.
+                      They will be attached to waf_filter_tx_interruptions metrics.
+                      Example: { "team": "payments", "env": "prod", "gateway": "external" }
+                    type: object
+                  includeRuleID:
+                    default: true
+                    description: |-
+                      IncludeRuleID controls whether the specific `rule_id` label is included
+                      on waf_filter_tx_interruptions metrics.
+                      Disabling this significantly reduces cardinality in high-traffic environments.
+                      Default: true
+                    type: boolean
+                  name:
+                    description: |-
+                      Name sets the logical name / VM ID of the Wasm filter inside Envoy.
+                      This influences metric prefixes (e.g. wasm.<name>.*).
+                      If unset, the controller uses "kubewaf.io".
+                    type: string
+                  rootID:
+                    description: RootID matches the root_id expected by the Wasm module
+                      for stats/context.
+                    type: string
+                type: object
               parentRefs:
                 description: |-
                   ParentRefs specifies the target resources (typically Gateways or
@@ -233,8 +272,86 @@ spec:
                           additionalProperties:
                             type: string
                           description: MatchLabels are the set of label selectors
-                            for identifying the targeted resource
+                            for identifying the targeted resource.
                           type: object
+                        namespaces:
+                          description: |-
+                            Namespaces determines which namespaces are considered for target selection.
+
+                            If unspecified, only targets in the same namespace as this policy are considered.
+
+                            When specified, the effective set of namespaces is always constrained to the
+                            namespaces watched by Envoy Gateway.
+
+                            Selecting targets across namespaces requires a ReferenceGrant in the target
+                            namespace that allows this policy kind to reference the selected target kind.
+                            Cross-namespace targets without a matching ReferenceGrant are ignored.
+                          properties:
+                            from:
+                              default: Same
+                              description: |-
+                                From indicates how namespaces are selected for this target selector.
+
+                                All means all namespaces watched by Envoy Gateway.
+                                Selector means namespaces watched by Envoy Gateway that match Selector.
+                              enum:
+                              - Same
+                              - All
+                              - Selector
+                              type: string
+                            selector:
+                              description: Selector selects namespaces when From is
+                                set to Selector.
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: |-
+                                      A label selector requirement is a selector that contains values, a key, and an operator that
+                                      relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          operator represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          values is an array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. This array is replaced during a strategic
+                                          merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: |-
+                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                          required:
+                          - from
+                          type: object
+                          x-kubernetes-validations:
+                          - message: selector must be specified when from is Selector
+                            rule: self.from != 'Selector' || has(self.selector)
                       required:
                       - kind
                       type: object
@@ -326,11 +443,10 @@ spec:
                 type: array
             type: object
           status:
-            description: status defines the observed state of WAFEnvoyGateway
+            description: status defines the observed state of WAF
             properties:
               conditions:
-                description: Conditions represent the current state of the WAFEnvoyGateway
-                  resource.
+                description: Conditions represent the current state of the WAF resource.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

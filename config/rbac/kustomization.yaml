@@ -22,9 +22,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the wafv2 itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
-- waf_wafenvoygateway_admin_role.yaml
-- waf_wafenvoygateway_editor_role.yaml
-- waf_wafenvoygateway_viewer_role.yaml
+- waf_waf_admin_role.yaml
+- waf_waf_editor_role.yaml
+- waf_waf_viewer_role.yaml
 - waf_wafinstance_admin_role.yaml
 - waf_wafinstance_editor_role.yaml
 - waf_wafinstance_viewer_role.yaml

@@ -4,7 +4,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: wafenvoygateways.waf.kubewaf.io
+  name: wafs.waf.kubewaf.io
 spec:
   group: waf.kubewaf.io
   names:
@@ -12,18 +12,18 @@ spec:
     - waf
     - security
     - gateway
-    kind: WAFEnvoyGateway
-    listKind: WAFEnvoyGatewayList
-    plural: wafenvoygateways
+    kind: WAF
+    listKind: WAFList
+    plural: wafs
     shortNames:
-    - wafeg
-    singular: wafenvoygateway
+    - waf
+    singular: waf
   scope: Namespaced
   versions:
   - name: v1beta1
     schema:
       openAPIV3Schema:
-        description: WAFEnvoyGateway is the Schema for the wafenvoygateways API
+        description: WAF is the Schema for the wafs API
         properties:
           apiVersion:
             description: |-
@@ -44,8 +44,8 @@ spec:
             type: object
           spec:
             description: |-
-              spec defines the desired state of WAFEnvoyGateway.
-              See WAFEnvoyGatewaySpec for details on policy attachment, RuleSet
+              spec defines the desired state of WAF.
+              See WAFSpec for details on policy attachment, RuleSet
               resolution (with CRS support), and logging configuration.
             properties:
               corazaProxyWasmImage:
@@ -63,13 +63,52 @@ spec:
                   When true, CRS rules are merged with those from RuleSetRefs.
                 type: boolean
               logLevel:
-                default: 2
+                default: 7
                 description: |-
                   LogLevel controls verbosity of the Envoy WAF filter logs.
                   Common values: 0=off, 1=error, 2=warn, 3=info, 4=debug (up to 7).
                 maximum: 7
                 minimum: 0
                 type: integer
+              metrics:
+                description: |-
+                  Metrics configures observability for the Coraza WASM filter.
+                  Allows controlling metric names, extra labels on interruption metrics,
+                  and whether to include high-cardinality rule_id labels.
+                properties:
+                  enableStats:
+                    default: true
+                    description: |-
+                      EnableStats enables the core WAF metrics (tx total + interruptions).
+                      Default: true
+                    type: boolean
+                  extraLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      ExtraLabels are key/value pairs passed to coraza-proxy-wasm.
+                      They will be attached to waf_filter_tx_interruptions metrics.
+                      Example: { "team": "payments", "env": "prod", "gateway": "external" }
+                    type: object
+                  includeRuleID:
+                    default: true
+                    description: |-
+                      IncludeRuleID controls whether the specific `rule_id` label is included
+                      on waf_filter_tx_interruptions metrics.
+                      Disabling this significantly reduces cardinality in high-traffic environments.
+                      Default: true
+                    type: boolean
+                  name:
+                    description: |-
+                      Name sets the logical name / VM ID of the Wasm filter inside Envoy.
+                      This influences metric prefixes (e.g. wasm.<name>.*).
+                      If unset, the controller uses "kubewaf.io".
+                    type: string
+                  rootID:
+                    description: RootID matches the root_id expected by the Wasm module
+                      for stats/context.
+                    type: string
+                type: object
               parentRefs:
                 description: |-
                   ParentRefs specifies the target resources (typically Gateways or
@@ -326,11 +365,10 @@ spec:
                 type: array
             type: object
           status:
-            description: status defines the observed state of WAFEnvoyGateway
+            description: status defines the observed state of WAF
             properties:
               conditions:
-                description: Conditions represent the current state of the WAFEnvoyGateway
-                  resource.
+                description: Conditions represent the current state of the WAF resource.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

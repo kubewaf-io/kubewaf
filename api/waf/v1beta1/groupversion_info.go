@@ -40,8 +40,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(GroupVersion,
 		&RuleSet{},
 		&RuleSetList{},
-		&WAFEnvoyGateway{},
-		&WAFEnvoyGatewayList{},
+		&WAF{},
+		&WAFList{},
 		&WAFInstance{},
 		&WAFInstanceList{},
 	)

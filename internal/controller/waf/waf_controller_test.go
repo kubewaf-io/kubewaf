@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-var _ = Describe("WAFEnvoyGateway Controller", func() {
+var _ = Describe("WAF Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 		ctx := context.Background()
@@ -23,17 +23,17 @@ var _ = Describe("WAFEnvoyGateway Controller", func() {
 			Name:      resourceName,
 			Namespace: metav1.NamespaceDefault,
 		}
-		wafenvoygateway := &wafv1beta1.WAFEnvoyGateway{}
+		waf := &wafv1beta1.WAF{}
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind WAFEnvoyGateway")
-			err := k8sClient.Get(ctx, typeNamespacedName, wafenvoygateway)
+			By("creating the custom resource for the Kind WAF")
+			err := k8sClient.Get(ctx, typeNamespacedName, waf)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &wafv1beta1.WAFEnvoyGateway{
+				resource := &wafv1beta1.WAF{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: metav1.NamespaceDefault,
 					},
-					Spec: wafv1beta1.WAFEnvoyGatewaySpec{
+					Spec: wafv1beta1.WAFSpec{
 						CRSEnable:            true,
 						LogLevel:             2,
 						CorazaProxyWasmImage: "ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0",
@@ -43,16 +43,16 @@ var _ = Describe("WAFEnvoyGateway Controller", func() {
 			}
 		})
 		AfterEach(func() {
-			resource := &wafv1beta1.WAFEnvoyGateway{}
+			resource := &wafv1beta1.WAF{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			if err == nil {
-				By("Cleanup the specific resource instance WAFEnvoyGateway")
+				By("Cleanup the specific resource instance WAF")
 				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 			}
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &WAFEnvoyGatewayReconciler{
+			controllerReconciler := &WAFReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
@@ -68,7 +68,7 @@ var _ = Describe("WAFEnvoyGateway Controller", func() {
 			}
 
 			By("verifying the Ready condition set by the condition handler changes")
-			updatedResource := &wafv1beta1.WAFEnvoyGateway{}
+			updatedResource := &wafv1beta1.WAF{}
 			err := k8sClient.Get(ctx, typeNamespacedName, updatedResource)
 			Expect(err).NotTo(HaveOccurred())
 

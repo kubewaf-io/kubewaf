@@ -1,26 +1,32 @@
-# Kubernetes WAF Operator
+# kubeWAF Helm Chart
 
-We have always loved how [Flux handles Secrets with SOPS](https://fluxcd.io/flux/guides/mozilla-sops/), it's such a seamless experience. However we have noticed, that it's kind of hard to actually distribute keys to users in a kubernetes native way. That's why we built this operator.
+**Kubernetes-native Web Application Firewall Operator**
 
-## Installation
+This chart deploys the kubeWAF operator, which enables you to manage ModSecurity-compatible WAF rules using native Kubernetes Custom Resources (`SecRule`, `RuleSet`, `WAF`, etc.).
 
-1. Install Helm Chart:
+## Quick Install
 
-        $ helm install kubewaf oci://ghcr.io/kubewaf-io/charts/kubewaf -n waf-system
+```bash
+helm repo add kubewaf https://kubewaf-io.github.io/charts
+helm repo update
 
-3. Show the status:
+helm install kubewaf kubewaf/kubewaf \
+  --namespace kubewaf-system \
+  --create-namespace
+```
 
-        $ helm status kubewaf -n waf-system
+## Full Documentation
 
-4. Upgrade the Chart
+Please see the official documentation site:
 
-        $ helm upgrade kubewaf oci://ghcr.io/kubewaf-io/charts/kubewaf --version 0.1.0
-
-5. Uninstall the Chart
-
-        $ helm uninstall kubewaf -n waf-system
+- [Installation Guide](https://kubewaf.io/getting-started/installation/)
+- [Quick Start](https://kubewaf.io/getting-started/quickstart/)
+- [Observability & Metrics](https://kubewaf.io/guides/observability/) — How to scrape `waf_filter_tx_*` metrics from coraza-proxy-wasm
+- [Helm Values Reference](https://kubewaf.io/) (values are documented via Artifact Hub schema)
 
 ## Values
+
+The table below is generated from `values.schema.json`. The most important ones are shown here for convenience.
 
 The following Values are available for this chart.
 
@@ -99,6 +105,7 @@ The following Values are available for this chart.
 | monitoring.rules.annotations | object | `{}` | Assign additional Annotations |
 | monitoring.rules.enabled | bool | `false` | Enable deployment of PrometheusRules |
 | monitoring.rules.groups | list | `[]` | Prometheus Groups for the rule |
+| monitoring.rules.wafAlerts.enabled | bool | `false` | Enable the built-in recommended WAF + operator alerts |
 | monitoring.rules.labels | object | `{}` | Assign additional labels |
 | monitoring.rules.namespace | string | `""` | Install the rules into a different Namespace, as the monitoring stack one (default: the release one) |
 | monitoring.serviceMonitor.annotations | object | `{}` | Assign additional Annotations |

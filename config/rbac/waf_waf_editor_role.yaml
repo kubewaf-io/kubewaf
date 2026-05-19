@@ -11,12 +11,12 @@ metadata:
   labels:
     app.kubernetes.io/name: wafv2
     app.kubernetes.io/managed-by: kustomize
-  name: waf-wafenvoygateway-editor-role
+  name: waf-waf-editor-role
 rules:
 - apiGroups:
   - waf.kubewaf.io
   resources:
-  - wafenvoygateways
+  - wafs
   verbs:
   - create
   - delete
@@ -28,6 +28,6 @@ rules:
 - apiGroups:
   - waf.kubewaf.io
   resources:
-  - wafenvoygateways/status
+  - wafs/status
   verbs:
   - get

@@ -11,17 +11,17 @@ metadata:
   labels:
     app.kubernetes.io/name: wafv2
     app.kubernetes.io/managed-by: kustomize
-  name: waf-wafenvoygateway-admin-role
+  name: waf-waf-admin-role
 rules:
 - apiGroups:
   - waf.kubewaf.io
   resources:
-  - wafenvoygateways
+  - wafs
   verbs:
   - '*'
 - apiGroups:
   - waf.kubewaf.io
   resources:
-  - wafenvoygateways/status
+  - wafs/status
   verbs:
   - get

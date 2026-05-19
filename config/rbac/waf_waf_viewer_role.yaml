@@ -11,12 +11,12 @@ metadata:
   labels:
     app.kubernetes.io/name: wafv2
     app.kubernetes.io/managed-by: kustomize
-  name: waf-wafenvoygateway-viewer-role
+  name: waf-waf-viewer-role
 rules:
 - apiGroups:
   - waf.kubewaf.io
   resources:
-  - wafenvoygateways
+  - wafs
   verbs:
   - get
   - list
@@ -24,6 +24,6 @@ rules:
 - apiGroups:
   - waf.kubewaf.io
   resources:
-  - wafenvoygateways/status
+  - wafs/status
   verbs:
   - get

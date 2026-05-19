@@ -34,19 +34,20 @@ import (
 	envoygatewayv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	"github.com/kubewaf-io/kubewaf/internal/controller"
+	"github.com/kubewaf-io/kubewaf/internal/metrics"
 	"github.com/kubewaf-io/kubewaf/internal/references2"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
-// WAFEnvoyGatewayReconciler reconciles a WAFEnvoyGateway object
-type WAFEnvoyGatewayReconciler struct {
+// WAFReconciler reconciles a WAF object
+type WAFReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafenvoygateways,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafenvoygateways/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafenvoygateways/finalizers,verbs=update
+// +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=envoyextensionpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=envoyextensionpolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=envoyextensionpolicies/finalizers,verbs=update
@@ -54,42 +55,42 @@ type WAFEnvoyGatewayReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
-// the WAFEnvoyGateway object against the actual cluster state, and then
+// the WAF object against the actual cluster state, and then
 // perform operations to make the cluster state reflect the state specified by
 // the user.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/reconcile
-func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *WAFReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 	var (
-		wafEnvoyGateway            wafv1beta1.WAFEnvoyGateway
+		waf                        wafv1beta1.WAF
 		envoyExtensionPolicy       envoygatewayv1alpha1.EnvoyExtensionPolicy
 		envoyExtensionPolicyCreate = false
 	)
 
-	_, err := controller.InitHandler(ctx, req, &wafEnvoyGateway, r.Client)
+	_, err := controller.InitHandler(ctx, req, &waf, r.Client)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.Get(ctx, types.NamespacedName{Namespace: wafEnvoyGateway.Namespace, Name: wafEnvoyGateway.Name}, &envoyExtensionPolicy); errors.IsNotFound(err) {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: waf.Namespace, Name: waf.Name}, &envoyExtensionPolicy); errors.IsNotFound(err) {
 		envoyExtensionPolicyCreate = true
 	} else if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// copy content meta
-	envoyExtensionPolicy.Name = wafEnvoyGateway.Name
-	envoyExtensionPolicy.Namespace = wafEnvoyGateway.Namespace
-	envoyExtensionPolicy.Finalizers = wafEnvoyGateway.Finalizers
-	envoyExtensionPolicy.Labels = wafEnvoyGateway.Labels
+	envoyExtensionPolicy.Name = waf.Name
+	envoyExtensionPolicy.Namespace = waf.Namespace
+	envoyExtensionPolicy.Finalizers = waf.Finalizers
+	envoyExtensionPolicy.Labels = waf.Labels
 	envoyExtensionPolicy.Spec = envoygatewayv1alpha1.EnvoyExtensionPolicySpec{
-		PolicyTargetReferences: wafEnvoyGateway.Spec.ParentRefs,
+		PolicyTargetReferences: waf.Spec.ParentRefs,
 	}
 
 	resolver := references2.NewRuleRefResolver(r.Client, r.Scheme)
-	objects, errs, err := resolver.AddUpdateReconcile(ctx, wafEnvoyGateway.Spec.RuleSetRefs, &wafEnvoyGateway)
+	objects, errs, err := resolver.AddUpdateReconcile(ctx, waf.Spec.RuleSetRefs, &waf)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -99,23 +100,23 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	var changed = false
 	if len(errs) > 0 {
 		logger.Error(fmt.Errorf("Error"), "Resolver", "errs", errs)
-		changed = meta.SetStatusCondition(&wafEnvoyGateway.Status.Conditions, metav1.Condition{
+		changed = meta.SetStatusCondition(&waf.Status.Conditions, metav1.Condition{
 			Type:               controller.ConditionTypeReferencesResolved,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReferenceResolve",
-			ObservedGeneration: wafEnvoyGateway.Generation,
+			ObservedGeneration: waf.Generation,
 		})
 	} else {
-		changed = meta.SetStatusCondition(&wafEnvoyGateway.Status.Conditions, metav1.Condition{
+		changed = meta.SetStatusCondition(&waf.Status.Conditions, metav1.Condition{
 			Type:               controller.ConditionTypeReferencesResolved,
 			Status:             metav1.ConditionTrue,
 			Reason:             "ReferenceResolve",
-			ObservedGeneration: wafEnvoyGateway.Generation,
+			ObservedGeneration: waf.Generation,
 		})
 	}
 
 	if changed {
-		if err := r.Status().Update(ctx, &wafEnvoyGateway); err != nil {
+		if err := r.Status().Update(ctx, &waf); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -126,18 +127,26 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	name := "kubewaf.io"
+	// Determine Wasm filter name (affects metric prefixes)
+	wasmName := "kubewaf.io"
+	if m := waf.Spec.Metrics; m != nil && m.Name != nil && *m.Name != "" {
+		wasmName = *m.Name
+	}
+
+	// Build base directives
 	defaultCfg := []string{
 		"SecRuleEngine On",
-		"SecDebugLogLevel " + strconv.Itoa(wafEnvoyGateway.Spec.LogLevel),
+		"SecDebugLogLevel " + strconv.Itoa(waf.Spec.LogLevel),
 	}
-	if wafEnvoyGateway.Spec.CRSEnable {
+	if waf.Spec.CRSEnable {
 		enableCrs := []string{
 			"Include @crs-setup-conf",
 			"Include @owasp_crs/*.conf",
 		}
 		defaultCfg = append(defaultCfg, enableCrs...)
 	}
+
+	// Build configuration object for coraza-proxy-wasm
 	cfg := map[string]any{
 		"default_directives": "default",
 		"directives_map": map[string]any{
@@ -145,31 +154,42 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		},
 	}
 
+	// Pass extra metric labels (used by coraza for waf_filter_tx_interruptions)
+	if m := waf.Spec.Metrics; m != nil && len(m.ExtraLabels) > 0 {
+		cfg["metric_labels"] = m.ExtraLabels
+	}
+
 	cfgJson, err := ToJSON(cfg)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Use spec value (defaulted by CRD) or fallback to original default
-	wasmImage := wafEnvoyGateway.Spec.CorazaProxyWasmImage
+	// Wasm image
+	wasmImage := waf.Spec.CorazaProxyWasmImage
 	if wasmImage == "" {
 		wasmImage = "ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0"
 	}
 
-	envoyExtensionPolicy.Spec.Wasm = []envoygatewayv1alpha1.Wasm{
-		{
-			Name: &name,
-			Code: envoygatewayv1alpha1.WasmCodeSource{
-				Type: envoygatewayv1alpha1.ImageWasmCodeSourceType,
-				Image: &envoygatewayv1alpha1.ImageWasmCodeSource{
-					URL: wasmImage,
-				},
+	// Build the Wasm attachment for EnvoyExtensionPolicy
+	wasmAttachment := envoygatewayv1alpha1.Wasm{
+		Name: &wasmName,
+		Code: envoygatewayv1alpha1.WasmCodeSource{
+			Type: envoygatewayv1alpha1.ImageWasmCodeSourceType,
+			Image: &envoygatewayv1alpha1.ImageWasmCodeSource{
+				URL: wasmImage,
 			},
-			Config: cfgJson,
 		},
+		Config: cfgJson,
 	}
 
-	if err := r.Update(ctx, &wafEnvoyGateway); err != nil {
+	// Set RootID if provided (useful for stats and advanced module configuration)
+	if m := waf.Spec.Metrics; m != nil && m.RootID != nil && *m.RootID != "" {
+		wasmAttachment.RootID = m.RootID
+	}
+
+	envoyExtensionPolicy.Spec.Wasm = []envoygatewayv1alpha1.Wasm{wasmAttachment}
+
+	if err := r.Update(ctx, &waf); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -183,25 +203,41 @@ func (r *WAFEnvoyGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	if meta.SetStatusCondition(&wafEnvoyGateway.Status.Conditions, metav1.Condition{
+	if meta.SetStatusCondition(&waf.Status.Conditions, metav1.Condition{
 		Type:               controller.ConditionTypeReady,
 		Status:             metav1.ConditionTrue,
 		Reason:             "Ready",
-		ObservedGeneration: wafEnvoyGateway.Generation,
+		ObservedGeneration: waf.Generation,
 	}) {
-		if err := r.Status().Update(ctx, &wafEnvoyGateway); err != nil {
+		if err := r.Status().Update(ctx, &waf); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
+
+	// === Publish operator metrics ===
+	metrics.WAFReady.WithLabelValues(waf.Namespace, waf.Name).
+		Set(1)
+
+	crsEnabled := 0.0
+	if waf.Spec.CRSEnable {
+		crsEnabled = 1.0
+	}
+	metrics.WAFCRSEnabled.WithLabelValues(waf.Namespace, waf.Name).
+		Set(crsEnabled)
+
+	// RulesLoaded will be updated by the resolver in a future improvement.
+	// For now we publish a placeholder based on resolved objects.
+	metrics.RulesLoaded.WithLabelValues(waf.Namespace, waf.Name, "waf").
+		Set(float64(len(objects)))
 
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *WAFEnvoyGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *WAFReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&wafv1beta1.WAFEnvoyGateway{}).
-		Named("waf-wafenvoygateway").
+		For(&wafv1beta1.WAF{}).
+		Named("waf").
 		Complete(r)
 }
 

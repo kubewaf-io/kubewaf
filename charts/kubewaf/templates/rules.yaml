@@ -16,5 +16,16 @@ metadata:
   {{- end }}
 spec:
   groups:
-    {{- toYaml .Values.monitoring.rules.groups | nindent 4 }}
+    {{- if .Values.monitoring.rules.wafAlerts.enabled }}
+    # Built-in WAF data-plane + operator alerts
+    {{- $wafRules := .Files.Get "waf-alerts.yaml" | fromYaml }}
+    {{- if $wafRules }}
+    {{- toYaml $wafRules.groups | nindent 4 }}
+    {{- end }}
+    {{- end }}
+
+    # User-provided groups
+    {{- with .Values.monitoring.rules.groups }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 {{- end }}
