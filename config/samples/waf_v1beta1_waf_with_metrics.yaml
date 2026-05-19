@@ -1,0 +1,58 @@
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAFEnvoyGateway
+metadata:
+  name: shop-waf-with-metrics
+  namespace: shop
+  labels:
+    app.kubernetes.io/part-of: kubewaf
+    app.kubernetes.io/component: waf-policy
+spec:
+  # Attach to an HTTPRoute (or Gateway)
+  parentRefs:
+    targetRef:
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: shop-frontend
+
+  # Your RuleSets (can be multiple + CRS)
+  ruleRefs:
+    - kind: RuleSet
+      name: shop-protection
+      namespace: shop
+      group: waf.kubewaf.io
+      version: v1beta1
+
+  crsEnable: true
+  logLevel: 4
+
+  # === New Observability Configuration ===
+  metrics:
+    # Custom name for the Wasm filter (affects metric names)
+    name: "coraza-shop-prod"
+
+    # Recommended rootID for the module
+    rootID: "coraza"
+
+    # Extra labels that will appear on all waf_filter_tx_interruptions metrics
+    extraLabels:
+      team: "payments"
+      environment: "production"
+      gateway: "shop-external"
+
+    # Set to false in very high-traffic clusters to drop the high-cardinality rule_id label
+    includeRuleID: true
+
+    # Enable the core WAF metrics (tx_total + interruptions)
+    enableStats: true
+---
+# Optional: Also create a matching EnvoyProxy for proper Prometheus exposure
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: eg-with-waf-metrics
+  namespace: envoy-gateway-system
+spec:
+  telemetry:
+    metrics:
+      prometheus: {}
+      # You can add more advanced matches or OpenTelemetry here
