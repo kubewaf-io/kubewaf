@@ -85,7 +85,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 KIND_CLUSTER ?= wafv2-test-e2e
 
 # Version of Envoy Gateway to install during e2e environment setup
-ENVOY_GATEWAY_VERSION ?= v1.8.0
+ENVOY_GATEWAY_VERSION ?= v1.14.2
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist, and install a simple test application + Envoy Gateway + Gateway/HTTPRoute
