@@ -1,11 +1,11 @@
 module github.com/kubewaf-io/kubewaf
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/corazawaf/coraza/v3 v3.7.0
 	github.com/coreruleset/crslang v0.1.1-0.20260426153157-b9a05467e8b4
-	github.com/envoyproxy/gateway v1.8.0
+	github.com/envoyproxy/gateway v1.8.1
 	github.com/go-logr/logr v1.4.3
 	github.com/jinzhu/copier v0.4.0
 	github.com/onsi/ginkgo/v2 v2.29.0
