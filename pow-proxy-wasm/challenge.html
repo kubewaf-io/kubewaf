@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Verification</title>
+<style>
+:root{
+  --bg:#0b0d12;--bg-e:#12151c;--br:#222833;--ac:#3b82f6;--ac2:#60a5fa;--tx:#e5e7eb;--td:#9ca3af;--suc:#22c55e;--err:#fb923c;--stat:#ffffff0a
+}
+@media (prefers-color-scheme:light){
+  :root{--bg:#f8f9fa;--bg-e:#fff;--br:#e5e7eb;--ac:#2563eb;--ac2:#3b82f6;--tx:#111827;--td:#4b5563;--suc:#16a34a;--err:#c2410c;--stat:#00000008}
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font:14px/1.4 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{width:100%;max-width:340px;background:var(--bg-e);border:1px solid var(--br);border-radius:12px;padding:28px 24px;box-shadow:0 10px 15px -3px rgb(0 0 0 / .1)}
+h1{font-size:15px;font-weight:600;margin-bottom:2px}
+p{color:var(--td);font-size:12px;margin-bottom:16px}
+.row{display:flex;gap:12px;margin:12px 0 16px;font-size:12px}
+.stat{flex:1;background:var(--stat);border:1px solid var(--br);border-radius:8px;padding:8px 10px}
+.stat b{display:block;font-size:13px;font-weight:600}
+#status{margin:4px 0 12px;font-size:13px;color:var(--td)}
+.bar{height:3px;background:var(--br);border-radius:3px;overflow:hidden;margin-bottom:4px}
+.fill{height:100%;width:0;background:linear-gradient(90deg,var(--ac),var(--ac2));transition:width .1s}
+.spin{width:42px;height:42px;border:3px solid var(--br);border-top-color:var(--ac);border-radius:50%;animation:sp .7s linear infinite;margin:0 auto 14px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.suc{color:var(--suc);text-align:center;font-weight:600}
+.err{color:var(--err);text-align:center;font-size:13px}
+@media (prefers-color-scheme:light){.spin{border-color:#ddd;border-top-color:var(--ac)}}
+</style>
+</head>
+<body>
+<div class="card" id="c">
+<div id="s">
+  <div class="spin" id="sp"></div>
+  <h1>Verifying connection</h1>
+  <p id="sub">Solving security challenge</p>
+  <div id="status">Initializing...</div>
+  <div class="row">
+    <div class="stat"><span style="color:var(--td)">Difficulty</span><b id="d">—</b></div>
+    <div class="stat"><span style="color:var(--td)">Rate</span><b id="r">—</b></div>
+    <div class="stat"><span style="color:var(--td)">Time</span><b id="e">0.0s</b></div>
+    <div class="stat"><span style="color:var(--td)">Tries</span><b id="n">0</b></div>
+  </div>
+  <div class="bar"><div class="fill" id="f" style="width:0%"></div></div>
+  <div style="font-size:10px;color:var(--td);text-align:right" id="pt">0%</div>
+</div>
+<div id="err" class="err" style="display:none"></div>
+</div>
+<script>
+function b64dec(s){
+  s=s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4)s+='=';
+  const b=atob(s),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return u;
+}
+const K=new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+function sha256(d){
+  let h=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const l=d.length, pad=(64-(l+9)%64)%64, tot=l+1+pad+8, m=new Uint8Array(tot);
+  m.set(d); m[l]=0x80;
+  const bl=BigInt(l)*8n; for(let i=0;i<8;i++) m[tot-1-i]=Number((bl>>(BigInt(i)*8n))&0xffn);
+  const w=new Uint32Array(64);
+  for(let i=0;i<tot;i+=64){
+    for(let j=0;j<16;j++) w[j]=(m[i+j*4]<<24)|(m[i+j*4+1]<<16)|(m[i+j*4+2]<<8)|m[i+j*4+3];
+    for(let j=16;j<64;j++){
+      const w15=w[j-15], s0=((w15>>>7)|(w15<<25))^((w15>>>18)|(w15<<14))^(w15>>>3);
+      const w2=w[j-2], s1=((w2>>>17)|(w2<<15))^((w2>>>19)|(w2<<13))^(w2>>>10);
+      w[j]=(w[j-16]+s0+w[j-7]+s1)|0;
+    }
+    let a=h[0],b=h[1],c=h[2],dd=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+    for(let j=0;j<64;j++){
+      const S1=((e>>>6)|(e<<26))^((e>>>11)|(e<<21))^((e>>>25)|(e<<7));
+      const ch=(e&f)^((~e)&g), t1=(hh+S1+ch+K[j]+w[j])|0;
+      const S0=((a>>>2)|(a<<30))^((a>>>13)|(a<<19))^((a>>>22)|(a<<10));
+      const maj=(a&b)^(a&c)^(b&c), t2=(S0+maj)|0;
+      hh=g;g=f;f=e;e=(dd+t1)|0; dd=c;c=b;b=a;a=(t1+t2)|0;
+    }
+    h[0]=(h[0]+a)|0;h[1]=(h[1]+b)|0;h[2]=(h[2]+c)|0;h[3]=(h[3]+dd)|0;
+    h[4]=(h[4]+e)|0;h[5]=(h[5]+f)|0;h[6]=(h[6]+g)|0;h[7]=(h[7]+hh)|0;
+  }
+  const o=new Uint8Array(32); for(let i=0;i<8;i++){ o[i*4]=h[i]>>>24;o[i*4+1]=(h[i]>>>16)&255;o[i*4+2]=(h[i]>>>8)&255;o[i*4+3]=h[i]&255; } return o;
+}
+function hasZ(h,b){ if(!b)return true; for(let i=0;i<b;i++){ const bi=Math.floor(i/8),bt=7-(i%8); if((h[bi]&(1<<bt))!==0)return false; } return true; }
+function gc(n){ const m=`; ${document.cookie}`.split(`; ${n}=`); return m.length===2?m.pop().split(';').shift():null; }
+function sc(n,v,ma=300){ document.cookie=`${n}=${v}; Path=/; Max-Age=${ma}; SameSite=Lax`; }
+function fmtR(h){ if(h>999999)return (h/1e6).toFixed(1)+'M'; if(h>999)return Math.floor(h/1000)+'k'; return h|0; }
+function fmtN(n){ if(n>999999)return (n/1e6).toFixed(1)+'M'; if(n>9999)return Math.floor(n/1000)+'k'; return n; }
+
+async function solve(upd){
+  const cb=gc('challenge'), sb=gc('challenge-sig');
+  if(!cb||!sb) throw new Error('challenge cookies not found');
+  const pb=b64dec(cb), pt=JSON.parse(new TextDecoder().decode(pb));
+  const df=pt.diff||18;
+  upd({t:'i',df});
+  const st=Date.now(); let non=0n, lu=st, hsu=0;
+  for(let i=0;i<80000000;i++){
+    const nb=new Uint8Array(8); new DataView(nb.buffer).setBigUint64(0,non,false);
+    const da=new Uint8Array(pb.length+8); da.set(pb); da.set(nb,pb.length);
+    const ha=sha256(da);
+    if(hasZ(ha,df)){
+      const ms=Date.now()-st; upd({t:'s',non:Number(non),el:ms}); return {c:cb,s:sb,n:Number(non)};
+    }
+    non++; hsu++;
+    const nw=Date.now();
+    if(nw-lu>90){
+      const el=nw-st, hr=(hsu/(nw-lu))*1000;
+      upd({t:'p',non:Number(non),el,hr:Math.max(1,hr|0)});
+      hsu=0; lu=nw;
+    }
+    if((non&0x3ffffn)===0n){ await new Promise(r=>setTimeout(r,0)); }
+  }
+  throw new Error('could not solve');
+}
+
+const c=document.getElementById('c'), s=document.getElementById('s'), er=document.getElementById('err');
+const stEl=document.getElementById('status'), dEl=document.getElementById('d'), rEl=document.getElementById('r');
+const eEl=document.getElementById('e'), nEl=document.getElementById('n'), fEl=document.getElementById('f'), pEl=document.getElementById('pt');
+let raf=0, stT=0;
+function elap(){ if(!stT)return; eEl.textContent=((Date.now()-stT)/1000).toFixed(1)+'s'; raf=requestAnimationFrame(elap); }
+
+(async()=>{
+  try{
+    const sol=await solve(u=>{
+      if(u.t==='i'){
+        dEl.textContent=u.df; rEl.textContent='—'; eEl.textContent='0.0s'; nEl.textContent='0'; fEl.style.width='0%'; pEl.textContent='0%';
+        stEl.textContent='Solving...'; stT=Date.now(); if(raf)cancelAnimationFrame(raf); raf=requestAnimationFrame(elap);
+      }else if(u.t==='p'){
+        nEl.textContent=fmtN(u.non); rEl.textContent=fmtR(u.hr)+'/s'; eEl.textContent=(u.el/1000).toFixed(1)+'s';
+        const est=Math.min(97,Math.floor((u.non/2200000)*100)); fEl.style.width=est+'%'; pEl.textContent=est+'%';
+      }else if(u.t==='s'){
+        if(raf)cancelAnimationFrame(raf);
+        nEl.textContent=fmtN(u.non); eEl.textContent=(u.el/1000).toFixed(1)+'s'; rEl.textContent='—';
+        fEl.style.width='100%'; pEl.textContent='100%'; stEl.textContent='Solved';
+      }
+    });
+    sc('challenge-nonce', sol.n);
+    await new Promise(r=>setTimeout(r,700));
+    location.reload();
+  }catch(e){
+    if(raf)cancelAnimationFrame(raf);
+    s.style.display='none'; er.style.display='block'; er.textContent=e.message||'Verification error';
+  }
+})();
+</script>
+</body>
+</html>
