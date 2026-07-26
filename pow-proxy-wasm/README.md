@@ -2,6 +2,8 @@
 
 A lightweight, stateless browser challenge (Proof-of-Work) Proxy-WASM filter for Envoy / Istio / etc.
 
+**Full documentation (kubeWAF docs site):** [pow-proxy-wasm](https://kubewaf.io/docs/pow-proxy-wasm) · source MDX: [`website/content/docs/pow-proxy-wasm/`](../website/content/docs/pow-proxy-wasm/)
+
 **Language: Go** (using `proxy-wasm-go-sdk`, `GOOS=wasip1`). Builds to a small stripped WASM module.
 
 ## Features
@@ -36,11 +38,13 @@ A lightweight, stateless browser challenge (Proof-of-Work) Proxy-WASM filter for
 }
 ```
 
-- `secret`: used for HMAC; **must be the same across all replicas**. If omitted a dev default is used (logs a reminder).
+- `secret`: used for HMAC; **required**, ≥ 32 bytes, **must be the same across all replicas**. Plugin **fails to start** if missing or too short (no hardcoded default).
+- `header` / `value`: optional response header injection.
 - Difficulty bounds respected; dynamic pressure can bump up to +6 under load.
 
 Headers / cookies used (no "kubewaf" branding):
-- Cookies: `challenge`, `challenge-sig`, `challenge-nonce`
+- Solve cookies (60s, aligned with challenge expiry): `challenge`, `challenge-sig`, `challenge-nonce`
+- Access cookie (30 min, HttpOnly): `challenge-clearance`
 - Fallback token header: `challenge-token`
 - Override: `x-challenge-difficulty`
 
@@ -86,8 +90,27 @@ See [example/envoy/README.md](example/envoy/README.md) for more.
 1. Request without valid proof → WASM issues 403 + signed challenge (HMAC) + HTML/JS page.
 2. Browser JS solves PoW (sync SHA-256 loop, very fast) using difficulty from challenge.
 3. On solve: sets `challenge-nonce` cookie, reloads.
-4. WASM sees valid cookies (or `challenge-token` JSON) → verifies HMAC + PoW + expiry + optional IP context → `ActionContinue`.
-5. Dynamic difficulty: pressure tracked locally per filter, published on tick (5s), read with low overhead.
+4. WASM sees valid cookies (or `challenge-token` JSON) → verifies HMAC + PoW + expiry + IP context → issues `challenge-clearance` (30 min) and clears one-shot solve cookies → `ActionContinue`.
+5. Later requests use clearance only (PoW solution is not the long-lived credential).
+6. Dynamic difficulty: pressure tracked locally per filter, published on tick (5s), read with low overhead.
+
+## Timers
+
+| Credential | Lifetime | Notes |
+|------------|----------|--------|
+| Challenge + solve cookies | **60s** | Must match; cookie Max-Age == `ChallengeLifetime` |
+| Clearance cookie | **30 min** | Issued after successful solve; HttpOnly; IP-bound |
+
+## Client binding (IP + connection.id)
+
+| Token | Bound to | Why |
+|-------|----------|-----|
+| Challenge / PoW solve | **IP** + Envoy **`connection.id`** (when available) | Same downstream connection as issue time |
+| Clearance | **IP only** | Survives reload / new connections after a successful solve |
+
+IP resolution order: Envoy `source.address` → left-most `X-Forwarded-For` → `X-Real-IP`. If unknown, IP context is empty (no forged `127.0.0.1`). Strip untrusted XFF at the edge.
+
+`connection.id` is Envoy’s downstream connection identifier (not the TLS protocol session id — that attribute is not exposed to Wasm). The challenge page uses `fetch()` before reload so the solve can complete on the original connection; clearance then carries only the IP.
 
 ## Dark / Light theme
 
@@ -95,9 +118,10 @@ The waiting page automatically follows `prefers-color-scheme` (system / browser 
 
 ## Security notes
 
-- Change the `secret` in production config.
-- Challenge lifetime is short (60s).
-- Context binding (IP) is enforced when provided by L7 (X-Forwarded-For).
+- `secret` is mandatory (≥ 32 bytes); never ship a shared default.
+- Challenge/solve window is short (60s); access continues via clearance (30 min).
+- Clearance is still a bearer cookie (shareable). IP binding reduces cross-client reuse; true one-time nonces would need shared state.
+- Context binding uses connection peer / trusted XFF — configure Envoy hop trust correctly.
 - This is a layer-7 challenge; combine with rate-limit, WAF, mTLS etc.
 
 ## Status

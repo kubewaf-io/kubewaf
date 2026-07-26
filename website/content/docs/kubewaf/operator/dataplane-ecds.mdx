@@ -1,4 +1,7 @@
-# Data plane: gRPC ECDS and multi-provider slots
+---
+title: Data plane (ECDS)
+description: "How kubeWAF pushes config over ECDS to Envoy-based gateways"
+---
 
 This guide is the **authoritative description** of how kubeWAF pushes config into
 Envoy and how Envoy Gateway, Istio, and Cilium attach the filter.
@@ -42,7 +45,7 @@ flowchart TB
 
 **Key idea:** rule updates are pure ECDS publishes. Platform-specific resources
 only install **stubs**. Engines and challenge modules are separate wasm binaries
-served by the operator (see [Wasm engines](engines.md)).
+served by the operator (see [WAF engine](../engine) and [challenge](../challenge)).
 
 ## Architecture deep dive
 
@@ -156,7 +159,7 @@ spec:
     wasmHTTP: https://cdn.example.com/challenge-proxy-wasm.wasm
 ```
 
-Full engine guide: [Wasm engines](engines.md).
+Operator guides: [WAF engine](../engine) · [challenge](../challenge).
 
 ## Provider: Envoy Gateway
 
@@ -225,7 +228,7 @@ spec:
       name: shop-rules
 ```
 
-Full guide: [Envoy Gateway Integration](envoy-gateway.md).
+Full guide: [Envoy Gateway Integration](envoy-gateway).
 
 ## Provider: Istio
 
@@ -251,7 +254,7 @@ spec:
       context: GATEWAY
 ```
 
-Full guide: [Istio Integration](istio.md).
+Full guide: [Istio Integration](istio).
 
 ## Provider: Cilium
 
@@ -272,9 +275,11 @@ spec:
       serviceNamespace: shop
 ```
 
-!!! note "Cilium Envoy build"
-    Creating the CEC is always supported. Whether Wasm/ECDS filters run depends
-    on your Cilium Envoy feature set. See [Cilium Integration](cilium.md).
+<Callout type="info" title="Cilium Envoy build">
+Creating the CEC is always supported. Whether Wasm/ECDS filters run depends
+on your Cilium Envoy feature set. See [Cilium Integration](cilium).
+</Callout>
+
 
 ## Multi-replica / HA
 
@@ -372,9 +377,11 @@ make test-e2e-cilium
 
 ## Related guides
 
-- [Wasm engines (ModSecurity / PoW)](engines.md)
-- [Architecture](../concepts/architecture.md)
-- [Envoy Gateway](envoy-gateway.md)
-- [Istio](istio.md)
-- [Cilium](cilium.md)
-- [Observability](observability.md)
+- [WAF engine](../engine)
+- [Proof-of-Work challenge](../challenge)
+- [Challenge Proxy-WASM (PoW)](../pow-proxy-wasm)
+- [Architecture](../concepts/architecture)
+- [Envoy Gateway](envoy-gateway)
+- [Istio](istio)
+- [Cilium](cilium)
+- [Observability](observability)

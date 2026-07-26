@@ -83,12 +83,14 @@ spec:
                     type: integer
                   secret:
                     description: |-
-                      Secret is the HMAC secret shared across all Envoy replicas (required in production).
-                      Prefer referencing a Secret key via SecretRef when available; plaintext is supported for dev.
+                      Secret is an optional plaintext HMAC override (dev / break-glass).
+                      When empty, the operator uses SecretRef or auto-generates a managed Secret.
                     type: string
                   secretRef:
-                    description: SecretRef references a Kubernetes Secret key holding
-                      the HMAC secret.
+                    description: |-
+                      SecretRef optionally references a user-managed Secret key for the HMAC.
+                      When set (and Secret is empty), that key is used instead of the
+                      operator-managed Secret.
                     properties:
                       key:
                         description: Key within the Secret data map.
@@ -224,30 +226,31 @@ spec:
                   enableStats:
                     default: true
                     description: |-
-                      EnableStats enables the core WAF metrics (tx total + interruptions).
-                      Default: true
+                      EnableStats enables the core WAF metrics (tx total, allowed, interruptions,
+                      rule matches). Default: true
                     type: boolean
                   extraLabels:
                     additionalProperties:
                       type: string
                     description: |-
-                      ExtraLabels are key/value pairs passed to coraza-proxy-wasm.
-                      They will be attached to waf_filter_tx_interruptions metrics.
+                      ExtraLabels are key/value pairs attached to all WAF filter metrics
+                      (modsecurity_proxy_wasm.* / kubewaf_waf.*).
+                      The operator always injects waf_namespace, waf_name, engine, and owner;
+                      ExtraLabels override those keys when set.
                       Example: { "team": "payments", "env": "prod", "gateway": "external" }
                     type: object
                   includeRuleID:
                     default: true
                     description: |-
-                      IncludeRuleID controls whether the specific `rule_id` label is included
-                      on waf_filter_tx_interruptions metrics.
-                      Disabling this significantly reduces cardinality in high-traffic environments.
+                      IncludeRuleID controls whether per-rule_id series are emitted
+                      (tx interruptions and rule matches). Disabling reduces cardinality.
                       Default: true
                     type: boolean
                   name:
                     description: |-
                       Name sets the logical name / VM ID of the Wasm filter inside Envoy.
                       This influences metric prefixes (e.g. wasm.<name>.*).
-                      If unset, the controller uses "kubewaf.io".
+                      If unset, the controller uses the engine default (e.g. kubewaf.modsecurity).
                     type: string
                   rootID:
                     description: RootID matches the root_id expected by the Wasm module
@@ -256,9 +259,9 @@ spec:
                 type: object
               parentRefs:
                 description: |-
-                  ParentRefs specifies the target resources (typically Gateways or
-                  GatewayClasses) to which this WAF policy should be attached.
-                  Follows Envoy Gateway policy attachment semantics (targetRef/targetRefs).
+                  ParentRefs is the legacy nested attachment form (spec.parentRefs.targetRef).
+                  Prefer top-level targetRef/targetRefs. When only parentRefs is set,
+                  EffectivePolicyTargets() still resolves attachment.
                 properties:
                   targetRef:
                     description: |-
@@ -642,6 +645,250 @@ spec:
                   - message: name and selector are mutually exclusive
                     rule: '!(has(self.selector) && has(self.name))'
                 type: array
+              targetRef:
+                description: |-
+                  TargetRef is the name of the resource this policy is being attached to.
+                  This policy and the TargetRef MUST be in the same namespace for this
+                  Policy to have effect
+
+                  Deprecated: use targetRefs/targetSelectors instead
+                properties:
+                  group:
+                    description: Group is the group of the target resource.
+                    maxLength: 253
+                    pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                  kind:
+                    description: Kind is kind of the target resource.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                    type: string
+                  name:
+                    description: Name is the name of the target resource.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  sectionName:
+                    description: |-
+                      SectionName is the name of a section within the target resource. When
+                      unspecified, this targetRef targets the entire resource. In the following
+                      resources, SectionName is interpreted as the following:
+
+                      * Gateway: Listener name
+                      * HTTPRoute: HTTPRouteRule name
+                      * Service: Port name
+
+                      If a SectionName is specified, but does not exist on the targeted object,
+                      the Policy must fail to attach, and the policy implementation should record
+                      a `ResolvedRefs` or similar Condition in the Policy's status.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - group
+                - kind
+                - name
+                type: object
+              targetRefs:
+                description: |-
+                  TargetRefs are the names of the Gateway resources this policy
+                  is being attached to.
+                items:
+                  description: |-
+                    LocalPolicyTargetReferenceWithSectionName identifies an API object to apply a
+                    direct policy to. This should be used as part of Policy resources that can
+                    target single resources. For more information on how this policy attachment
+                    mode works, and a sample Policy resource, refer to the policy attachment
+                    documentation for Gateway API.
+
+                    Note: This should only be used for direct policy attachment when references
+                    to SectionName are actually needed. In all other cases,
+                    LocalPolicyTargetReference should be used.
+                  properties:
+                    group:
+                      description: Group is the group of the target resource.
+                      maxLength: 253
+                      pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
+                    kind:
+                      description: Kind is kind of the target resource.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                      type: string
+                    name:
+                      description: Name is the name of the target resource.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    sectionName:
+                      description: |-
+                        SectionName is the name of a section within the target resource. When
+                        unspecified, this targetRef targets the entire resource. In the following
+                        resources, SectionName is interpreted as the following:
+
+                        * Gateway: Listener name
+                        * HTTPRoute: HTTPRouteRule name
+                        * Service: Port name
+
+                        If a SectionName is specified, but does not exist on the targeted object,
+                        the Policy must fail to attach, and the policy implementation should record
+                        a `ResolvedRefs` or similar Condition in the Policy's status.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
+                  required:
+                  - group
+                  - kind
+                  - name
+                  type: object
+                type: array
+              targetSelectors:
+                description: TargetSelectors allow targeting resources for this policy
+                  based on labels
+                items:
+                  properties:
+                    group:
+                      default: gateway.networking.k8s.io
+                      description: Group is the group that this selector targets.
+                        Defaults to gateway.networking.k8s.io
+                      maxLength: 253
+                      pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
+                    kind:
+                      description: Kind is the resource kind that this selector targets.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                      type: string
+                    matchExpressions:
+                      description: MatchExpressions is a list of label selector requirements.
+                        The requirements are ANDed.
+                      items:
+                        description: |-
+                          A label selector requirement is a selector that contains values, a key, and an operator that
+                          relates the key and values.
+                        properties:
+                          key:
+                            description: key is the label key that the selector applies
+                              to.
+                            type: string
+                          operator:
+                            description: |-
+                              operator represents a key's relationship to a set of values.
+                              Valid operators are In, NotIn, Exists and DoesNotExist.
+                            type: string
+                          values:
+                            description: |-
+                              values is an array of string values. If the operator is In or NotIn,
+                              the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                              the values array must be empty. This array is replaced during a strategic
+                              merge patch.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        required:
+                        - key
+                        - operator
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    matchLabels:
+                      additionalProperties:
+                        type: string
+                      description: MatchLabels are the set of label selectors for
+                        identifying the targeted resource.
+                      type: object
+                    namespaces:
+                      description: |-
+                        Namespaces determines which namespaces are considered for target selection.
+
+                        If unspecified, only targets in the same namespace as this policy are considered.
+
+                        When specified, the effective set of namespaces is always constrained to the
+                        namespaces watched by Envoy Gateway.
+
+                        Selecting targets across namespaces requires a ReferenceGrant in the target
+                        namespace that allows this policy kind to reference the selected target kind.
+                        Cross-namespace targets without a matching ReferenceGrant are ignored.
+                      properties:
+                        from:
+                          default: Same
+                          description: |-
+                            From indicates how namespaces are selected for this target selector.
+
+                            All means all namespaces watched by Envoy Gateway.
+                            Selector means namespaces watched by Envoy Gateway that match Selector.
+                          enum:
+                          - Same
+                          - All
+                          - Selector
+                          type: string
+                        selector:
+                          description: Selector selects namespaces when From is set
+                            to Selector.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - from
+                      type: object
+                      x-kubernetes-validations:
+                      - message: selector must be specified when from is Selector
+                        rule: self.from != 'Selector' || has(self.selector)
+                  required:
+                  - kind
+                  type: object
+                  x-kubernetes-validations:
+                  - message: group must be gateway.networking.k8s.io
+                    rule: 'has(self.group) ? self.group == ''gateway.networking.k8s.io''
+                      : true '
+                type: array
               wasmHTTP:
                 description: |-
                   WasmHTTP is the HTTP(S) URL where Envoy fetches the WAF engine .wasm binary.
@@ -667,6 +914,11 @@ spec:
                 description: ChallengeEnabled reports whether the PoW challenge filter
                   is installed.
                 type: boolean
+              challengeSecretName:
+                description: |-
+                  ChallengeSecretName is the Kubernetes Secret used for the challenge HMAC
+                  (operator-managed name, or the SecretRef name when configured).
+                type: string
               conditions:
                 description: Conditions represent the current state of the WAF resource.
                 items:

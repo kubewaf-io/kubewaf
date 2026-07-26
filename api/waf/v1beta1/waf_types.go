@@ -163,18 +163,24 @@ const (
 )
 
 // ChallengeSpec configures the optional pow-proxy-wasm challenge filter.
+//
+// By default the operator generates and manages a Kubernetes Secret holding the
+// HMAC key (stable across reconciles, owned by the WAF). You do not need to set
+// Secret or SecretRef unless you want to bring your own key.
 type ChallengeSpec struct {
 	// Enabled installs the challenge filter when true.
 	// +optional
 	// +kubebuilder:default=true
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Secret is the HMAC secret shared across all Envoy replicas (required in production).
-	// Prefer referencing a Secret key via SecretRef when available; plaintext is supported for dev.
+	// Secret is an optional plaintext HMAC override (dev / break-glass).
+	// When empty, the operator uses SecretRef or auto-generates a managed Secret.
 	// +optional
 	Secret string `json:"secret,omitempty"`
 
-	// SecretRef references a Kubernetes Secret key holding the HMAC secret.
+	// SecretRef optionally references a user-managed Secret key for the HMAC.
+	// When set (and Secret is empty), that key is used instead of the
+	// operator-managed Secret.
 	// +optional
 	SecretRef *SecretKeyRef `json:"secretRef,omitempty"`
 
@@ -409,6 +415,11 @@ type WAFStatus struct {
 	// ChallengeEnabled reports whether the PoW challenge filter is installed.
 	// +optional
 	ChallengeEnabled bool `json:"challengeEnabled,omitempty"`
+
+	// ChallengeSecretName is the Kubernetes Secret used for the challenge HMAC
+	// (operator-managed name, or the SecretRef name when configured).
+	// +optional
+	ChallengeSecretName string `json:"challengeSecretName,omitempty"`
 
 	// ECDSResourceName is the primary WAF ECDS extension config name.
 	// +optional

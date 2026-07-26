@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1
+# Package a pre-built modsecurity-proxy-wasm.wasm into an OCI image (no compile).
+#
+#   podman build -f build/docker/Dockerfile.oci -t modsecurity-proxy-wasm:latest .
+#
+# Requires dist/modsecurity-proxy-wasm.wasm in the build context (build full image first, or copy from CI).
+
+FROM scratch
+
+ARG CRS_VERSION=v4.27.0
+ARG VERSION=0.1.0
+
+LABEL org.opencontainers.image.title="modsecurity-proxy-wasm" \
+      org.opencontainers.image.description="ModSecurity proxy-wasm module with embedded OWASP CRS for Envoy envoy.wasm.runtime.v8" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.vendor="modsecurity-proxy-wasm" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      modsecurity.proxy_wasm.runtime="envoy.wasm.runtime.v8" \
+      owasp.crs.ref="${CRS_VERSION}"
+
+COPY dist/modsecurity-proxy-wasm.wasm /plugin.wasm

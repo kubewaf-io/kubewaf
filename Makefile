@@ -119,16 +119,19 @@ kind-cluster-cilium: kind ## Create Kind cluster without default CNI (for Cilium
 .PHONY: setup-test-e2e-envoy-gateway
 setup-test-e2e-envoy-gateway: kind-cluster ## Install Envoy Gateway + demo app for e2e
 	@command -v $(HELM) >/dev/null 2>&1 || { echo "Helm is required"; exit 1; }
-	@echo "Installing Envoy Gateway $(ENVOY_GATEWAY_VERSION)..."
+	@echo "Installing Envoy Gateway $(ENVOY_GATEWAY_VERSION) with kubeWAF extensionManager..."
 	@$(HELM) upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
 		--version $(ENVOY_GATEWAY_VERSION) \
 		--namespace envoy-gateway-system \
 		--create-namespace \
+		--values test/e2e/manifests/envoygateway/envoy-gateway-values.yaml \
 		--wait --timeout=5m
+	@# EG extensionManager must list/watch WAF CRs (policyResources).
+	@$(KUBECTL) apply -f test/e2e/manifests/envoygateway/eg-waf-rbac.yaml
 	@$(KUBECTL) apply -f test/e2e/manifests/00-test-application.yaml
 	@$(KUBECTL) apply -f test/e2e/manifests/envoygateway/gateway.yaml
 	@$(KUBECTL) wait --for=condition=Ready pod/httpbin -n demo --timeout=2m || true
-	@echo "Envoy Gateway e2e environment ready."
+	@echo "Envoy Gateway e2e environment ready (extensionManager → kubewaf-ecds:5005)."
 
 .PHONY: setup-test-e2e-istio
 setup-test-e2e-istio: kind-cluster ## Install Istio + demo app for e2e
@@ -465,22 +468,38 @@ generate-crd-docs: crd-ref-docs ## Generate CRD API reference documentation (for
 		--config hack/crd-ref-docs-config.yaml \
 		--source-path . \
 		--renderer markdown \
-		--output-path docs/docs/crd-reference.mdx
+		--output-path website/content/docs/reference/crd-reference.mdx
 
 
 ##@ Documentation
 
+# Docs site lives in website/ (Fumadocs + Next.js static export).
+# Content: website/content/docs/*.mdx
+# Publish dir after build: website/out/
+
+.PHONY: docs-install
+docs-install: ## Install documentation site dependencies (website/)
+	cd website && npm ci
+
 .PHONY: docs-serve
-docs-serve: ## Serve the documentation site locally with live reload (MkDocs)
-	python3 -m pip install --upgrade pip
-	pip install -r docs/requirements.txt
-	mkdocs serve
+docs-serve: ## Serve the documentation site locally with live reload (Fumadocs)
+	cd website && npm install && npm run dev
 
 .PHONY: docs-build
-docs-build: ## Build the static documentation site into ./site/ (for hosting)
-	python3 -m pip install --upgrade pip
-	pip install -r docs/requirements.txt
-	mkdocs build --clean --strict
+docs-build: ## Build the static documentation site into ./website/out/ (for hosting)
+	cd website && npm ci && npm run build
+	@# Static hosts: ensure /docs lands on kubeWAF root (JS redirect + meta refresh)
+	@printf '%s\n' \
+	  '<!DOCTYPE html><html><head>' \
+	  '<meta charset="utf-8"/>' \
+	  '<meta http-equiv="refresh" content="0;url=/docs/kubewaf/"/>' \
+	  '<link rel="canonical" href="/docs/kubewaf/"/>' \
+	  '<title>Redirecting…</title></head><body>' \
+	  '<p>Redirecting to <a href="/docs/kubewaf/">kubeWAF documentation</a>…</p>' \
+	  '</body></html>' > website/out/docs/index.html
+	@rm -rf site
+	@cp -a website/out site
+	@echo "✅ Docs built → website/out/ (and ./site/ for Netlify compatibility)"
 
 .PHONY: netlify
 netlify: docs-build ## Build target for Netlify deployment (set this as your Netlify "Build command")
@@ -488,8 +507,9 @@ netlify: docs-build ## Build target for Netlify deployment (set this as your Net
 	@echo "✅ Netlify build complete."
 	@echo "   → Static site is ready in ./site/"
 	@echo "   → In Netlify, set:"
-	@echo "        Build command:    make netlify"
+	@echo "        Build command:     make netlify"
 	@echo "        Publish directory: site"
+	@echo "   → Or use website/ as base, Build: npm ci && npm run build, Publish: out"
 	@echo ""
 
 

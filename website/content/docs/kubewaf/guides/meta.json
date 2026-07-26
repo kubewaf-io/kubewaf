@@ -1,0 +1,16 @@
+{
+  "title": "Guides (moved)",
+  "pages": [
+    "index",
+    "writing-rules",
+    "rulesets",
+    "using-crs",
+    "dataplane-ecds",
+    "engines",
+    "challenge-proxy-wasm",
+    "envoy-gateway",
+    "istio",
+    "cilium",
+    "observability"
+  ]
+}

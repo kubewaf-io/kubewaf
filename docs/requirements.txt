@@ -1,4 +1,7 @@
-# Documentation build dependencies
-mkdocs>=1.6
-mkdocs-material[imaging]>=9.6
-pymdown-extensions>=10.0
+# Deprecated: documentation moved to Fumadocs (website/).
+# Use: make docs-serve  or  make docs-build
+#
+# Previous MkDocs stack kept for reference only:
+# mkdocs>=1.6
+# mkdocs-material[imaging]>=9.6
+# pymdown-extensions>=10.0

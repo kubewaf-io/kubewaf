@@ -54,5 +54,5 @@ directive order).
 ## Related
 
 - [Architecture](architecture.md)
-- [Data plane (ECDS)](../guides/dataplane-ecds.md)
-- [Wasm engines](../guides/engines.md)
+- [Data plane (ECDS)](../operator/dataplane-ecds.md)
+- [Wasm engines](../modsecurity-proxy-wasm/README.md)

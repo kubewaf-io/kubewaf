@@ -5,8 +5,8 @@ Get a working WAF-protected HTTP service in under 10 minutes.
 ## Assumptions
 
 - You have [installed the operator](installation.md) with a wasm binary (`dataplane.wasmSourceURL` or similar)
-- You use **Envoy Gateway** for this walkthrough (Istio/Cilium: see [provider guides](../guides/dataplane-ecds.md))
-- Envoy Gateway **extensionManager** points at kubeWAF port **5005** ([setup](../guides/envoy-gateway.md#configure-envoy-gateway-extension-server))
+- You use **Envoy Gateway** for this walkthrough (Istio/Cilium: see [provider guides](../operator/dataplane-ecds.md))
+- Envoy Gateway **extensionManager** points at kubeWAF port **5005** ([setup](../operator/envoy-gateway.md#configure-envoy-gateway-extension-server))
 
 ## 1. Install Envoy Gateway (if not already present)
 
@@ -23,7 +23,7 @@ Wait for it to be ready:
 kubectl wait --timeout=5m -n envoy-gateway-system deployment/envoy-gateway --for=condition=Available
 ```
 
-Configure the EG Extension Server as described in the [Envoy Gateway guide](../guides/envoy-gateway.md), then restart Envoy Gateway.
+Configure the EG Extension Server as described in the [Envoy Gateway guide](../operator/envoy-gateway.md), then restart Envoy Gateway.
 
 ## 2. Create a simple Backend Application
 
@@ -277,8 +277,8 @@ sequenceDiagram
 ## Next steps
 
 - [Architecture diagrams](../concepts/architecture.md)  
-- [Writing rules](../guides/writing-rules.md) · [CRS](../guides/using-crs.md)  
-- Other providers: [Istio](../guides/istio.md) · [Cilium](../guides/cilium.md)  
+- [Writing rules](../operator/writing-rules.md) · [CRS](../operator/using-crs.md)  
+- Other providers: [Istio](../operator/istio.md) · [Cilium](../operator/cilium.md)  
 - [WAF CRD reference](../reference/crds/waf.md)
 
 Congratulations — you have a Kubernetes-native, multi-gateway WAF path.

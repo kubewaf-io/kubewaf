@@ -87,5 +87,5 @@ RuleSets use finalizers to maintain back-references on the rules they reference.
 
 ## See Also
 
-- [Using RuleSets](../../guides/rulesets.md) guide
+- [Using RuleSets](../../operator/rulesets.md) guide
 - [RuleSet types.go](https://github.com/kubewaf-io/kubewaf/blob/main/api/waf/v1beta1/ruleset_types.go)

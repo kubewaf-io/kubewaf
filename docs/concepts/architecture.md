@@ -223,7 +223,7 @@ flowchart TB
 | **Istio** | `EnvoyFilter` | `config_discovery` → external ECDS |
 | **Cilium** | `CiliumEnvoyConfig` | CEC clusters + attachment to Service |
 
-See [Data plane (ECDS)](../guides/dataplane-ecds.md) for configuration details.
+See [Data plane (ECDS)](../operator/dataplane-ecds.md) for configuration details.
 
 ## Core CRDs
 
@@ -323,8 +323,8 @@ kubectl describe waf shop-waf
 
 ## Next
 
-- [Wasm engines](../guides/engines.md)
-- [Data plane configuration](../guides/dataplane-ecds.md)
-- [Envoy Gateway guide](../guides/envoy-gateway.md)
-- [Istio guide](../guides/istio.md)
-- [Cilium guide](../guides/cilium.md)
+- [Wasm engines](../modsecurity-proxy-wasm/README.md)
+- [Data plane configuration](../operator/dataplane-ecds.md)
+- [Envoy Gateway guide](../operator/envoy-gateway.md)
+- [Istio guide](../operator/istio.md)
+- [Cilium guide](../operator/cilium.md)

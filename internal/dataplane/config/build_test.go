@@ -142,7 +142,6 @@ func TestBuildFromWAF_ChallengeFilter(t *testing.T) {
 			Engine: wafv1beta1.EngineCoraza,
 			Challenge: &wafv1beta1.ChallengeSpec{
 				Enabled:        boolPtr(true),
-				Secret:         "super-secret-hmac-key-for-tests",
 				BaseDifficulty: intPtr(16),
 			},
 		},
@@ -150,6 +149,8 @@ func TestBuildFromWAF_ChallengeFilter(t *testing.T) {
 	opts := BuildOptions{
 		DefaultECDSHost: "ecds.svc",
 		DefaultECDSPort: 18001,
+		// Controller-resolved HMAC (auto-generated Secret).
+		ChallengeHMAC: "super-secret-hmac-key-for-tests-32b",
 		DefaultModuleHTTP: map[engine.ModuleID]string{
 			engine.ModuleCoraza:    "http://ecds.svc:18002/wasm/coraza-proxy-wasm.wasm",
 			engine.ModuleChallenge: "http://ecds.svc:18002/wasm/challenge-proxy-wasm.wasm",
@@ -168,11 +169,39 @@ func TestBuildFromWAF_ChallengeFilter(t *testing.T) {
 	if p.Filters[1].Role != FilterRoleWAF {
 		t.Fatalf("second filter should be waf: %s", p.Filters[1].Role)
 	}
-	if p.Filters[0].PluginJSON["secret"] != "super-secret-hmac-key-for-tests" {
-		t.Fatalf("secret not set")
+	if p.Filters[0].PluginJSON["secret"] != "super-secret-hmac-key-for-tests-32b" {
+		t.Fatalf("secret not set: %v", p.Filters[0].PluginJSON["secret"])
 	}
 	if p.Filters[0].ExtensionName != "kubewaf/ns1/shop/challenge" {
 		t.Fatalf("challenge name=%s", p.Filters[0].ExtensionName)
+	}
+}
+
+func TestBuildFromWAF_ChallengeFilter_InlineSecretFallback(t *testing.T) {
+	waf := &wafv1beta1.WAF{
+		ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "ns1"},
+		Spec: wafv1beta1.WAFSpec{
+			Engine: wafv1beta1.EngineCoraza,
+			Challenge: &wafv1beta1.ChallengeSpec{
+				Enabled: boolPtr(true),
+				Secret:  "inline-secret-at-least-32-bytes!!",
+			},
+		},
+	}
+	opts := BuildOptions{
+		DefaultECDSHost: "ecds.svc",
+		DefaultECDSPort: 18001,
+		DefaultModuleHTTP: map[engine.ModuleID]string{
+			engine.ModuleCoraza:    "http://ecds.svc:18002/wasm/coraza-proxy-wasm.wasm",
+			engine.ModuleChallenge: "http://ecds.svc:18002/wasm/challenge-proxy-wasm.wasm",
+		},
+	}
+	p, err := BuildFromWAF(waf, nil, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Filters[0].PluginJSON["secret"] != "inline-secret-at-least-32-bytes!!" {
+		t.Fatalf("inline secret not used: %v", p.Filters[0].PluginJSON["secret"])
 	}
 }
 

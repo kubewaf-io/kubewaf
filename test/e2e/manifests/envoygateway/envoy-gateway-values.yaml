@@ -1,0 +1,34 @@
+# Helm values for Envoy Gateway so it calls the kubeWAF Extension Server.
+# Without extensionManager, WAF CRs are Ready/ECDS-published but never injected into Envoy xDS.
+#
+# Service must match the kubeWAF Helm release (default release "kubewaf" in kubewaf-system):
+#   kubectl get svc -n kubewaf-system kubewaf-ecds
+config:
+  envoyGateway:
+    gateway:
+      controllerName: gateway.envoyproxy.io/gatewayclass-controller
+    provider:
+      type: Kubernetes
+    logging:
+      level:
+        default: info
+    extensionManager:
+      policyResources:
+        - group: waf.kubewaf.io
+          version: v1beta1
+          kind: WAF
+      hooks:
+        xdsTranslator:
+          post:
+            - HTTPListener
+            - Translation
+          # Ensure PostTranslateModify receives/returns clusters so kubewaf_ecds is merged.
+          translation:
+            cluster:
+              includeAll: true
+            secret:
+              includeAll: true
+      service:
+        fqdn:
+          hostname: kubewaf-ecds.kubewaf-system.svc.cluster.local
+          port: 5005

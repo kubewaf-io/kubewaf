@@ -81,7 +81,8 @@ function sha256(d){
 }
 function hasZ(h,b){ if(!b)return true; for(let i=0;i<b;i++){ const bi=Math.floor(i/8),bt=7-(i%8); if((h[bi]&(1<<bt))!==0)return false; } return true; }
 function gc(n){ const m=`; ${document.cookie}`.split(`; ${n}=`); return m.length===2?m.pop().split(';').shift():null; }
-function sc(n,v,ma=300){ document.cookie=`${n}=${v}; Path=/; Max-Age=${ma}; SameSite=Lax`; }
+// Max-Age must match server ChallengeLifetime (60s) so solve cookies expire with the PoW window.
+function sc(n,v,ma=60){ document.cookie=`${n}=${v}; Path=/; Max-Age=${ma}; SameSite=Lax`; }
 function fmtR(h){ if(h>999999)return (h/1e6).toFixed(1)+'M'; if(h>999)return Math.floor(h/1000)+'k'; return h|0; }
 function fmtN(n){ if(n>999999)return (n/1e6).toFixed(1)+'M'; if(n>9999)return Math.floor(n/1000)+'k'; return n; }
 
@@ -133,7 +134,14 @@ function elap(){ if(!stT)return; eEl.textContent=((Date.now()-stT)/1000).toFixed
       }
     });
     sc('challenge-nonce', sol.n);
-    await new Promise(r=>setTimeout(r,700));
+    stEl.textContent='Confirming...';
+    // Prefer same downstream connection as the challenge (connection.id bind):
+    // fetch on this page reuses keep-alive when possible, server mints clearance,
+    // then navigate with the IP-only clearance cookie.
+    try{
+      await fetch(location.href,{credentials:'same-origin',cache:'no-store',redirect:'follow',headers:{'accept':'text/html'}});
+    }catch(_){/* network blip — still try navigation */}
+    await new Promise(r=>setTimeout(r,200));
     location.reload();
   }catch(e){
     if(raf)cancelAnimationFrame(raf);

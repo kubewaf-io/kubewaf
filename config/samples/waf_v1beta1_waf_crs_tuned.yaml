@@ -7,11 +7,10 @@ metadata:
     app.kubernetes.io/part-of: kubewaf
 spec:
   # Attach to your HTTPRoute / Gateway as usual
-  parentRefs:
-    targetRef:
-      group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: shop-frontend
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: shop-frontend
 
   # Pull in the full CRS (or a filtered RuleSet)
   crsEnable: true

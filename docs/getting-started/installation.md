@@ -28,7 +28,7 @@ helm install kubewaf kubewaf/kubewaf \
     Envoy fetches Wasm over HTTP. Provide source URLs **or** mount files under
     `/wasm` for **modsecurity-proxy-wasm** and optional **challenge** (PoW).
     Monorepo: `make wasm-build` → `dist/wasm/`.  
-    See [Wasm engines](../guides/engines.md) and [Data plane](../guides/dataplane-ecds.md#wasm-binary-delivery-multi-module).
+    See [Wasm engines](../modsecurity-proxy-wasm/README.md) and [Data plane](../operator/dataplane-ecds.md#wasm-binary-delivery-multi-module).
 
 ### Verify
 
@@ -57,7 +57,7 @@ CRDs:
 ### Envoy Gateway only: enable Extension Server
 
 After install, configure Envoy Gateway to call kubeWAF on port **5005**.
-See [Envoy Gateway guide](../guides/envoy-gateway.md#configure-envoy-gateway-extension-server).
+See [Envoy Gateway guide](../operator/envoy-gateway.md#configure-envoy-gateway-extension-server).
 
 ## Helm values overview
 
@@ -124,7 +124,7 @@ helm upgrade kubewaf kubewaf/kubewaf -n kubewaf-system
 ```
 
 If upgrading from versions that created `EnvoyExtensionPolicy`, delete those
-objects and re-apply `WAF` CRs ([migration](../guides/dataplane-ecds.md#migration-from-envoyextensionpolicy)).
+objects and re-apply `WAF` CRs ([migration](../operator/dataplane-ecds.md#migration-from-envoyextensionpolicy)).
 
 ## Uninstalling
 
@@ -136,5 +136,5 @@ helm uninstall kubewaf -n kubewaf-system
 ## Next steps
 
 1. [Quick start](quickstart.md)  
-2. [Data plane setup](../guides/dataplane-ecds.md)  
-3. Provider guide: [Envoy Gateway](../guides/envoy-gateway.md) · [Istio](../guides/istio.md) · [Cilium](../guides/cilium.md)
+2. [Data plane setup](../operator/dataplane-ecds.md)  
+3. Provider guide: [Envoy Gateway](../operator/envoy-gateway.md) · [Istio](../operator/istio.md) · [Cilium](../operator/cilium.md)

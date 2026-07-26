@@ -1,0 +1,21 @@
+{
+  "title": "kubeWAF",
+  "description": "Kubernetes operator — CRDs, rules, challenge, providers",
+  "root": true,
+  "pages": [
+    "index",
+    "---Getting Started---",
+    "...getting-started",
+    "---Concepts---",
+    "...concepts",
+    "---Guides---",
+    "...operator",
+    "---Reference---",
+    "...reference",
+    "---AI Assistance---",
+    "...ai",
+    "---",
+    "troubleshooting",
+    "contributing"
+  ]
+}

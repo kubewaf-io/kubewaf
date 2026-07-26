@@ -1,4 +1,7 @@
-# Envoy Gateway Integration
+---
+title: Envoy Gateway
+description: "Protect traffic with kubeWAF and Envoy Gateway"
+---
 
 Protect Gateway API traffic when your cluster runs **Envoy Gateway**. kubeWAF
 does **not** create `EnvoyExtensionPolicy` anymore. Instead it:
@@ -6,7 +9,7 @@ does **not** create `EnvoyExtensionPolicy` anymore. Instead it:
 1. Publishes **modsecurity-proxy-wasm** config over **gRPC ECDS**
 2. Injects the filter slot via the **Envoy Gateway Extension Server**
 
-For the full multi-provider model see [Data plane (ECDS)](dataplane-ecds.md).
+For the full multi-provider model see [Data plane (ECDS)](dataplane-ecds).
 
 ## How it works
 
@@ -79,6 +82,82 @@ extensionManager:
 ```
 
 Apply to the Envoy Gateway config (often a ConfigMap in `envoy-gateway-system`) and restart the controller.
+
+Also grant the Envoy Gateway ServiceAccount permission to list/watch `wafs` (and optionally patch status):
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubewaf-envoy-gateway-waf-reader
+rules:
+  - apiGroups: [waf.kubewaf.io]
+    resources: [wafs, wafs/status]
+    verbs: [get, list, watch, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubewaf-envoy-gateway-waf-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubewaf-envoy-gateway-waf-reader
+subjects:
+  - kind: ServiceAccount
+    name: envoy-gateway
+    namespace: envoy-gateway-system
+```
+
+### Bootstrap: static `kubewaf_ecds` cluster (required)
+
+Envoy rejects ECDS filter stubs unless the gRPC cluster named in
+`ApiConfigSource` is a **bootstrap static (non-EDS) cluster**. Adding
+`kubewaf_ecds` only via CDS (`PostTranslateModify`) produces:
+
+```text
+Error adding/updating listener(s) ...:
+ApiConfigSource must have a statically defined non-EDS cluster: 'kubewaf_ecds'
+```
+
+Patch the `EnvoyProxy` used by your GatewayClass (JSONPatch appends to the
+default bootstrap):
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: envoy-proxy-config
+  namespace: envoy-gateway-system
+spec:
+  bootstrap:
+    type: JSONPatch
+    jsonPatches:
+      - op: add
+        path: /static_resources/clusters/-
+        value:
+          name: kubewaf_ecds
+          type: STRICT_DNS
+          connect_timeout: 2s
+          lb_policy: ROUND_ROBIN
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options: {}
+          load_assignment:
+            cluster_name: kubewaf_ecds
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: kubewaf-ecds.kubewaf-system.svc.cluster.local
+                          port_value: 18001
+```
+
+Hostname/port must match the kubeWAF ECDS Service (`kubewaf-ecds` port **18001**).
+Restart Envoy proxy pods after changing bootstrap.
 
 ## Basic example
 
@@ -195,7 +274,7 @@ different WAF objects.
 
 ## Related
 
-- [Data plane (ECDS)](dataplane-ecds.md)
-- [Architecture](../concepts/architecture.md)
-- [Observability](observability.md)
-- [Envoy Gateway Wasm docs](https://gateway.envoyproxy.io/docs/tasks/extensibility/wasm/)
+- [Data plane (ECDS)](dataplane-ecds)
+- [Architecture](../concepts/architecture)
+- [Observability](observability)
+- [Envoy Gateway Wasm docs](https://gateway.envoyproxy.io)

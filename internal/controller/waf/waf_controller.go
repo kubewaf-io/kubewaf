@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -60,6 +61,7 @@ type WAFReconciler struct {
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=wafs/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.istio.io,resources=envoyfilters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cilium.io,resources=ciliumenvoyconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways;httproutes;gatewayclasses,verbs=get;list;watch
@@ -122,7 +124,17 @@ func (r *WAFReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	portable, err := config.BuildFromWAF(&waf, rules, r.BuildOpts)
+	buildOpts := r.BuildOpts
+	var challengeHMAC ChallengeHMACResult
+	if ChallengeEnabled(waf.Spec.Challenge) {
+		challengeHMAC, err = ResolveChallengeHMAC(ctx, r.Client, r.Scheme, &waf)
+		if err != nil {
+			return ctrl.Result{}, r.markNotReady(ctx, &waf, "ChallengeSecret", err.Error())
+		}
+		buildOpts.ChallengeHMAC = challengeHMAC.Value
+	}
+
+	portable, err := config.BuildFromWAF(&waf, rules, buildOpts)
 	if err != nil {
 		return ctrl.Result{}, r.markNotReady(ctx, &waf, "BuildConfig", err.Error())
 	}
@@ -147,9 +159,11 @@ func (r *WAFReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	waf.Status.Provider = portable.Provider
 	waf.Status.Engine = portable.Engine
 	waf.Status.ChallengeEnabled = false
+	waf.Status.ChallengeSecretName = ""
 	for _, f := range portable.Filters {
 		if f.Role == config.FilterRoleChallenge {
 			waf.Status.ChallengeEnabled = true
+			waf.Status.ChallengeSecretName = challengeHMAC.SecretName
 			break
 		}
 	}
@@ -268,6 +282,7 @@ func (r *WAFReconciler) markNotReady(ctx context.Context, waf *wafv1beta1.WAF, r
 func (r *WAFReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&wafv1beta1.WAF{}).
+		Owns(&corev1.Secret{}).
 		Named("waf").
 		Complete(r)
 }

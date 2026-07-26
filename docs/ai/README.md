@@ -26,7 +26,7 @@ Example prompt after loading the expert:
 2. **When you want raw SecLang** (simpler for humans and AIs): Ask the AI to output classic ModSecurity `SecRule` syntax first, then use the included conversion helpers or `cmd/crs-converter` to turn it into a proper `SecRule` CR.
 3. **Fully offline / air-gapped**: See the local small model guide (coming soon) or run a local 7B–9B model with the expert prompt + grammar constraints.
 
-See the main guide [Writing Security Rules](../guides/writing-rules.md#writing-rules-with-ai-assistance) for more context and examples of the AI-assisted flow.
+See the main guide [Writing Security Rules](../operator/writing-rules.md#writing-rules-with-ai-assistance) for more context and examples of the AI-assisted flow.
 
 ## Validation Is Mandatory
 

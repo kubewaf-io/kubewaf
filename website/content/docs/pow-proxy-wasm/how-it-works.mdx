@@ -1,0 +1,103 @@
+---
+title: How it works
+description: "Request path, cookies, cryptography, IP binding, dynamic difficulty"
+---
+
+## Request path
+
+1. **Clearance cookie** (`challenge-clearance`) present and valid  
+   → continue (HMAC + expiry + optional IP bind).
+2. Else **one-shot PoW cookies** (`challenge`, `challenge-sig`, `challenge-nonce`)  
+   or **`challenge-token`** header JSON valid  
+   → continue, and on the response mint clearance / drop solve cookies.
+3. Else **issue a new challenge**: HTTP **403**, HTML solver page, signed
+   challenge cookies. Browser solves, sets nonce, reloads.
+
+There is **no POST verify endpoint**. The browser only sets cookies and reloads;
+the filter verifies on the next request.
+
+## Cryptography
+
+| Piece | Mechanism |
+|-------|-----------|
+| Challenge authenticity | HMAC-SHA256 over base64url(challenge payload), secret shared by all replicas |
+| PoW | SHA-256(`payload_bytes ‖ BE_uint64(nonce)`) with *N* leading zero bits |
+| Clearance | HMAC-SHA256 over base64url(clearance payload); cookie value `body.sig` |
+
+Challenge payload fields (JSON, then base64url):
+
+| Field | Meaning |
+|-------|---------|
+| `ts` / `exp` | Issued / expiry (unix seconds) |
+| `diff` | Difficulty (leading zero bits) |
+| `salt` | Random salt |
+| `ctx` | Optional client IP |
+| `cid` | Optional Envoy `connection.id` (downstream connection bind) |
+
+## Client page
+
+`challenge.html` is **embedded** in the WASM binary (`//go:embed`). Single file:
+no CDN, fonts, or external scripts. Sync SHA-256 in JS, system dark/light theme,
+sets `challenge-nonce` on success.
+
+## Timers and cookies
+
+Solve window and cookie Max-Age are **aligned** so cookies cannot outlive the
+signed challenge.
+
+| Credential | Cookie(s) | Lifetime | HttpOnly | Purpose |
+|------------|-----------|----------|----------|---------|
+| Challenge / solve | `challenge`, `challenge-sig`, `challenge-nonce` | **60s** | No (JS must read) | One-shot PoW window |
+| Clearance | `challenge-clearance` | **30 min** | **Yes** | Access after successful solve |
+
+**Why clearance?** Replaying the raw PoW triple for half an hour would turn the
+solution into a long-lived bearer token. After verify, the filter issues a
+separate signed clearance cookie and **deletes** the solve cookies.
+
+Clearance is still a **bearer cookie** (shareable until expiry). IP binding
+narrows reuse; true single-use nonces need shared cluster state.
+
+Other headers:
+
+| Name | Role |
+|------|------|
+| `challenge-token` | Optional JSON solution for non-browser clients |
+| `x-challenge-difficulty` | Per-request difficulty override (clamped to min/max) |
+| `challenge-sig` | Response header exposing signature for non-cookie clients |
+| Config `header` / `value` | Optional header injected on successful/pass-through responses |
+
+## Client binding (IP + connection.id)
+
+| Token | Fields | Binding |
+|-------|--------|---------|
+| Challenge (`ctx`, `cid`) | Client IP + Envoy `connection.id` | Same IP; same downstream connection when both sides see a connection id |
+| Clearance (`ctx`) | Client IP only | Survives reload and new TCP/TLS connections |
+
+IP resolution order: Envoy `source.address` → left-most `X-Forwarded-For` →
+`X-Real-IP` → empty (skip IP binding). Strip untrusted XFF at the edge.
+
+## Dynamic difficulty
+
+1. Each issued challenge increments a **local** counter.  
+2. On a **5s tick**, map recent issue rate → `base + {0…6}` (clamped to min/max).  
+3. Publish best-effort shared value for other VMs.
+
+Priority for a **new** challenge: `x-challenge-difficulty` header → dynamic value
+→ config `base_difficulty`.
+
+## Security model
+
+| Guarantee | Status |
+|-----------|--------|
+| Stateless multi-replica (shared secret only) | Yes |
+| Challenge cannot be forged without secret | Yes (HMAC) |
+| Browser must spend CPU for a solve | Yes (PoW) |
+| Secret required at startup | Yes (fail closed) |
+| Solve cookies aligned with challenge expiry | Yes (60s) |
+| Long-lived credential is clearance, not raw PoW | Yes |
+| Clearance not readable by page JS | Yes (HttpOnly) |
+| True one-time PoW / global anti-replay | No |
+| Strong client identity | No |
+
+**Recommendations:** shared secret across replicas; combine with rate limits and
+WAF; correct XFF trust at the edge.

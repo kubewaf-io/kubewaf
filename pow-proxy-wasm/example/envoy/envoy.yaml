@@ -21,6 +21,9 @@ static_resources:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: ingress_http
                 codec_type: AUTO
+                # Trust only the immediate peer for XFF when testing locally.
+                # In production, set use_remote_address / xff_num_trusted_hops appropriately.
+                use_remote_address: true
                 route_config:
                   name: local_route
                   virtual_hosts:
@@ -38,17 +41,18 @@ static_resources:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
                       config:
                         name: "challenge-proxy-wasm"
-                        # configuration:
-                        #   "@type": type.googleapis.com/google.protobuf.StringValue
-                        #   value: |
-                        #     {
-                        #       "header": "x-wasm-header",
-                        #       "value": "demo-wasm",
-                        #       "secret": "change-this-to-a-strong-secret-in-prod",
-                        #       "base_difficulty": 18,
-                        #       "min_difficulty": 12,
-                        #       "max_difficulty": 26
-                        #     }
+                        # Required: secret must be present and >= 32 bytes or the plugin fails to start.
+                        configuration:
+                          "@type": type.googleapis.com/google.protobuf.StringValue
+                          value: |
+                            {
+                              "secret": "dev-only-change-me-32bytes-min!!",
+                              "header": "x-wasm-header",
+                              "value": "demo-wasm",
+                              "base_difficulty": 18,
+                              "min_difficulty": 12,
+                              "max_difficulty": 26
+                            }
                         vm_config:
                           runtime: "envoy.wasm.runtime.v8"
                           vm_id: "challenge_vm"

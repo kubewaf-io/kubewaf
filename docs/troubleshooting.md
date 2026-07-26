@@ -82,7 +82,7 @@ flowchart TD
 5. Engine / challenge status:
 
    ```bash
-   kubectl get waf <name> -n <ns> -o jsonpath='{.status.engine}{" challenge="}{.status.challengeEnabled}{"\n"}'
+   kubectl get waf <name> -n <ns> -o jsonpath='{.status.engine}{" challenge="}{.status.challengeEnabled}{" secret="}{.status.challengeSecretName}{"\n"}'
    ```
 
 6. Raise WAF engine verbosity:
@@ -106,7 +106,7 @@ Message is on the condition.
 ## Ready = False with ECDS errors
 
 - modsecurity-proxy-wasm not loaded on the operator (`/wasm/modsecurity-proxy-wasm.wasm` or source URL)  
-- Challenge enabled but challenge wasm / secret missing  
+- Challenge enabled but challenge wasm missing, or managed Secret not created (`kubectl get secret <waf>-challenge-hmac`)
 - Invalid HTTP URL / sha256 mismatch  
 - ECDS snapshot reject — check operator logs for `ECDS upsert`
 
@@ -162,5 +162,5 @@ kubectl -n envoy-gateway-system logs deploy/envoy-gateway --tail=100
 ## Related docs
 
 - [Architecture](concepts/architecture.md)
-- [Data plane](guides/dataplane-ecds.md)
-- [Envoy Gateway](guides/envoy-gateway.md) · [Istio](guides/istio.md) · [Cilium](guides/cilium.md)
+- [Data plane](operator/dataplane-ecds.md)
+- [Envoy Gateway](operator/envoy-gateway.md) · [Istio](operator/istio.md) · [Cilium](operator/cilium.md)

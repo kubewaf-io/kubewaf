@@ -110,6 +110,11 @@ type BuildOptions struct {
 	// ChallengeSecret resolves SecretRef when set by the reconciler.
 	// Keyed by "namespace/name/key".
 	ChallengeSecrets map[string]string
+
+	// ChallengeHMAC is the resolved HMAC secret string for the challenge filter
+	// (set by the controller after auto-generating or reading a Secret).
+	// Preferred over Spec.Challenge.Secret when non-empty.
+	ChallengeHMAC string
 }
 
 // BuildFromWAF resolves directives and returns a PortableConfig ready for ECDS + slots.
@@ -155,7 +160,7 @@ func BuildFromWAF(waf *wafv1beta1.WAF, rules []string, opts BuildOptions) (*Port
 	filters := make([]PortableFilter, 0, 2)
 
 	// Optional challenge filter first in the chain.
-	if challengeEnabled(waf.Spec.Challenge) {
+	if ChallengeEnabled(waf.Spec.Challenge) {
 		chFilter, err := buildChallengeFilter(waf, opts)
 		if err != nil {
 			return nil, err
@@ -270,26 +275,29 @@ func buildChallengeFilter(waf *wafv1beta1.WAF, opts BuildOptions) (*PortableFilt
 	if ch == nil {
 		return nil, fmt.Errorf("challenge is nil")
 	}
-	secret := ch.Secret
-	if ch.SecretRef != nil {
+
+	// Resolve HMAC: controller-injected value first, then inline / SecretRef map.
+	// Identity-only builds (e.g. EG extension_resources stubs) may omit the secret;
+	// ECDS publish paths always inject ChallengeHMAC via the reconciler.
+	secret := opts.ChallengeHMAC
+	if secret == "" {
+		secret = ch.Secret
+	}
+	if secret == "" && ch.SecretRef != nil {
 		key := waf.Namespace + "/" + ch.SecretRef.Name + "/" + ch.SecretRef.Key
 		if opts.ChallengeSecrets != nil {
 			if v, ok := opts.ChallengeSecrets[key]; ok {
 				secret = v
 			}
 		}
-		if secret == "" {
-			return nil, fmt.Errorf("challenge secretRef %s/%s key %q not resolved",
-				waf.Namespace, ch.SecretRef.Name, ch.SecretRef.Key)
-		}
-	}
-	if secret == "" {
-		// Dev default — pow-proxy-wasm logs a reminder; operators should set secret.
-		secret = "kubewaf-dev-challenge-secret-change-me"
 	}
 
-	plugin := map[string]any{
-		"secret": secret,
+	plugin := map[string]any{}
+	if secret != "" {
+		if len(secret) < 32 {
+			return nil, fmt.Errorf("challenge HMAC secret must be at least 32 bytes (got %d)", len(secret))
+		}
+		plugin["secret"] = secret
 	}
 	if ch.BaseDifficulty != nil {
 		plugin["base_difficulty"] = *ch.BaseDifficulty
@@ -324,7 +332,8 @@ func buildChallengeFilter(waf *wafv1beta1.WAF, opts BuildOptions) (*PortableFilt
 	}, nil
 }
 
-func challengeEnabled(ch *wafv1beta1.ChallengeSpec) bool {
+// ChallengeEnabled reports whether the PoW challenge filter should be installed.
+func ChallengeEnabled(ch *wafv1beta1.ChallengeSpec) bool {
 	if ch == nil {
 		return false
 	}

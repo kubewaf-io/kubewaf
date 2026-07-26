@@ -1,0 +1,141 @@
+# Test Envoy config for modsecurity-proxy-wasm
+# WASM metrics: curl -s http://127.0.0.1:19901/stats/prometheus | grep modsecurity_proxy_wasm
+stats_config:
+  stats_tags:
+    # Non-greedy captures: stat names embed phase/severity/tag before metric_labels.
+    - tag_name: phase
+      regex: "(_phase=(http_request_headers|http_request_body|http_response_headers|http_response_body|http_logging|unknown))"
+    - tag_name: rule_id
+      regex: "(_ruleid=([0-9]+))"
+    - tag_name: owner
+      regex: "(_owner=([0-9a-z.:_-]+?))(?:_|$)"
+    - tag_name: identifier
+      regex: "(_identifier=([0-9a-z.:_-]+))"
+    - tag_name: severity
+      regex: "(_severity=([0-9]+))"
+    - tag_name: tag
+      regex: "(_tag=([0-9a-zA-Z.-]+?))_phase="
+# Run with: docker run --rm -v $(pwd)/dist/modsecurity-proxy-wasm.wasm:/etc/modsecurity-proxy-wasm.wasm:ro \
+#   -v $(pwd)/test/fixtures/envoy.yaml:/etc/envoy.yaml:ro -p 8080:8080 \
+#   envoyproxy/envoy:v1.38-latest
+#   envoy -c /etc/envoy.yaml --log-level info
+#
+# Routes go to a local upstream cluster (not direct_response on the wasm listener).
+# Envoy only delivers request bodies to wasm when the router forwards upstream.
+#
+# Test block:
+#   curl -v "http://localhost:8080/?q=<script>alert(1)</script>"
+# Expect 403 and log modsecurity-proxy-wasm intervention.
+
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 8080
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          codec_type: AUTO
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: local_service
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/"
+                route:
+                  cluster: local_backend
+          http_filters:
+          - name: envoy.filters.http.wasm
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
+              config:
+                name: "modsecurity_proxy_wasm"
+                vm_config:
+                  # REQUIRED: modsecurity-proxy-wasm.wasm is Emscripten/proxy-wasm (not WASI). Do not use wazero.
+                  vm_id: "modsecurity_proxy_wasm_v8"
+                  runtime: "envoy.wasm.runtime.v8"
+                  code:
+                    local:
+                      filename: "/etc/modsecurity-proxy-wasm.wasm"
+                # JSON WAF config: directives_map resolves virtual includes baked in at build
+                # (@demo-conf, @crs-setup-conf, @owasp_crs/*.conf = full OWASP CRS).
+                configuration:
+                  "@type": "type.googleapis.com/google.protobuf.StringValue"
+                  value: |
+                    {
+                      "directives_map": {
+                        "default": [
+                          "Include @demo-conf",
+                          "SecDebugLogLevel 9",
+                          "SecRuleEngine On",
+                          "Include @crs-setup-conf",
+                          "Include @owasp_crs/REQUEST-901-INITIALIZATION.conf",
+                          "Include @owasp_crs/*.conf"
+                        ]
+                      },
+                      "default_directives": "default",
+                      "metric_labels": {
+                        "owner": "modsecurity-proxy-wasm",
+                        "identifier": "test"
+                      }
+                    }
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  - name: backend_listener
+    address:
+      socket_address:
+        address: 127.0.0.1
+        port_value: 19000
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: backend_http
+          codec_type: AUTO
+          route_config:
+            name: backend_route
+            virtual_hosts:
+            - name: backend
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/"
+                direct_response:
+                  status: 200
+                  body:
+                    inline_string: "ok - passed modsecurity-proxy-wasm filter\n"
+          http_filters:
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  - name: local_backend
+    connect_timeout: 1s
+    type: STATIC
+    load_assignment:
+      cluster_name: local_backend
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 127.0.0.1
+                port_value: 19000
+
+admin:
+  access_log_path: /dev/null
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901

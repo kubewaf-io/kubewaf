@@ -13,17 +13,16 @@ spec:
   # Product WAF engine (modsecurity-proxy-wasm)
   engine: ModSecurity
 
-  # Optional browser PoW challenge (pow-proxy-wasm) before the WAF filter
+  # Optional browser PoW challenge (pow-proxy-wasm) before the WAF filter.
+  # HMAC is auto-generated into a managed Secret (<waf-name>-challenge-hmac).
   # challenge:
   #   enabled: true
-  #   secret: "change-me-to-a-long-random-hmac-secret"
   #   baseDifficulty: 18
 
-  parentRefs:
-    targetRef:
-      group: gateway.networking.k8s.io
-      kind: Gateway
-      name: eg
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: eg
 
   ruleRefs:
     - kind: "RuleSet"

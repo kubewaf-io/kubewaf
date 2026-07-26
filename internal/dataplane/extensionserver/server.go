@@ -116,6 +116,12 @@ func (s *Server) PostHTTPListenerModify(_ context.Context, req *egext.PostHTTPLi
 }
 
 // PostTranslateModify ensures kubewaf_ecds (+ optional wasm code) clusters exist.
+//
+// Envoy rejects listeners with config_discovery pointing at a missing cluster
+// ("ApiConfigSource must have a statically defined non-EDS cluster: 'kubewaf_ecds'").
+// We always inject the ECDS STRICT_DNS cluster whenever we have operator defaults
+// or indexed WAFs — do not rely solely on PostHTTPListenerModify having run first
+// (multi-replica extension server + delta xDS ordering).
 func (s *Server) PostTranslateModify(_ context.Context, req *egext.PostTranslateModifyRequest) (*egext.PostTranslateModifyResponse, error) {
 	if req == nil {
 		return &egext.PostTranslateModifyResponse{}, nil
@@ -131,18 +137,31 @@ func (s *Server) PostTranslateModify(_ context.Context, req *egext.PostTranslate
 	clusters := make([]*cluster.Cluster, len(req.Clusters))
 	copy(clusters, req.Clusters)
 
-	// One ECDS cluster (shared) + one wasm code cluster per unique HTTP URL host.
-	seenECDS := false
+	// One shared ECDS gRPC cluster (STRICT_DNS, non-EDS).
+	ecdsCluster, err := s.buildECDSCluster(cfgs)
+	if err != nil {
+		return nil, err
+	}
+	if ecdsCluster != nil {
+		before := len(clusters)
+		clusters = xdsutil.EnsureCluster(clusters, ecdsCluster)
+		s.log.Info("PostTranslateModify: ensured ECDS cluster",
+			"name", ecdsCluster.GetName(),
+			"host", ecdsClusterHost(ecdsCluster),
+			"added", len(clusters) > before,
+			"indexedWAFs", len(cfgs),
+			"totalClusters", len(clusters),
+		)
+	} else {
+		s.log.Info("PostTranslateModify: skipped ECDS cluster (no host and no indexed WAFs)",
+			"indexedWAFs", len(cfgs),
+			"defaultHost", s.opts.DefaultECDSHost,
+		)
+	}
+
+	// One wasm HTTP-fetch cluster per unique URL host.
 	seenWasm := map[string]bool{}
 	for _, p := range cfgs {
-		if !seenECDS {
-			c, err := xdsutil.MakeECDSCluster(p)
-			if err != nil {
-				return nil, err
-			}
-			clusters = xdsutil.EnsureCluster(clusters, c)
-			seenECDS = true
-		}
 		urls := []string{p.HTTPURL}
 		for _, f := range p.Filters {
 			if f.HTTPURL != "" {
@@ -169,6 +188,72 @@ func (s *Server) PostTranslateModify(_ context.Context, req *egext.PostTranslate
 		Listeners: req.Listeners,
 		Routes:    req.Routes,
 	}, nil
+}
+
+// buildECDSCluster builds the STRICT_DNS kubewaf_ecds cluster from the first
+// indexed WAF, falling back to operator DefaultECDSHost/Port so the cluster is
+// present even when this replica's index is empty or still warming.
+func (s *Server) buildECDSCluster(cfgs []*config.PortableConfig) (*cluster.Cluster, error) {
+	for _, p := range cfgs {
+		if p == nil {
+			continue
+		}
+		name := p.ECDSCluster
+		if name == "" {
+			name = config.DefaultECDSCluster
+		}
+		host := p.ECDSHost
+		port := p.ECDSPort
+		if host == "" {
+			host = s.opts.DefaultECDSHost
+		}
+		if port == 0 {
+			port = s.opts.DefaultECDSPort
+		}
+		if port == 0 {
+			port = 18001
+		}
+		if host == "" {
+			continue
+		}
+		return xdsutil.MakeECDSCluster(&config.PortableConfig{
+			ECDSCluster: name,
+			ECDSHost:    host,
+			ECDSPort:    port,
+		})
+	}
+
+	// No indexed WAF on this replica — still inject from operator defaults so
+	// listeners that reference kubewaf_ecds (from another replica's inject) validate.
+	host := s.opts.DefaultECDSHost
+	port := s.opts.DefaultECDSPort
+	if port == 0 {
+		port = 18001
+	}
+	if host == "" {
+		return nil, nil
+	}
+	return xdsutil.MakeECDSCluster(&config.PortableConfig{
+		ECDSCluster: config.DefaultECDSCluster,
+		ECDSHost:    host,
+		ECDSPort:    port,
+	})
+}
+
+func ecdsClusterHost(c *cluster.Cluster) string {
+	if c == nil || c.LoadAssignment == nil {
+		return ""
+	}
+	for _, loc := range c.LoadAssignment.Endpoints {
+		for _, ep := range loc.LbEndpoints {
+			if e := ep.GetEndpoint(); e != nil {
+				if sa := e.GetAddress().GetSocketAddress(); sa != nil {
+					return sa.GetAddress()
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // PostRouteModify is a no-op (required by the service interface).
@@ -275,7 +360,8 @@ func parseListenerGateway(listenerName string) (ns, name string) {
 }
 
 func matchesGateway(p *config.PortableConfig, gwNS, gwName string) bool {
-	refs := p.ParentRefs.ParentRefs
+	// PortableConfig.ParentRefs holds the full WAFSpec (legacy field name).
+	refs := p.ParentRefs.EffectivePolicyTargets()
 	// targetRef
 	if tr := refs.TargetRef; tr != nil {
 		if string(tr.Kind) == "Gateway" && string(tr.Name) == gwName {

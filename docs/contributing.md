@@ -43,27 +43,30 @@ make run              # runs the operator locally against your kubeconfig
 
 ## Documentation Contributions
 
-The documentation site is built with **MkDocs + Material**.
+The documentation site is built with **[Fumadocs](https://fumadocs.dev)** (Next.js + MDX) in the `website/` directory.
+
+Canonical content lives under `website/content/docs/**/*.mdx`.
+(This `docs/` tree retains AI expert prompts and legacy assets; the published site is Fumadocs.)
 
 To preview locally:
 
 ```bash
-# Install once
-pip install mkdocs mkdocs-material
-
-# Serve
-mkdocs serve
+make docs-serve
+# or:
+cd website && npm install && npm run dev
 ```
 
-Then open http://localhost:8000.
+Then open http://localhost:3000 (docs at `/docs`).
 
-When adding new pages, update `mkdocs.yml` navigation.
+When adding pages, update the nearest `meta.json` sidebar file under `website/content/docs/`.
 
 ### Style Guidelines
 
 - Keep examples copy-pasteable
 - Prefer "real" YAML over abstract snippets
-- Use admonitions (`!!! note`, `!!! warning`) for important caveats
+- Use `<Callout type="info|warn|error">` for important caveats
+- Use `<Cards>` / `<Card>` for navigation grids
+- Use `<Mermaid chart={\`...\`} />` for diagrams
 - Link liberally to other pages
 
 ## Submitting Changes

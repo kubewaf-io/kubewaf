@@ -95,10 +95,10 @@ flowchart LR
 | Area | Docs |
 |------|------|
 | Concepts | [Why kubeWAF](concepts/why-kubewaf.md) · [Architecture](concepts/architecture.md) · [Core concepts](concepts/core-concepts.md) |
-| Data plane | [ECDS & providers](guides/dataplane-ecds.md) · [Wasm engines](guides/engines.md) |
-| Providers | [Envoy Gateway](guides/envoy-gateway.md) · [Istio](guides/istio.md) · [Cilium](guides/cilium.md) |
-| Rules | [Writing rules](guides/writing-rules.md) · [RuleSets](guides/rulesets.md) · [CRS](guides/using-crs.md) |
-| Ops | [Installation](getting-started/installation.md) · [Observability](guides/observability.md) · [Troubleshooting](troubleshooting.md) |
+| Data plane | [ECDS & providers](operator/dataplane-ecds.md) · [Wasm engines](modsecurity-proxy-wasm/README.md) |
+| Providers | [Envoy Gateway](operator/envoy-gateway.md) · [Istio](operator/istio.md) · [Cilium](operator/cilium.md) |
+| Rules | [Writing rules](operator/writing-rules.md) · [RuleSets](operator/rulesets.md) · [CRS](operator/using-crs.md) |
+| Ops | [Installation](getting-started/installation.md) · [Observability](operator/observability.md) · [Troubleshooting](troubleshooting.md) |
 
 ---
 

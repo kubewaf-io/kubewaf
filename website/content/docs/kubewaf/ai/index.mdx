@@ -1,0 +1,48 @@
+---
+title: AI Assistance
+description: "AI-assisted SecRule authoring with kubeWAF expert prompts"
+---
+
+This directory contains resources that help **any AI coding assistant** (Grok, Claude, GPT, Cursor, Gemini, Continue.dev, Aider, etc.) write high-quality, valid `SecRule` resources for kubeWAF.
+
+## Quick Start for Any LLM
+
+Copy the entire content of [`kubewaf-secrule-expert.md`](kubewaf-secrule-expert) and paste it at the beginning of your conversation (or add it to your custom instructions / project rules).
+
+Then simply describe what you want to block or detect in natural language.
+
+Example prompt after loading the expert:
+
+> "Create a rule that blocks requests coming from known bad ASNs trying to access /admin or /wp-login.php. Use anomaly scoring instead of immediate deny."
+
+## Files
+
+| File | Purpose | Best For |
+|------|---------|----------|
+| `kubewaf-secrule-expert.md` | Master portable expert instructions + examples + guardrails | **Any AI** (Claude, Cursor, Grok, GPT, etc.) – copy & paste or load as context |
+| `AGENTS.md` (at repo root) | Project-level rules that many AI tools auto-detect | Cursor, Claude Code, Aider, Continue, Windsurf, etc. when working inside this repo |
+| `.grok/skills/kubewaf-secrule/SKILL.md` | Native Grok skill (auto-activates on relevant requests) | Users of the Grok TUI / CLI |
+
+## Recommended Workflow
+
+1. **Best quality (recommended)**: Use a strong frontier model (Claude 4, GPT-4.1, Grok 4, etc.) + the expert context.
+2. **When you want raw SecLang** (simpler for humans and AIs): Ask the AI to output classic ModSecurity `SecRule` syntax first, then use the included conversion helpers or `cmd/crs-converter` to turn it into a proper `SecRule` CR.
+3. **Fully offline / air-gapped**: See the local small model guide (coming soon) or run a local 7B–9B model with the expert prompt + grammar constraints.
+
+See the main guide [Writing Security Rules](../operator/writing-rules#writing-rules-with-ai-assistance) for more context and examples of the AI-assisted flow.
+
+## Validation Is Mandatory
+
+Any AI-generated rule should be validated:
+
+```bash
+# After the AI produces a SecRule YAML file
+kubectl apply -f my-rule.yaml --dry-run=server -o yaml
+# or run the project's conversion logic
+```
+
+The expert instructions teach AIs to produce output that survives this check.
+
+## Contributing Improvements
+
+If you find that certain prompts produce bad rules, or you have great new examples/patterns, please improve `kubewaf-secrule-expert.md` and the skill. The goal is to make the "AI as SecRule co-author" experience reliable and delightful.

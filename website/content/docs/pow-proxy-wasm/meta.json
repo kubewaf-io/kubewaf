@@ -1,0 +1,6 @@
+{
+  "title": "pow-proxy-wasm",
+  "description": "Stateless browser proof-of-work challenge filter",
+  "root": true,
+  "pages": ["index", "how-it-works", "configuration", "standalone", "troubleshooting"]
+}

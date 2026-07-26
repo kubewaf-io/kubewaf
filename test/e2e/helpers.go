@@ -90,10 +90,14 @@ func waitForDeployment(ns, name string, timeout time.Duration) {
 	}, timeout, 2*time.Second).Should(Succeed())
 }
 
+// wafResource is the fully-qualified WAF CRD. Bare "waf" is ambiguous: it is both the
+// shortName of kind WAF and a kubectl category that includes SecRule/RuleSet/WAFInstance.
+const wafResource = "wafs.waf.kubewaf.io"
+
 func waitForWAFReady(ns, name string, timeout time.Duration) {
 	GinkgoHelper()
 	Eventually(func(g Gomega) {
-		out, err := kubectl("get", "waf", name, "-n", ns,
+		out, err := kubectl("get", wafResource, name, "-n", ns,
 			"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(out).To(Equal("True"), "WAF not Ready")
@@ -102,7 +106,7 @@ func waitForWAFReady(ns, name string, timeout time.Duration) {
 
 func wafStatusField(ns, name, jsonPath string) string {
 	GinkgoHelper()
-	out, err := kubectl("get", "waf", name, "-n", ns, "-o", "jsonpath="+jsonPath)
+	out, err := kubectl("get", wafResource, name, "-n", ns, "-o", "jsonpath="+jsonPath)
 	Expect(err).NotTo(HaveOccurred())
 	return out
 }

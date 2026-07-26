@@ -1,0 +1,35 @@
+# Envoy Gateway must list/watch WAF CRs when extensionManager.policyResources includes them.
+# Without this, EG logs:
+#   failed to list waf.kubewaf.io/v1beta1, Kind=WAF: wafs.waf.kubewaf.io is forbidden
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubewaf-envoy-gateway-waf-reader
+  labels:
+    app.kubernetes.io/name: kubewaf
+    app.kubernetes.io/component: envoy-gateway-integration
+rules:
+  - apiGroups: ["waf.kubewaf.io"]
+    resources: ["wafs"]
+    verbs: ["get", "list", "watch"]
+  # EG may try to update policy status on extension server policies.
+  - apiGroups: ["waf.kubewaf.io"]
+    resources: ["wafs/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubewaf-envoy-gateway-waf-reader
+  labels:
+    app.kubernetes.io/name: kubewaf
+    app.kubernetes.io/component: envoy-gateway-integration
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubewaf-envoy-gateway-waf-reader
+subjects:
+  - kind: ServiceAccount
+    name: envoy-gateway
+    namespace: envoy-gateway-system

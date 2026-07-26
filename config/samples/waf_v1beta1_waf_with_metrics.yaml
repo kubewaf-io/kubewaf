@@ -8,11 +8,10 @@ metadata:
     app.kubernetes.io/component: waf-policy
 spec:
   # Attach to an HTTPRoute (or Gateway)
-  parentRefs:
-    targetRef:
-      group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: shop-frontend
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: shop-frontend
 
   # Your RuleSets (can be multiple + CRS)
   ruleRefs:

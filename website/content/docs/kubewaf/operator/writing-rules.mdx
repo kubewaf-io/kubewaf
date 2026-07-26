@@ -1,0 +1,236 @@
+---
+title: Writing Security Rules
+description: "Author ModSecurity-compatible SecRules as Kubernetes resources"
+---
+
+This guide teaches you how to write effective `SecRule` resources in kubeWAF.
+
+## The Structured Format
+
+Instead of writing raw SecLang strings, kubeWAF uses a typed Kubernetes representation. This gives you:
+
+- Syntax validation via Kubernetes schemas (future webhooks)
+- Better IDE support and GitOps reviewability
+- Automatic conversion to valid ModSecurity SecLang syntax
+
+A `SecRule` contains one or more entries under `spec.secLangRules`.
+
+## Minimal Example
+
+```yaml
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: block-admin-bruteforce
+  namespace: production
+spec:
+  secLangRules:
+  - metadata:
+      id: 200010
+      phase: "2"
+      message: "Multiple failed admin logins"
+      severity: "WARNING"
+      tags:
+        - "attack-bruteforce"
+        - "OWASP_CRS"
+    conditions:
+    - variables:
+      - name: REQUEST_URI
+      operator:
+        name: rx
+        value: ^/admin/login
+    - variables:
+      - name: ARGS_POST
+        collection: password
+      operator:
+        name: rx
+        value: (?:admin|root)
+    actions:
+      disruptive:
+        disruptiveActionType: pass   # scoring rule, not blocking
+      nonDisruptive:
+      - nonDisruptiveActionType: setvar
+        value: TX.anomaly_score_pl1=+3
+```
+
+## Anatomy of a Rule
+
+### metadata
+
+| Field      | Description                                      | Example          |
+|------------|--------------------------------------------------|------------------|
+| `id`       | Unique numeric rule ID (required for CRS style)  | `920100`         |
+| `phase`    | Execution phase (`1`–`5`)                        | `"2"`            |
+| `message`  | Human-readable description shown in logs         | "SQL Injection"  |
+| `severity` | `EMERGENCY`, `ALERT`, `CRITICAL`, `ERROR`, `WARNING`, `NOTICE`, `INFO`, `DEBUG` | `ERROR` |
+| `tags`     | Arbitrary classification tags                    | `["attack-sqli"]` |
+
+### conditions
+
+Each condition is a combination of **variables** / **collections** + **operator**.
+
+Supported styles:
+
+```yaml
+# Simple variable
+variables:
+- name: REQUEST_URI
+
+# Collection member
+variables:
+- name: ARGS_GET
+  collection: id
+
+# TX collection (transaction variables)
+collections:
+- name: TX
+  arguments: [ANOMALY_SCORE]
+```
+
+### operators
+
+Common operators:
+
+- `rx` — regular expression (most powerful)
+- `eq`, `gt`, `lt`, `ge`, `le`
+- `streq`, `startswith`, `endsWith`, `contains`
+- `ipMatch`, `ipMatchFromFile`
+- `geoLookup`
+- `detectSQLi`, `detectXSS` (from libinjection in the WAF engine)
+
+Use `negate: true` to invert the match.
+
+### actions
+
+Actions are split into three groups in the CRD:
+
+```yaml
+actions:
+  disruptive:
+    disruptiveActionType: deny          # or allow, block, drop, pass, redirect
+    # redirectUrl, status also supported
+
+  flow:
+  - flowActionType: skip
+    value: "950000"
+  - flowActionType: skipAfter
+    value: END-REQUEST-920
+
+  nonDisruptive:
+  - nonDisruptiveActionType: setvar
+    value: TX.inbound_anomaly_score_pl1=+5
+  - nonDisruptiveActionType: setvar
+    value: tx.detection_paranoia_level=2
+  - nonDisruptiveActionType: logdata
+    value: "%{REQUEST_URI}"
+  - nonDisruptiveActionType: msg
+    value: "Attack detected"
+```
+
+## Chained Rules
+
+Chained rules allow multi-condition logic (AND).
+
+In the YAML model you simply set `chainedRule: true` on the first part and the next `SecLangSecRule` entry becomes the continuation.
+
+The controller and converter handle emitting the `chain` action correctly.
+
+Example (from CRS):
+
+```yaml
+- metadata: { id: 942100, phase: "2", ... }
+  conditions: [ ... first condition ... ]
+  actions:
+    disruptive: { disruptiveActionType: pass }
+  chainedRule: true
+- metadata: { ... }
+  conditions: [ ... second condition ... ]
+  actions:
+    disruptive: { disruptiveActionType: block }
+```
+
+## SecMarker and Flow Control
+
+You can create named markers for `skipAfter`:
+
+```yaml
+- secMarker: END-REQUEST-920-PROTOCOL-ENFORCEMENT
+  metadata: { id: 0, phase: "1" }
+  conditions: [{ always-match: true }]
+  actions:
+    nonDisruptive: [{ nonDisruptiveActionType: nolog }]
+```
+
+Then other rules can `skipAfter: END-REQUEST-920-PROTOCOL-ENFORCEMENT`.
+
+## Best Practices
+
+1. **Use high rule IDs** for your custom rules (> 100000 recommended) to avoid collisions with CRS.
+2. **Tag everything** — makes it easy to create RuleSets with selectors later.
+3. **Prefer anomaly scoring** over immediate `deny` for better false-positive handling.
+4. **Write unit-test equivalents** — many teams create a small test HTTPRoute + curl matrix.
+5. **Store rules in Git** alongside your application manifests (GitOps).
+
+## Writing Rules with AI Assistance
+
+The structured `SecRule` format is powerful for validation and GitOps, but it is verbose. kubeWAF makes it much easier to create high-quality rules by providing excellent support for AI coding assistants.
+
+### Using AI to create SecRules
+
+**If you use Grok** (the Grok TUI or CLI):
+
+- A dedicated skill called `kubewaf-secrule` is automatically available when you are inside this repository.
+- Just describe what you need in plain language:
+  - "Create a SecRule that blocks suspicious User-Agents hitting login pages"
+  - "Write a virtual patch for path traversal on /api/files"
+  - "Convert this raw SecLang rule to the proper Kubernetes format and validate it"
+
+The skill generates both raw SecLang and the full `kind: SecRule` YAML, validates it against the Kubernetes API server using `kubectl apply --dry-run=server`, and can fix issues automatically.
+
+**If you use any other AI** (Claude, Cursor, GPT-4, Continue.dev, Aider, Windsurf, etc.):
+
+1. Copy the content of [`docs/ai/kubewaf-secrule-expert.md`](https://github.com/kubewaf-io/kubewaf/blob/main) and paste it into your conversation or project rules.
+2. Many tools will also automatically load the guidance from the repository's `AGENTS.md` file when you open the kubewaf repo.
+
+See [`docs/ai/README.md`](https://github.com/kubewaf-io/kubewaf/blob/main) for usage instructions for different AI tools.
+
+### Recommended AI + Validation Workflow
+
+1. Describe the desired protection in natural language.
+2. Ask the AI to return **both** a raw SecLang version and the structured `SecRule` YAML.
+3. **Always validate** the generated resource before using it:
+
+   ```bash
+   kubectl apply -f my-new-rule.yaml --dry-run=server
+   ```
+
+   This sends the object to the real API server and exercises the CRD schema (plus any validating webhooks).
+
+4. Let the AI also generate a matching `RuleSet` that wires the new rule into your WAF policy.
+
+This combination gives you the speed of natural language with the safety of proper Kubernetes validation.
+
+## Converting Existing ModSecurity Rules
+
+If you have existing `.conf` files in SecLang syntax, you can:
+
+1. Use the `crs-converter` tool (see [Using CRS](using-crs))
+2. Or manually translate them into the structured YAML format
+
+The converter produces high-fidelity `SecRule` objects that you can further edit.
+
+## Validation & Status
+
+After applying a `SecRule`, check its status:
+
+```bash
+kubectl get secrule block-bad-ua -o yaml
+```
+
+The `.status.secRuleString` field contains the exact SecLang that will be sent to modsecurity-proxy-wasm.
+
+If conversion fails, the `Ready` condition will be `False` with a helpful message.
+
+## Next
+
+Now that you can write individual rules, learn how to [organize them with RuleSets](rulesets).

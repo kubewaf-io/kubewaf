@@ -1,4 +1,9 @@
 # Envoy Gateway resources for e2e (ClusterIP-friendly for Kind)
+#
+# IMPORTANT: Envoy requires ApiConfigSource clusters (ECDS gRPC → kubewaf_ecds)
+# to be defined in the *bootstrap* as a non-EDS static cluster. Adding the
+# cluster only via CDS (PostTranslateModify) is rejected with:
+#   "ApiConfigSource must have a statically defined non-EDS cluster: 'kubewaf_ecds'"
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
@@ -14,6 +19,31 @@ spec:
   telemetry:
     metrics:
       prometheus: {}
+  # Static bootstrap cluster for kubeWAF ECDS (must match operator Service).
+  bootstrap:
+    type: JSONPatch
+    jsonPatches:
+      - op: add
+        path: /static_resources/clusters/-
+        value:
+          name: kubewaf_ecds
+          type: STRICT_DNS
+          connect_timeout: 2s
+          lb_policy: ROUND_ROBIN
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options: {}
+          load_assignment:
+            cluster_name: kubewaf_ecds
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: kubewaf-ecds.kubewaf-system.svc.cluster.local
+                          port_value: 18001
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass

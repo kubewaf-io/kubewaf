@@ -87,7 +87,7 @@ Important fields:
 | `crsEnable` / `crs` | OWASP CRS + declarative tuning |
 | `wasmHTTP` / `wasmSHA256` | Override WAF binary fetch |
 
-See [WAF CRD](../reference/crds/waf.md), [Engines](../guides/engines.md), [Data plane](../guides/dataplane-ecds.md).
+See [WAF CRD](../reference/crds/waf.md), [Engines](../modsecurity-proxy-wasm/README.md), [Data plane](../operator/dataplane-ecds.md).
 
 ## WAFInstance (Future)
 
@@ -137,6 +137,6 @@ Build artifacts: `make wasm-build` → `dist/wasm/`.
 ## Next
 
 - [Architecture](architecture.md)  
-- [Wasm engines](../guides/engines.md)  
-- [Writing rules](../guides/writing-rules.md)  
-- Providers: [Envoy Gateway](../guides/envoy-gateway.md) · [Istio](../guides/istio.md) · [Cilium](../guides/cilium.md)
+- [Wasm engines](../modsecurity-proxy-wasm/README.md)  
+- [Writing rules](../operator/writing-rules.md)  
+- Providers: [Envoy Gateway](../operator/envoy-gateway.md) · [Istio](../operator/istio.md) · [Cilium](../operator/cilium.md)

@@ -52,24 +52,36 @@ spec:
 ```
 
 SecLang from RuleSets is emitted as `directives_map` JSON that the module
-loads on `onConfigure`. See [Wasm engines](../../guides/engines.md).
+loads on `onConfigure`. See [Wasm engines](../../modsecurity-proxy-wasm/README.md).
 
 ## Challenge (Proof-of-Work)
 
-Optional filter from **pow-proxy-wasm**, installed **before** the WAF:
+Optional filter from **pow-proxy-wasm**, installed **before** the WAF.
+Behaviour, cookies, timers, and security:
+[Challenge Proxy-WASM guide](../../pow-proxy-wasm/README.md).
 
 ```yaml
 spec:
   challenge:
     enabled: true
-    secret: "long-random-hmac-secret-shared-by-all-replicas"
-    # secretRef: { name: challenge-hmac, key: secret }
+    # HMAC: operator auto-creates Secret <waf-name>-challenge-hmac (key: hmac)
+    # Optional: secret / secretRef to bring your own key
     baseDifficulty: 18
     minDifficulty: 12
     maxDifficulty: 26
     header: x-challenge-passed
     headerValue: "1"
 ```
+
+| Field | Description |
+|-------|-------------|
+| `enabled` | Install the filter (default true when the block is present) |
+| *(HMAC)* | **Auto-generated** unless `secret` or `secretRef` is set |
+| `secret` / `secretRef` | Optional BYO HMAC (≥ 32 bytes) |
+| `baseDifficulty` / min / max | PoW difficulty bounds |
+| `header` / `headerValue` | Optional response header on pass |
+
+Status: `challengeEnabled`, `challengeSecretName` (managed or SecretRef name).
 
 ECDS names:
 
@@ -197,6 +209,6 @@ spec:
 
 ## Related
 
-- [Wasm engines](../../guides/engines.md)
-- [Data plane (ECDS)](../../guides/dataplane-ecds.md)
+- [Wasm engines](../../modsecurity-proxy-wasm/README.md)
+- [Data plane (ECDS)](../../operator/dataplane-ecds.md)
 - [Architecture](../../concepts/architecture.md)

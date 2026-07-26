@@ -10,11 +10,12 @@ Uses the signed proof design (no POST/verify endpoint required).
 4. WASM validates cookies (or `challenge-token` header JSON):
    - HMAC signature
    - PoW (nonce + difficulty from payload)
-   - Expiry (~60s)
-   - Optional context (IP)
-5. Valid → request continues to backend. Cookie allows subsequent requests to pass for 5min.
+   - Expiry (**60s**, aligned with challenge cookie Max-Age)
+   - Context: client IP + Envoy `connection.id` (when known)
+5. Page `fetch()`es the URL (prefer same connection) then reloads; WASM issues **`challenge-clearance`** (HttpOnly, 30 min, **IP-only**) and clears one-shot challenge cookies.
+6. Later requests: clearance cookie only (no PoW replay; not bound to connection.id).
 
-Fully stateless, minimal overhead.
+Fully stateless (shared HMAC secret across replicas), minimal overhead.
 
 ## Quick Test
 
@@ -28,30 +29,39 @@ docker compose up
 Open http://localhost:8080 in a browser.
 
 - First visit: auto-solving verification page (lightweight, follows system theme).
-- After solve+reload: reaches httpbin backend.
-- Later visits: direct pass (valid cookie).
+- After solve+reload: reaches httpbin backend; DevTools shows `challenge-clearance`.
+- Later visits: direct pass until clearance expires (~30 min).
 
 ## Inspect
 
-DevTools → Application → Cookies → localhost:8080 → look for `challenge`, `challenge-sig`, `challenge-nonce`.
+DevTools → Application → Cookies → localhost:8080:
 
-## Notes
+| Cookie | Lifetime | Purpose |
+|--------|----------|---------|
+| `challenge`, `challenge-sig`, `challenge-nonce` | 60s | One-shot PoW solve window |
+| `challenge-clearance` | 30 min | Access after successful solve (HttpOnly) |
 
-- Dynamic difficulty (pressure-based) + static config:
-  - `base_difficulty`, `min_difficulty`, `max_difficulty` in plugin JSON config
-  - Override per-request: `x-challenge-difficulty` header
-  - Low-overhead local counters (no per-req shared data writes)
-- See main.go + crypt.go for implementation and pressure heuristics (tunable).
-- To configure secret + difficulty, edit envoy.yaml (add configuration block under wasm) or use --config-yaml etc.
-- Example plugin config (add under the wasm filter "configuration"):
+## Plugin configuration
+
+`envoy.yaml` includes a required `configuration` block. The plugin **refuses to start** without a `secret` of at least 32 bytes.
 
 ```json
 {
-  "secret": "replace-with-strong-secret-for-hmac",
+  "secret": "replace-with-strong-secret-for-hmac-32+",
+  "header": "x-wasm-header",
+  "value": "demo-wasm",
   "base_difficulty": 18,
   "min_difficulty": 12,
   "max_difficulty": 26
 }
 ```
 
+- `secret` — **required**, ≥ 32 bytes, same on every replica
+- `header` / `value` — optional response header injection
+- Difficulty: static bounds + dynamic pressure + per-request `x-challenge-difficulty` override
+
+## Notes
+
+- Client IP binding prefers Envoy `source.address`, then left-most `X-Forwarded-For`, then `X-Real-IP`.
+- Edge proxies must strip/overwrite untrusted XFF (see `use_remote_address` in the example).
 - The waiting page is branding-free, very small, uses only system fonts + CSS media for dark/light.

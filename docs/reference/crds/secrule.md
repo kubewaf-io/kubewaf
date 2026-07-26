@@ -11,7 +11,7 @@
 
 ## Example
 
-See [Writing Security Rules](../../guides/writing-rules.md) for many examples.
+See [Writing Security Rules](../../operator/writing-rules.md) for many examples.
 
 ## Spec
 

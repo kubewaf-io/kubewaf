@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -38,6 +39,7 @@ import (
 
 	seclangv1beta1 "github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
+	wafctrl "github.com/kubewaf-io/kubewaf/internal/controller/waf"
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/config"
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/ecds"
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/extensionserver"
@@ -100,7 +102,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	portable, err := config.BuildFromWAF(&waf, rules, r.BuildOpts)
+	buildOpts := r.BuildOpts
+	if wafctrl.ChallengeEnabled(waf.Spec.Challenge) {
+		hmac, err := wafctrl.ResolveChallengeHMAC(ctx, r.Client, r.Scheme, &waf)
+		if err != nil {
+			// Secret may not exist yet on non-leader; requeue until leader creates it.
+			return ctrl.Result{}, fmt.Errorf("challenge hmac: %w", err)
+		}
+		buildOpts.ChallengeHMAC = hmac.Value
+	}
+
+	portable, err := config.BuildFromWAF(&waf, rules, buildOpts)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("build portable config: %w", err)
 	}
@@ -143,14 +155,50 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return reqs
 	})
 
+	// Reconcile when a managed challenge HMAC Secret changes (all replicas re-read).
+	mapChallengeSecret := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		sec, ok := obj.(*corev1.Secret)
+		if !ok {
+			return nil
+		}
+		wafName := ""
+		if sec.Labels != nil {
+			if sec.Labels["kubewaf.io/component"] == "challenge-hmac" {
+				wafName = sec.Labels["kubewaf.io/waf"]
+			}
+		}
+		if wafName == "" {
+			wafName = trimChallengeSecretSuffix(sec.Name)
+		}
+		if wafName == "" {
+			return nil
+		}
+		return []reconcile.Request{{
+			NamespacedName: types.NamespacedName{Namespace: sec.Namespace, Name: wafName},
+		}}
+	})
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&wafv1beta1.WAF{}).
 		Watches(&wafv1beta1.RuleSet{}, mapAllWAFs).
 		Watches(&seclangv1beta1.SecRule{}, mapAllWAFs).
+		Watches(&corev1.Secret{}, mapChallengeSecret).
 		Named("waf-dataplane-sync").
 		WithOptions(controller.Options{
 			// Critical for multi-replica: run on every pod, not only the leader.
 			NeedLeaderElection: ptr.To(false),
 		}).
 		Complete(r)
+}
+
+const challengeSecretSuffix = "-challenge-hmac"
+
+func trimChallengeSecretSuffix(name string) string {
+	if len(name) <= len(challengeSecretSuffix) {
+		return ""
+	}
+	if name[len(name)-len(challengeSecretSuffix):] != challengeSecretSuffix {
+		return ""
+	}
+	return name[:len(name)-len(challengeSecretSuffix)]
 }

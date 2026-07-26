@@ -72,7 +72,7 @@ This document lists tasks to complete before publishing the repository publicly 
 - Full OWASP CRS support with chaining and phases
 - Helm chart
 - Validation webhooks
-- Integration with Coraza or ModSecurity proxies
+- Integration with modsecurity-proxy-wasm (and optional alternate engines)
 - Metrics, observability
 - Proper CRD versioning (v1beta1 -> v1?)
 

@@ -1,0 +1,51 @@
+diff --git a/src/operators/pm_from_file.cc b/src/operators/pm_from_file.cc
+index 52651e95..db7e588a 100644
+--- a/src/operators/pm_from_file.cc
++++ b/src/operators/pm_from_file.cc
+@@ -16,6 +16,13 @@
+ #include "src/operators/pm_from_file.h"
+ 
+ #include <string>
++#include <cstddef>
++
++// Provided by modsecurity-proxy-wasm (wasm_vfs.cc). Weak so native
++// libmodsecurity builds without the plugin still link.
++extern "C" __attribute__((weak)) const char*
++modsecurity_proxy_wasm_resolve_data_file(const char* name, std::size_t* out_size);
++
+ 
+ #include "src/operators/operator.h"
+ #include "src/utils/https_client.h"
+@@ -64,14 +71,25 @@ bool PmFromFile::init(const std::string &config, std::string *error) {
+             }
+             iss = std::make_unique<std::stringstream>(client.content);
+         } else {
+-            std::string err;
+-            std::string resource = utils::find_resource(token, config, &err);
+-            auto file = std::make_unique<std::ifstream>(resource, std::ios::in);
+-            if (file->is_open() == false) {
+-                error->assign("Failed to open file: '" + token + "'. " + err);
+-                return false;
++            // Prefer embedded CRS .data from the proxy-wasm catalog (Envoy V8
++            // has no writable MEMFS for fopen of phrase lists).
++            std::size_t blob_size = 0;
++            const char* blob = nullptr;
++            if (modsecurity_proxy_wasm_resolve_data_file != nullptr) {
++                blob = modsecurity_proxy_wasm_resolve_data_file(token.c_str(), &blob_size);
++            }
++            if (blob != nullptr) {
++                iss = std::make_unique<std::stringstream>(std::string(blob, blob_size));
++            } else {
++                std::string err;
++                std::string resource = utils::find_resource(token, config, &err);
++                auto file = std::make_unique<std::ifstream>(resource, std::ios::in);
++                if (file->is_open() == false) {
++                    error->assign("Failed to open file: '" + token + "'. " + err);
++                    return false;
++                }
++                iss = std::move(file);
+             }
+-            iss = std::move(file);
+         }
+         for (std::string line; std::getline(*iss, line); ) {
+             if (isComment(line) == false) {

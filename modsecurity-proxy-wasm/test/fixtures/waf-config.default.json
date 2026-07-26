@@ -1,0 +1,17 @@
+{
+  "directives_map": {
+    "default": [
+      "Include @demo-conf",
+      "SecDebugLogLevel 9",
+      "SecRuleEngine On",
+      "Include @crs-setup-conf",
+      "Include @owasp_crs/REQUEST-901-INITIALIZATION.conf",
+      "Include @owasp_crs/*.conf"
+    ]
+  },
+  "default_directives": "default",
+  "metric_labels": {
+    "owner": "modsecurity-proxy-wasm",
+    "identifier": "default"
+  }
+}

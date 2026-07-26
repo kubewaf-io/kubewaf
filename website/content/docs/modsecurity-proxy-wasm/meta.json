@@ -1,0 +1,6 @@
+{
+  "title": "modsecurity-proxy-wasm",
+  "description": "ModSecurity Proxy-Wasm engine with embedded OWASP CRS",
+  "root": true,
+  "pages": ["index", "configuration", "standalone"]
+}

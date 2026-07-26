@@ -1,0 +1,56 @@
+---
+title: Guides
+description: "How to use the kubeWAF operator — rules, CRS, challenge, providers, and ops"
+---
+
+These guides cover the **kubeWAF operator**: Custom Resources, GitOps policy,
+and how config is pushed to Envoy Gateway, Istio, or Cilium.
+
+Other docs roots (separate sidebars):
+[modsecurity-proxy-wasm](/docs/modsecurity-proxy-wasm) ·
+[pow-proxy-wasm](/docs/pow-proxy-wasm).
+
+## Policy and rules
+
+<Cards>
+  <Card title="Writing security rules" href="/docs/kubewaf/operator/writing-rules">
+    SecLang-style rules as structured YAML and anomaly scoring.
+  </Card>
+  <Card title="RuleSets" href="/docs/kubewaf/operator/rulesets">
+    Group and reuse rules across namespaces.
+  </Card>
+  <Card title="OWASP CRS" href="/docs/kubewaf/operator/using-crs">
+    Enable and tune the Core Rule Set on a WAF.
+  </Card>
+</Cards>
+
+## Engines on the WAF CR
+
+<Cards>
+  <Card title="WAF engine" href="/docs/kubewaf/operator/engine">
+    Select ModSecurity, CRS, and wasm delivery.
+  </Card>
+  <Card title="Proof-of-Work challenge" href="/docs/kubewaf/operator/challenge">
+    Enable challenge, set difficulty, manage HMAC secrets.
+  </Card>
+</Cards>
+
+## Data plane and providers
+
+<Cards>
+  <Card title="Data plane (ECDS)" href="/docs/kubewaf/operator/dataplane-ecds">
+    How config and wasm reach Envoy.
+  </Card>
+  <Card title="Envoy Gateway" href="/docs/kubewaf/operator/envoy-gateway">
+    Extension Server integration.
+  </Card>
+  <Card title="Istio" href="/docs/kubewaf/operator/istio">
+    EnvoyFilter slot.
+  </Card>
+  <Card title="Cilium" href="/docs/kubewaf/operator/cilium">
+    CiliumEnvoyConfig slot.
+  </Card>
+  <Card title="Observability" href="/docs/kubewaf/operator/observability">
+    Metrics, logs, and dashboards.
+  </Card>
+</Cards>

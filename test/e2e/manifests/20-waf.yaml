@@ -53,12 +53,11 @@ metadata:
   namespace: demo
 spec:
   # Attach the WAF policy to the HTTPRoute defined in 10-gateway-api.yaml
-  parentRefs:
-    targetRef:
-      group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: httpbin
-      # namespace defaults to the WAF's namespace (demo). Must be the same namespace.
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: httpbin
+    # namespace defaults to the WAF's namespace (demo). Must be the same namespace.
   ruleRefs:
   - kind: RuleSet
     name: demo-rules
@@ -66,8 +65,13 @@ spec:
     group: waf.kubewaf.io
     version: v1beta1
 
-  # Optional: enable the full OWASP CRS on top of your custom rules
-  crsEnable: false
+  # Full OWASP CRS on top of custom rules — max-strict (PL4 + low anomaly thresholds).
+  # Expect more false positives; raise thresholds or use crs.removeById / updateTargetById to tune.
+  crsEnable: true
+  crs:
+    paranoiaLevel: 4
+    inboundAnomalyThreshold: 1
+    outboundAnomalyThreshold: 1
   logLevel: 4
 
 

@@ -1,0 +1,146 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y git
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push OCI image (build/docker/Dockerfile)
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          DOCKERFILE: build/docker/Dockerfile
+          # Makefile prefers podman when both are installed; GH Actions runners
+          # have both, so pin docker for build/push/extract consistency.
+          CTR: docker
+        run: |
+          VERSION="${TAG#v}"
+          echo "Building ${IMAGE}:${TAG} from ${DOCKERFILE} (release stage)"
+          make image IMAGE="${IMAGE}:${TAG}" VERSION="${VERSION}"
+          docker push "${IMAGE}:${TAG}"
+          docker tag "${IMAGE}:${TAG}" "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:${VERSION}"
+          echo "Pushed ${IMAGE}:${TAG} and ${IMAGE}:${VERSION}"
+
+      - name: Extract modsecurity-proxy-wasm.wasm
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          CTR: docker
+        run: |
+          make extract-wasm IMAGE="${IMAGE}"
+          sha256sum dist/modsecurity-proxy-wasm.wasm | awk '{print $1}' > dist/modsecurity-proxy-wasm.wasm.sha256
+          echo "modsecurity-proxy-wasm.wasm sha256: $(cat dist/modsecurity-proxy-wasm.wasm.sha256)"
+
+      - name: Upload modsecurity-proxy-wasm.wasm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: modsecurity-proxy-wasm
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download modsecurity-proxy-wasm.wasm
+        uses: actions/download-artifact@v4
+        with:
+          name: modsecurity-proxy-wasm
+          path: dist
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl unzip python3 python3-matplotlib
+
+      - name: Run performance benchmarks and render overlay chart
+        env:
+          # fetch-release-wasm.sh needs this for private-repo previous-release assets
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: make test-perf-release ENVOY_IMAGE=envoyproxy/envoy:v1.38-latest
+
+      - name: Verify perf charts
+        run: |
+          test -f test/perf/release-charts/perf-overlay.png
+          test -f test/perf/release-charts/memory-overlay.png
+          if [[ -f test/perf/results/release-compare.json ]]; then
+            test -f test/perf/release-charts/perf-release-compare.png
+          fi
+
+      - name: Conventional commit changelog since last release
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v6
+        with:
+          mode: COMMIT
+          toTag: ${{ github.ref_name }}
+          outputFile: conventional-changelog.md
+          configurationJson: |
+            {
+              "template": "#{{CHANGELOG}}",
+              "categories": [
+                { "title": "## 🚀 Features", "labels": ["feat", "feature"] },
+                { "title": "## 🐛 Bug Fixes", "labels": ["fix", "bug"] },
+                { "title": "## 📚 Documentation", "labels": ["docs"] },
+                { "title": "## ⚡ Performance", "labels": ["perf"] },
+                { "title": "## 🔧 Refactoring", "labels": ["refactor"] },
+                { "title": "## ✅ Tests", "labels": ["test"] },
+                { "title": "## 🏗 Build", "labels": ["build"] },
+                { "title": "## 🔁 CI", "labels": ["ci"] },
+                { "title": "## 📦 Other", "labels": ["chore", "revert", "style"] }
+              ],
+              "label_extractor": [
+                {
+                  "pattern": "^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test){1}(\\([\\w\\-\\.]+\\))?(!)?: ([\\w ])+([\\s\\S]*)",
+                  "on_property": "title",
+                  "target": "$1"
+                }
+              ]
+            }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write release notes with perf chart embeds
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          chmod +x build/scripts/write-release-notes.sh
+          ./build/scripts/write-release-notes.sh release-notes.md test/perf/release-charts conventional-changelog.md
+          echo "Changelog range: ${{ steps.changelog.outputs.fromTag }} -> ${{ steps.changelog.outputs.toTag }} (${{ steps.changelog.outputs.commits }} commits)"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: |
+            dist/modsecurity-proxy-wasm.wasm
+            dist/modsecurity-proxy-wasm.wasm.sha256
+            test/perf/release-charts/*.png

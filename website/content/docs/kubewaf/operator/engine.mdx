@@ -1,0 +1,119 @@
+---
+title: WAF engine
+description: "Select and configure the ModSecurity Wasm engine on a WAF resource"
+---
+
+A kubeWAF `WAF` resource always evaluates traffic with a **Proxy-Wasm WAF
+engine**. The supported product engine is **ModSecurity** via
+[modsecurity-proxy-wasm](https://github.com/kubewaf-io/modsecurity-proxy-wasm)
+(OWASP CRS embedded in the binary).
+
+This page is **operator-facing**: which CR fields select the engine, enable CRS,
+and override wasm delivery. For standalone Envoy use, metrics series, and build
+details, see [modsecurity-proxy-wasm](/docs/modsecurity-proxy-wasm).
+
+---
+
+## Select the engine
+
+```yaml
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: shop-waf
+  namespace: shop
+spec:
+  engine: ModSecurity
+  crsEnable: true
+  provider:
+    type: EnvoyGateway
+  parentRefs:
+    targetRef:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: external
+  ruleRefs:
+  - kind: RuleSet
+    name: shop-rules
+```
+
+| Field | Description |
+|-------|-------------|
+| `engine` | `ModSecurity` — product engine (`modsecurity-proxy-wasm`) |
+| `crsEnable` | When `true`, include embedded OWASP CRS with correct directive order |
+| `crs` | Optional declarative CRS tuning (paranoia, exclusions, …) — see [Using CRS](/docs/kubewaf/operator/using-crs) |
+| `logLevel` | Filter log verbosity (`0`–`7`) |
+| `ruleRefs` | RuleSets to append as SecLang after defaults/CRS |
+
+Optional **PoW challenge before** this engine: [Proof-of-Work challenge](/docs/kubewaf/operator/challenge).
+
+---
+
+## How config reaches Envoy
+
+1. Operator resolves RuleSets → SecLang directives  
+2. Builds plugin JSON (`directives_map`, metrics labels, block message, …)  
+3. Publishes **ECDS** resource `kubewaf/<namespace>/<waf-name>`  
+4. Envoy loads `modsecurity-proxy-wasm` from the operator wasm server (or your URL)
+
+Default serve path:
+
+```text
+GET /wasm/modsecurity-proxy-wasm.wasm
+```
+
+You do **not** hand-author the plugin JSON for normal GitOps use — the controller
+owns that mapping.
+
+---
+
+## Override the wasm binary
+
+Per-WAF (on the CR):
+
+| Field | Description |
+|-------|-------------|
+| `wasmHTTP` | HTTPS URL Envoy uses to fetch the WAF `.wasm` |
+| `wasmSHA256` | Optional content pin |
+| `wasmImage` | Optional OCI reference (documentation / future fetchers) |
+
+```yaml
+spec:
+  engine: ModSecurity
+  wasmHTTP: https://cdn.example.com/modsecurity-proxy-wasm.wasm
+  wasmSHA256: "abcdef..."
+```
+
+Cluster defaults (Helm / operator flags):
+
+| Helm / flag | Purpose |
+|-------------|---------|
+| `dataplane.modsecurityWasmFile` / `--modsecurity-wasm-file` | Path inside operator image |
+| `dataplane.modsecurityWasmSourceURL` / `--modsecurity-wasm-source-url` | Download at operator startup |
+
+```yaml
+# values.yaml excerpt
+dataplane:
+  modsecurityWasmFile: /wasm/modsecurity-proxy-wasm.wasm
+```
+
+---
+
+## Status
+
+```bash
+kubectl get waf shop-waf -o jsonpath='{.status.engine}{"\n"}'
+# ModSecurity
+```
+
+When challenge is also enabled: `status.challengeEnabled=true` (see
+[challenge](/docs/kubewaf/operator/challenge)).
+
+---
+
+## Related
+
+- [Using CRS](/docs/kubewaf/operator/using-crs) — paranoia and exclusions on the WAF CR  
+- [Writing rules](/docs/kubewaf/operator/writing-rules) — custom SecRules  
+- [Data plane (ECDS)](/docs/kubewaf/operator/dataplane-ecds) — how filters attach  
+- [modsecurity-proxy-wasm](/docs/modsecurity-proxy-wasm) — engine project docs  

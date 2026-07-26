@@ -52,6 +52,10 @@ var projectImageLegacy = projectImage()
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
+	// managerSuiteInstalled is set true only when BeforeAll deploys the kustomize manager.
+	// AfterAll still runs when BeforeAll Skip()s; without this guard it would uninstall CRDs
+	// and break subsequent provider e2e on the same cluster.
+	managerSuiteInstalled := false
 
 	BeforeAll(func() {
 		// Provider matrix suites cover dataplane; this Describe is the legacy
@@ -88,11 +92,16 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImageLegacy))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+		managerSuiteInstalled = true
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
 	// and deleting the namespace.
 	AfterAll(func() {
+		if !managerSuiteInstalled {
+			return
+		}
+
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)

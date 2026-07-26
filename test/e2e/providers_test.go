@@ -45,9 +45,11 @@ var _ = Describe("Provider dataplane e2e", Ordered, func() {
 			return
 		}
 		// Clean demo resources; leave cluster for other suites if shared.
-		_, _ = kubectl("delete", "waf", "--all", "-n", demoNamespace, "--ignore-not-found")
-		_, _ = kubectl("delete", "envoyfilter", "--all", "-n", demoNamespace, "--ignore-not-found")
-		_, _ = kubectl("delete", "ciliumenvoyconfig", "--all", "-n", demoNamespace, "--ignore-not-found")
+		// Use fully-qualified resource names — bare "waf" collides with the CRD category.
+		// --wait=false: WAF finalizers may probe Istio EnvoyFilter CRDs that are absent on EG-only clusters.
+		_, _ = kubectl("delete", wafResource, "--all", "-n", demoNamespace, "--ignore-not-found", "--wait=false")
+		_, _ = kubectl("delete", "envoyfilter", "--all", "-n", demoNamespace, "--ignore-not-found", "--wait=false")
+		_, _ = kubectl("delete", "ciliumenvoyconfig", "--all", "-n", demoNamespace, "--ignore-not-found", "--wait=false")
 	})
 
 	// -------------------------------------------------------------------------
@@ -64,14 +66,16 @@ var _ = Describe("Provider dataplane e2e", Ordered, func() {
 
 		It("reconciles WAF and marks Ready with ExtensionServer slot", func() {
 			applyFile("test/e2e/manifests/envoygateway/gateway.yaml")
+			// Use the fully-qualified Gateway API resource. Bare "gateway" collides with the
+			// WAF CRD category "gateway" (kubectl lists WAFs instead of Gateway objects).
 			Eventually(func(g Gomega) {
-				_, err := kubectl("get", "gateway", "demo-gateway", "-n", demoNamespace)
+				_, err := kubectl("get", "gateways.gateway.networking.k8s.io", "demo-gateway", "-n", demoNamespace)
 				g.Expect(err).NotTo(HaveOccurred())
 			}, 2*time.Minute, time.Second).Should(Succeed())
 
 			// Gateway may take time to Programmed
 			Eventually(func(g Gomega) {
-				out, err := kubectl("get", "gateway", "demo-gateway", "-n", demoNamespace,
+				out, err := kubectl("get", "gateways.gateway.networking.k8s.io", "demo-gateway", "-n", demoNamespace,
 					"-o", "jsonpath={.status.conditions[?(@.type=='Programmed')].status}")
 				g.Expect(err).NotTo(HaveOccurred())
 				// Accept Programmed=True when available; some EG versions use different conditions.

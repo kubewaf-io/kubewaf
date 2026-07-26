@@ -1,0 +1,3 @@
+{
+  "pages": ["kubewaf", "modsecurity-proxy-wasm", "pow-proxy-wasm"]
+}
