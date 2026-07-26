@@ -39,11 +39,22 @@ import (
 //
 // +kubebuilder:validation:XValidation:rule="!has(self.crs) || self.crsEnable",message="crs tuning requires crsEnable=true"
 type WAFSpec struct {
-	// ParentRefs specifies the target resources (typically Gateways or
-	// GatewayClasses) to which this WAF policy should be attached.
-	// Follows Envoy Gateway policy attachment semantics (targetRef/targetRefs).
+	// PolicyTargetReferences attaches this WAF to Gateway API resources.
+	// Inlined so JSON/YAML expose top-level targetRef / targetRefs — required by
+	// Envoy Gateway extensionManager.policyResources (it rejects nested parentRefs).
+	// Example:
+	//   spec:
+	//     targetRef:
+	//       group: gateway.networking.k8s.io
+	//       kind: Gateway
+	//       name: demo-gateway
+	envoygatewayv1alpha1.PolicyTargetReferences `json:",inline"`
+
+	// ParentRefs is the legacy nested attachment form (spec.parentRefs.targetRef).
+	// Prefer top-level targetRef/targetRefs. When only parentRefs is set,
+	// EffectivePolicyTargets() still resolves attachment.
 	// +optional
-	ParentRefs envoygatewayv1alpha1.PolicyTargetReferences `json:"parentRefs,omitempty"`
+	ParentRefs *envoygatewayv1alpha1.PolicyTargetReferences `json:"parentRefs,omitempty"`
 
 	// Provider selects the data-plane control plane that will receive the ECDS
 	// filter slot (Envoy Gateway Extension Server hooks, or Istio EnvoyFilter).
@@ -122,6 +133,21 @@ type WAFSpec struct {
 	// Only has effect when CRSEnable is true.
 	// +optional
 	CRS *CRSTuning `json:"crs,omitempty"`
+}
+
+// EffectivePolicyTargets returns the Gateway API attachment targets for this WAF.
+// Prefers inlined targetRef/targetRefs (EG-compatible); falls back to legacy parentRefs.
+func (s *WAFSpec) EffectivePolicyTargets() envoygatewayv1alpha1.PolicyTargetReferences {
+	if s == nil {
+		return envoygatewayv1alpha1.PolicyTargetReferences{}
+	}
+	if s.TargetRef != nil || len(s.TargetRefs) > 0 {
+		return s.PolicyTargetReferences
+	}
+	if s.ParentRefs != nil {
+		return *s.ParentRefs
+	}
+	return s.PolicyTargetReferences
 }
 
 // EngineType selects the Proxy-Wasm WAF implementation.
