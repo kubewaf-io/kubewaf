@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kubewaf.io/schemas/waf-plugin-config.json",
+  "title": "kubeWAF WAF Proxy-Wasm plugin configuration",
+  "description": "JSON shape emitted by the kubeWAF operator (internal/dataplane/config) and consumed by modsecurity-proxy-wasm (and coraza-proxy-wasm for the directives_map subset).",
+  "type": "object",
+  "required": ["directives_map", "default_directives"],
+  "properties": {
+    "default_directives": {
+      "type": "string",
+      "description": "Key into directives_map selecting the active profile.",
+      "default": "default"
+    },
+    "directives_map": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "description": "Named lists of SecLang directives / Include @virtual paths."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["kubewaf", "standalone"],
+      "description": "When \"kubewaf\", the filter refuses allow_fallback and uses product defaults."
+    },
+    "config_id": {
+      "type": "string",
+      "description": "Stable ECDS / WAF identity, e.g. kubewaf/<namespace>/<name>."
+    },
+    "allow_fallback": {
+      "type": "boolean",
+      "default": false,
+      "description": "Dev-only: load minimal built-in rules if config fails. Forced false for mode=kubewaf."
+    },
+    "metric_labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Labels appended to all Envoy stats series (Envoy name-embedding style)."
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "per_rule_id": { "type": "boolean", "default": true },
+        "rule_tags": { "type": "boolean", "default": true },
+        "dual_prefix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also emit kubewaf_waf.* core counters alongside modsecurity_proxy_wasm.*."
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics_per_rule_id": {
+      "type": "boolean",
+      "description": "Flat alias for metrics.per_rule_id (legacy)."
+    },
+    "metrics_rule_tags": {
+      "type": "boolean",
+      "description": "Flat alias for metrics.rule_tags (legacy)."
+    },
+    "block": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "default": "blocked by kubeWAF",
+          "description": "Local reply details string."
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 599,
+          "description": "Override intervention HTTP status; 0 keeps ModSecurity status."
+        },
+        "add_rule_id_header": { "type": "boolean", "default": false },
+        "rule_id_header": {
+          "type": "string",
+          "default": "x-kubewaf-rule-id"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "mode": "kubewaf",
+      "config_id": "kubewaf/shop/shop-waf",
+      "allow_fallback": false,
+      "default_directives": "default",
+      "directives_map": {
+        "default": [
+          "Include @kubewaf-defaults",
+          "SecRuleEngine On",
+          "SecDebugLogLevel 3",
+          "Include @crs-setup-conf",
+          "Include @owasp_crs/*.conf"
+        ]
+      },
+      "metric_labels": {
+        "waf_namespace": "shop",
+        "waf_name": "shop-waf",
+        "engine": "modsecurity",
+        "owner": "modsecurity-proxy-wasm",
+        "team": "payments"
+      },
+      "metrics": {
+        "enabled": true,
+        "per_rule_id": true,
+        "rule_tags": true
+      },
+      "metrics_per_rule_id": true,
+      "metrics_rule_tags": true,
+      "block": {
+        "message": "blocked by kubeWAF",
+        "add_rule_id_header": false,
+        "rule_id_header": "x-kubewaf-rule-id"
+      }
+    }
+  ]
+}

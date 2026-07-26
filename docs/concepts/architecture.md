@@ -126,13 +126,18 @@ The ECDS resource type is always:
 
 `type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm`
 
-with modsecurity-proxy-wasm plugin JSON of the form:
+with modsecurity-proxy-wasm plugin JSON of the form
+(see [`schemas/waf-plugin-config.json`](../../schemas/waf-plugin-config.json)):
 
 ```json
 {
+  "mode": "kubewaf",
+  "config_id": "kubewaf/shop/shop-waf",
+  "allow_fallback": false,
   "default_directives": "default",
   "directives_map": {
     "default": [
+      "Include @kubewaf-defaults",
       "SecRuleEngine On",
       "SecDebugLogLevel 3",
       "Include @crs-setup-conf",
@@ -140,7 +145,15 @@ with modsecurity-proxy-wasm plugin JSON of the form:
       "..."
     ]
   },
-  "metric_labels": { "team": "payments" }
+  "metric_labels": {
+    "waf_namespace": "shop",
+    "waf_name": "shop-waf",
+    "engine": "modsecurity",
+    "owner": "modsecurity-proxy-wasm",
+    "team": "payments"
+  },
+  "metrics": { "enabled": true, "per_rule_id": true, "rule_tags": true },
+  "block": { "message": "blocked by kubeWAF" }
 }
 ```
 
