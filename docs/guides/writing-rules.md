@@ -8,7 +8,7 @@ Instead of writing raw SecLang strings, kubeWAF uses a typed Kubernetes represen
 
 - Syntax validation via Kubernetes schemas (future webhooks)
 - Better IDE support and GitOps reviewability
-- Automatic conversion to valid Coraza/ModSecurity syntax
+- Automatic conversion to valid ModSecurity SecLang syntax
 
 A `SecRule` contains one or more entries under `spec.secLangRules`.
 
@@ -93,7 +93,7 @@ Common operators:
 - `streq`, `startswith`, `endsWith`, `contains`
 - `ipMatch`, `ipMatchFromFile`
 - `geoLookup`
-- `detectSQLi`, `detectXSS` (from libinjection via Coraza)
+- `detectSQLi`, `detectXSS` (from libinjection in the WAF engine)
 
 Use `negate: true` to invert the match.
 
@@ -224,7 +224,7 @@ After applying a `SecRule`, check its status:
 kubectl get secrule block-bad-ua -o yaml
 ```
 
-The `.status.secRuleString` field contains the exact SecLang that will be sent to Coraza.
+The `.status.secRuleString` field contains the exact SecLang that will be sent to modsecurity-proxy-wasm.
 
 If conversion fails, the `Ready` condition will be `False` with a helpful message.
 

@@ -4,16 +4,15 @@ Get a working WAF-protected HTTP service in under 10 minutes.
 
 ## Assumptions
 
-- You have already [installed the operator](installation.md)
-- You are using **Envoy Gateway** (or are willing to install it) — this is currently the easiest way to attach WAF policies
-
-If you are not using Envoy Gateway yet, you can still define rules and RuleSets; attachment to traffic will be available via future `WAFInstance` support.
+- You have [installed the operator](installation.md) with a wasm binary (`dataplane.wasmSourceURL` or similar)
+- You use **Envoy Gateway** for this walkthrough (Istio/Cilium: see [provider guides](../guides/dataplane-ecds.md))
+- Envoy Gateway **extensionManager** points at kubeWAF port **5005** ([setup](../guides/envoy-gateway.md#configure-envoy-gateway-extension-server))
 
 ## 1. Install Envoy Gateway (if not already present)
 
 ```bash
 helm install eg oci://docker.io/envoyproxy/gateway-helm \
-  --version v1.0.2 \
+  --version v1.8.0 \
   --namespace envoy-gateway-system \
   --create-namespace
 ```
@@ -23,6 +22,8 @@ Wait for it to be ready:
 ```bash
 kubectl wait --timeout=5m -n envoy-gateway-system deployment/envoy-gateway --for=condition=Available
 ```
+
+Configure the EG Extension Server as described in the [Envoy Gateway guide](../guides/envoy-gateway.md), then restart Envoy Gateway.
 
 ## 2. Create a simple Backend Application
 
@@ -182,6 +183,7 @@ kubectl apply -f ruleset-demo.yaml
 ```
 
 ## 6. Attach WAF Policy to Your Route
+## 6. Attach WAF Policy to Your Gateway
 
 ```yaml
 # waf-policy.yaml
@@ -191,12 +193,14 @@ metadata:
   name: demo-waf
   namespace: demo
 spec:
+  engine: ModSecurity
+  provider:
+    type: EnvoyGateway
   parentRefs:
     targetRef:
       group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: httpbin
-      namespace: demo
+      kind: Gateway
+      name: demo-gateway
 
   ruleRefs:
   - kind: RuleSet
@@ -205,7 +209,6 @@ spec:
     group: waf.kubewaf.io
     version: v1beta1
 
-  # Optional: enable the full OWASP CRS on top of your custom rules
   crsEnable: false
   logLevel: 4
 ```
@@ -214,51 +217,68 @@ Apply:
 
 ```bash
 kubectl apply -f waf-policy.yaml
+kubectl get waf demo-waf -n demo -o yaml   # Ready, ecdsResourceName, slotKind=ExtensionServer
 ```
 
 ## 7. Test the Protection
 
-Port-forward the Envoy Gateway service or use `kubectl port-forward` on the Envoy proxy pod.
-
 ```bash
-# Find the envoy proxy pod (created by Envoy Gateway)
-kubectl get pods -n envoy-gateway-system | grep envoy
+# Find the Envoy proxy Service created by Envoy Gateway
+kubectl get svc -n envoy-gateway-system
 ```
 
 Send a normal request:
 
 ```bash
-curl -H "Host: demo.local" http://<envoy-ip>/get
+curl -H "Host: demo.local" http://<envoy-svc-or-port-forward>/get
 ```
 
-Now send a blocked User-Agent:
+Blocked User-Agent:
 
 ```bash
-curl -H "Host: demo.local" -H "User-Agent: sqlmap/1.0" http://<envoy-ip>/get -I
+curl -H "Host: demo.local" -H "User-Agent: sqlmap/1.0" http://<envoy>/get -I
 ```
 
-You should receive a **403 Forbidden** response from the WAF.
+You should receive **403 Forbidden** from the WAF (modsecurity-proxy-wasm).
 
-## 8. Enable the OWASP Core Rule Set (optional but powerful)
-
-Change `crsEnable: true` in your `WAF` and re-apply. The operator will automatically merge hundreds of high-quality rules from the CRS.
+## 8. Enable the OWASP Core Rule Set (optional)
 
 ```bash
-kubectl patch wafenvoygateway demo-waf -n demo --type merge -p '{"spec":{"crsEnable":true}}'
+kubectl patch waf demo-waf -n demo --type merge -p '{"spec":{"crsEnable":true}}'
 ```
 
-## What Just Happened?
+The operator publishes a new ECDS snapshot (no slot rewrite). CRS setup ordering and optional `spec.crs` tuning are applied automatically.
 
-1. You defined a security rule in Kubernetes YAML.
-2. You grouped it into a reusable `RuleSet`.
-3. You attached that policy to a Gateway API route using `WAF`.
-4. Envoy Gateway loaded the Coraza WASM module with your rules.
-5. Malicious traffic is now blocked **before** it reaches your application.
+## What just happened?
 
-## Next Steps
+```mermaid
+sequenceDiagram
+  participant You
+  participant API as Kubernetes
+  participant KW as kubeWAF
+  participant EG as Envoy Gateway
+  participant Envoy
 
-- Learn how to [write more powerful rules](https://kubewaf.io/guides/writing-rules/)
-- Explore the full [OWASP CRS integration](https://kubewaf.io/guides/using-crs/)
-- Dive into the [CRD reference](https://kubewaf.io/reference/crds/secrule/)
+  You->>API: SecRule + RuleSet + WAF
+  API->>KW: reconcile
+  KW->>KW: ECDS publish + Extension Server index
+  EG->>KW: xDS hooks
+  EG->>Envoy: listener with config_discovery
+  Envoy->>KW: ECDS + wasm HTTP
+  Note over Envoy: sqlmap UA → 403
+```
 
-Congratulations — you now have a Kubernetes-native WAF! 🎉
+1. Structured `SecRule` in Git-friendly YAML  
+2. Grouped into a `RuleSet`  
+3. `WAF` attached to the Gateway  
+4. Config pushed over **ECDS**; EG Extension Server installed the filter stub  
+5. modsecurity-proxy-wasm blocks scanners before the app  
+
+## Next steps
+
+- [Architecture diagrams](../concepts/architecture.md)  
+- [Writing rules](../guides/writing-rules.md) · [CRS](../guides/using-crs.md)  
+- Other providers: [Istio](../guides/istio.md) · [Cilium](../guides/cilium.md)  
+- [WAF CRD reference](../reference/crds/waf.md)
+
+Congratulations — you have a Kubernetes-native, multi-gateway WAF path.

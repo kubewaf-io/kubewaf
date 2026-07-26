@@ -27,7 +27,7 @@ Most fields are currently unused or reserved for future workload template config
 ## Planned Capabilities
 
 - Sidecar injection into existing Deployments / Pods
-- Standalone Envoy + Coraza gateway Deployment
+- Standalone Envoy + modsecurity-proxy-wasm gateway Deployment
 - Automatic ConfigMap generation containing the flattened SecLang
 - Health checks and metrics exposure
 

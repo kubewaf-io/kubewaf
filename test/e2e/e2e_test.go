@@ -33,7 +33,9 @@ import (
 	"github.com/kubewaf-io/kubewaf/test/utils"
 )
 
-// namespace where the project is deployed in
+// Note: provider matrix lives in providers_test.go (E2E_PROVIDER).
+
+// namespace where the project is deployed in (legacy kustomize manager path)
 const namespace = "wafv2-system"
 
 // serviceAccountName created for the project
@@ -45,13 +47,27 @@ const metricsServiceName = "wafv2-controller-manager-metrics-service"
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "wafv2-metrics-binding"
 
+// projectImage is used by the legacy manager suite (kustomize deploy).
+var projectImageLegacy = projectImage()
+
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
 
-	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
 	BeforeAll(func() {
+		// Provider matrix suites cover dataplane; this Describe is the legacy
+		// kustomize manager smoke test. Run only when E2E_PROVIDER=manager|all.
+		if !providerEnabled("manager") && e2eProvider() != "all" {
+			Skip("E2E_PROVIDER does not include manager")
+		}
+		// When running "all", skip kustomize path if helm operator already used
+		// for providers — still allow explicit manager.
+		if e2eProvider() == "all" {
+			// Prefer not conflicting with helm install; manager smoke is optional.
+			if os.Getenv("E2E_RUN_MANAGER_SMOKE") != "true" {
+				Skip("set E2E_RUN_MANAGER_SMOKE=true to run kustomize manager smoke alongside providers")
+			}
+		}
+
 		By("creating manager namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace)
 		_, err := utils.Run(cmd)
@@ -69,7 +85,7 @@ var _ = Describe("Manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
 		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImageLegacy))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})

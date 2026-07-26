@@ -19,4 +19,5 @@ spec:
       group: "waf.kubewaf.io"
       version: "v1beta1"
 
-  # corazaProxyWasmImage: "ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0" # customizable (default)
+  engine: ModSecurity
+  # wasmImage: "ghcr.io/kubewaf-io/modsecurity-proxy-wasm:latest" # optional OCI ref

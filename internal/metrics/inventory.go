@@ -66,6 +66,10 @@ func (u *InventoryUpdater) Start(ctx context.Context) error {
 	}
 }
 
+// NeedLeaderElection implements manager.LeaderElectionRunnable.
+// Only one replica should scrape/list inventory metrics.
+func (u *InventoryUpdater) NeedLeaderElection() bool { return true }
+
 // updateAll lists all relevant resources and updates the gauges.
 func (u *InventoryUpdater) updateAll(ctx context.Context, logger logr.Logger) {
 	// SecRules
@@ -116,10 +120,4 @@ func (u *InventoryUpdater) updateAll(ctx context.Context, logger logr.Logger) {
 	}
 
 	logger.V(3).Info("inventory metrics updated")
-}
-
-// NeedLeaderElection implements manager.LeaderElectionRunnable.
-// We only want one instance updating global inventory.
-func (u *InventoryUpdater) NeedLeaderElection() bool {
-	return true
 }

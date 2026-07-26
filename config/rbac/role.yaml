@@ -136,3 +136,37 @@ rules:
   - wafs/finalizers
   verbs:
   - update
+- apiGroups:
+  - networking.istio.io
+  resources:
+  - envoyfilters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cilium.io
+  resources:
+  - ciliumenvoyconfigs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gateways
+  - gatewayclasses
+  - httproutes
+  verbs:
+  - get
+  - list
+  - watch

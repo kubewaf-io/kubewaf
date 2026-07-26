@@ -160,9 +160,9 @@ See the CRS samples in the repository (`config/samples/crs/`) — they are the b
 
 ## Conversion Guarantees
 
-The controller uses the same `crslang` library that the CRS converter uses. The generated `.status.secRuleString` is what Coraza actually compiles.
+The controller uses the same `crslang` library that the CRS converter uses. The generated `.status.secRuleString` is what the WAF engine compiles (modsecurity-proxy-wasm).
 
-If you ever want to debug "why isn't my rule matching?", copy the `secRuleString` value and test it directly with the `coraza` CLI or a minimal Coraza-Go program.
+If you ever want to debug "why isn't my rule matching?", copy the `secRuleString` value and exercise it against a local Envoy + modsecurity-proxy-wasm setup (see that module’s tests).
 
 ## Full CRD Schema
 

@@ -1,27 +1,88 @@
 # Envoy Gateway Integration
 
-`WAF` is the recommended way to protect live HTTP (and eventually TCP/TLS) traffic with kubeWAF today.
+Protect Gateway API traffic when your cluster runs **Envoy Gateway**. kubeWAF
+does **not** create `EnvoyExtensionPolicy` anymore. Instead it:
 
-## How It Works
+1. Publishes **modsecurity-proxy-wasm** config over **gRPC ECDS**
+2. Injects the filter slot via the **Envoy Gateway Extension Server**
 
-`WAF` is a **Gateway API policy attachment** resource. When you create one, the kubeWAF controller:
+For the full multi-provider model see [Data plane (ECDS)](dataplane-ecds.md).
 
-1. Resolves all referenced RuleSets into a flat list of SecLang strings
-2. Creates (or updates) an `EnvoyExtensionPolicy` in the same namespace
-3. The Envoy Gateway controller sees the policy and injects a Wasm filter using the **coraza-proxy-wasm** module into the selected listeners/routes
-4. The Wasm module is initialized with your rules + CRS (if enabled)
+## How it works
 
-This is the same mechanism used by Envoy Gateway for other WAF / auth / transformation policies.
+```mermaid
+flowchart TB
+  WAF[WAF CR<br/>provider: EnvoyGateway]
+  OP[kubeWAF operator]
+  EG[Envoy Gateway control plane]
+  EN[Envoy proxy]
+  ENG[modsecurity-proxy-wasm]
+
+  WAF -->|reconcile| OP
+  OP -->|ECDS :18001| EN
+  OP -->|Wasm HTTP :18002| EN
+  EG -->|PostHTTPListenerModify<br/>PostTranslateModify| OP
+  EG -->|ADS xDS| EN
+  EN --> ENG
+```
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant API as Kubernetes
+  participant KW as kubeWAF
+  participant EG as Envoy Gateway
+  participant Envoy
+
+  User->>API: apply WAF + RuleSets
+  API->>KW: reconcile
+  KW->>KW: resolve SecLang, ECDS Upsert
+  EG->>KW: Extension Server hooks
+  KW-->>EG: filter stub + kubewaf_ecds cluster
+  EG->>Envoy: full xDS
+  Envoy->>KW: ECDS + fetch .wasm
+  Envoy->>Envoy: modsecurity-proxy-wasm evaluates traffic
+```
 
 ## Prerequisites
 
-- Envoy Gateway installed and its `GatewayClass` named `eg` (the default)
-- Gateway API CRDs present (`gateway.networking.k8s.io`)
-- The `gateway.envoyproxy.io` CRDs installed (EnvoyExtensionPolicy, etc.)
+1. **Envoy Gateway** installed (e.g. GatewayClass `eg`)
+2. **Gateway API** CRDs
+3. kubeWAF operator with dataplane ports (Helm chart defaults)
+4. **Wasm binary** available to the operator (`dataplane.modsecurityWasmSourceURL` / `modsecurityWasmFile`, or mounted under `/wasm/`)
+5. Envoy Gateway **extensionManager** pointing at kubeWAF (below)
 
-## Basic Attachment Example
+### Configure Envoy Gateway Extension Server
 
-Protect a single HTTPRoute:
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyGateway
+provider:
+  type: Kubernetes
+gateway:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+extensionManager:
+  policyResources:
+    - group: waf.kubewaf.io
+      version: v1beta1
+      kind: WAF
+  hooks:
+    xdsTranslator:
+      post:
+        - HTTPListener
+        - Translation
+  service:
+    fqdn:
+      # Match your Helm release Service name
+      hostname: kubewaf-ecds.kubewaf-system.svc.cluster.local
+      port: 5005
+```
+
+Apply to the Envoy Gateway config (often a ConfigMap in `envoy-gateway-system`) and restart the controller.
+
+## Basic example
+
+Protect an entire Gateway:
 
 ```yaml
 apiVersion: waf.kubewaf.io/v1beta1
@@ -30,36 +91,34 @@ metadata:
   name: shop-waf
   namespace: shop
 spec:
+  engine: ModSecurity
+  provider:
+    type: EnvoyGateway   # default if omitted (Auto → EnvoyGateway)
   parentRefs:
     targetRef:
       group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: shop-frontend
-      # namespace defaults to the WAF namespace
-
+      kind: Gateway
+      name: external-gateway
   ruleRefs:
   - kind: RuleSet
     name: shop-rules
     namespace: shop
+  crsEnable: true
+  logLevel: 3
 ```
 
-You can also target a whole `Gateway`:
+You may also target `HTTPRoute` (same namespace). Prefer **Gateway** targets so
+the Extension Server can match listeners reliably.
 
-```yaml
-parentRefs:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: Gateway
-    name: external-gateway
-```
-
-Or a `GatewayClass` (affects all gateways of that class — use carefully).
-
-## Multiple RuleSets + CRS
+## CRS + custom rules
 
 ```yaml
 spec:
   crsEnable: true
+  crs:
+    paranoiaLevel: 2
+    inboundAnomalyThreshold: 10
+    removeById: [942100]
   ruleRefs:
   - kind: RuleSet
     name: baseline
@@ -67,95 +126,76 @@ spec:
   - kind: RuleSet
     name: shop-specific
     namespace: shop
-  logLevel: 4
 ```
 
-`logLevel` controls the verbosity of the Coraza WASM filter (0 = off, 7 = trace).
+Directive ordering is enforced by the operator (setup → CRS include → exclusions → user rules).
 
-## Custom Coraza WASM Image
+## Wasm image vs HTTP binary
 
-If you have built a custom `coraza-proxy-wasm` image (e.g., with additional modules or a newer Coraza version), you can override it:
+| Field | Role |
+|-------|------|
+| `engine: ModSecurity` | Product engine — **modsecurity-proxy-wasm** |
+| `wasmHTTP` | Override URL Envoy uses to download the `.wasm` binary |
+| `wasmImage` | OCI reference (documentation / future); not used alone for ECDS fetch |
+| Operator `modsecurityWasmSourceURL` / `modsecurityWasmFile` | Load binary into the operator; default fetch URL points at operator `:18002` |
 
-```yaml
-spec:
-  corazaProxyWasmImage: "ghcr.io/myorg/coraza-proxy-wasm:1.2.0-custom"
-```
-
-Default: `ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0`
-
-## How Rules Are Loaded
-
-The controller writes the final SecLang configuration into the `EnvoyExtensionPolicy`'s Wasm filter configuration as a single string (or multiple configuration items).
-
-Because the resolver already flattened everything, the Wasm module receives a complete, ready-to-compile rule set.
-
-## Observing Status
+## Observing status
 
 ```bash
-kubectl get wafenvoygateway shop-waf -o yaml
+kubectl get waf shop-waf -n shop -o yaml
 ```
 
-Relevant fields:
+Expect:
 
-- `status.conditions[ReferencesResolved]`
-- `status.conditions[Ready]`
-- Events on the resource (the controller emits normal events on resolution failures)
-
-Also inspect the generated `EnvoyExtensionPolicy`:
-
-```bash
-kubectl get envoyextensionpolicy shop-waf -o yaml
-```
-
-## Common Patterns
-
-### Protect Everything in a Namespace
-
-Create one `WAF` that targets the `Gateway` resource. All HTTPRoutes attached to that Gateway inherit the policy.
-
-### Different Policies per Route
-
-Multiple `WAF` resources can exist. The most specific match wins (Gateway API policy precedence rules apply).
-
-### Staging vs Production
-
-Use two RuleSets:
-
-- `staging-strict` (higher paranoia)
-- `production-balanced`
-
-Then different `WAF` objects reference the appropriate one, even if they protect the same backend routes.
+- `status.provider: EnvoyGateway`
+- `status.slotKind: ExtensionServer`
+- `status.ecdsResourceName: kubewaf/shop/shop-waf`
+- `Ready=True`, `ReferencesResolved=True`
 
 ## Debugging
 
-1. **Rules not taking effect?**
-   - Check `ReferencesResolved` condition
-   - Look at Envoy Gateway logs for Wasm loading errors
-   - Increase `logLevel` temporarily
+1. **Rules not applied**
+   - `kubectl describe waf …` → conditions
+   - Envoy Gateway logs: extension server errors
+   - Envoy admin: filter chain contains `kubewaf/…`
 
-2. **High latency after enabling WAF?**
-   - CRS with paranoia 4 + many rules can add ~1–3 ms
-   - Start with lower paranoia or exclude heavy rules
+2. **Wasm load failures**
+   - Curl the operator wasm endpoint from a debug pod:
+     `http://kubewaf-ecds.kubewaf-system.svc:18002/wasm/modsecurity-proxy-wasm.wasm`
+   - Check `X-Checksum-Sha256` matches `status` / ECDS
 
-3. **403 on every request?**
-   - Usually means an initialization rule is missing or your anomaly threshold is 0
-   - Make sure CRS initialization rules run (id 901xxx) or that you set thresholds yourself
+3. **403 on every request**
+   - Missing CRS init / thresholds — enable `crsEnable` or set thresholds via `spec.crs`
 
-## Limitations (Current)
+4. **Extension Server not called**
+   - Confirm `extensionManager` hostname/port
+   - NetworkPolicy must allow EG → operator:5005
 
-- Only HTTP is fully supported today via `HTTPRoute`
-- TCPRoute / TLSRoute support depends on Envoy Gateway Wasm filter capabilities
-- You cannot yet inject arbitrary Wasm configuration beyond what `WAF` exposes (future enhancement)
+## Common patterns
 
-## Alternative (Future): WAFInstance
+### Protect everything on a Gateway
 
-If you are not using Envoy Gateway, the `WAFInstance` CRD will eventually let you deploy a standalone Envoy + Coraza sidecar or gateway proxy directly managed by kubeWAF.
+One `WAF` targeting the `Gateway` — all attached HTTPRoutes inherit the filter.
 
-Today we recommend Envoy Gateway + `WAF` as the path of least resistance.
+### Per-route policies
 
-## Further Reading
+Multiple `WAF` objects with more specific `parentRefs` (HTTPRoute). Extension
+Server injects all matching configs for the listener.
 
-- [Envoy Gateway Wasm Documentation](https://gateway.envoyproxy.io/docs/tasks/extensibility/wasm/)
-- [coraza-proxy-wasm README](https://github.com/corazawaf/coraza-proxy-wasm)
+### Staging vs production
 
-Next: explore the full [CRD API reference](../reference/crds/secrule.md).
+Different RuleSets (`staging-strict` vs `production-balanced`) referenced by
+different WAF objects.
+
+## Limitations
+
+- Full HTTP support via Gateway API; TCP/TLS depends on EG Wasm capabilities
+- Requires EG Extension Server privilege (platform-admin setup)
+- Old `EnvoyExtensionPolicy` objects from prior kubeWAF versions are unused — delete them
+
+## Related
+
+- [Data plane (ECDS)](dataplane-ecds.md)
+- [Architecture](../concepts/architecture.md)
+- [Observability](observability.md)
+- [Envoy Gateway Wasm docs](https://gateway.envoyproxy.io/docs/tasks/extensibility/wasm/)

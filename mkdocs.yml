@@ -89,13 +89,18 @@ nav:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
   - Concepts:
+    - Why kubeWAF?: concepts/why-kubewaf.md
     - Architecture: concepts/architecture.md
     - Core Concepts: concepts/core-concepts.md
   - Guides:
     - Writing Security Rules: guides/writing-rules.md
     - Using RuleSets: guides/rulesets.md
     - OWASP Core Rule Set (CRS): guides/using-crs.md
-    - Envoy Gateway Integration: guides/envoy-gateway.md
+    - Data plane (ECDS): guides/dataplane-ecds.md
+    - Wasm engines (ModSecurity / PoW): guides/engines.md
+    - Envoy Gateway: guides/envoy-gateway.md
+    - Istio: guides/istio.md
+    - Cilium: guides/cilium.md
     - Observability & Metrics: guides/observability.md
     - AI Assistance:
       - Overview: ai/README.md

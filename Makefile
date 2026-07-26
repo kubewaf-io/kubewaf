@@ -78,55 +78,137 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
-# TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
-# The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
-KIND_CLUSTER ?= wafv2-test-e2e
+# E2E matrix
+#   E2E_PROVIDER=all|envoy-gateway|istio|cilium|manager
+#   E2E_WASM_SOURCE_URL=...   real coraza .wasm for traffic tests
+#   E2E_IMG=ghcr.io/kubewaf-io/kubewaf:e2e
+#   CERT_MANAGER_INSTALL_SKIP=true
+KIND_CLUSTER ?= kubewaf-e2e
+E2E_PROVIDER ?= all
+E2E_IMG ?= ghcr.io/kubewaf-io/kubewaf:e2e
 
-# Version of Envoy Gateway to install during e2e environment setup
+# Versions for provider installs
 ENVOY_GATEWAY_VERSION ?= v1.8.0
+ISTIO_VERSION ?= 1.24.2
+CILIUM_VERSION ?= 1.16.5
 
-.PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist, and install a simple test application + Envoy Gateway + Gateway/HTTPRoute
-	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	}
-	@command -v $(HELM) >/dev/null 2>&1 || { \
-		echo "Helm is not installed. Please install Helm: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"; \
-		exit 1; \
-	}
-	@case "$$($(KIND) get clusters)" in \
-		*"$(KIND_CLUSTER)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
-		*) \
-			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
+.PHONY: kind-cluster
+kind-cluster: kind ## Create Kind cluster if missing
+	@command -v $(KIND) >/dev/null 2>&1 || { echo "Kind is not installed."; exit 1; }
+	@case "$$($(KIND) get clusters 2>/dev/null)" in \
+		*"$(KIND_CLUSTER)"*) echo "Kind cluster '$(KIND_CLUSTER)' already exists." ;; \
+		*) echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; $(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
-	@echo "Installing Envoy Gateway (version $(ENVOY_GATEWAY_VERSION))..."
+
+.PHONY: kind-cluster-cilium
+kind-cluster-cilium: kind ## Create Kind cluster without default CNI (for Cilium)
+	@command -v $(KIND) >/dev/null 2>&1 || { echo "Kind is not installed."; exit 1; }
+	@case "$$($(KIND) get clusters 2>/dev/null)" in \
+		*"$(KIND_CLUSTER)"*) echo "Kind cluster '$(KIND_CLUSTER)' already exists. Delete it first for a clean Cilium CNI install." ;; \
+		*) \
+			echo "Creating Kind cluster '$(KIND_CLUSTER)' with disableDefaultCNI..."; \
+			printf '%s\n' \
+				'kind: Cluster' \
+				'apiVersion: kind.x-k8s.io/v1alpha4' \
+				'networking:' \
+				'  disableDefaultCNI: true' \
+				'  kubeProxyMode: none' \
+				| $(KIND) create cluster --name $(KIND_CLUSTER) --config=- ;; \
+	esac
+
+.PHONY: setup-test-e2e-envoy-gateway
+setup-test-e2e-envoy-gateway: kind-cluster ## Install Envoy Gateway + demo app for e2e
+	@command -v $(HELM) >/dev/null 2>&1 || { echo "Helm is required"; exit 1; }
+	@echo "Installing Envoy Gateway $(ENVOY_GATEWAY_VERSION)..."
 	@$(HELM) upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
 		--version $(ENVOY_GATEWAY_VERSION) \
 		--namespace envoy-gateway-system \
 		--create-namespace \
 		--wait --timeout=5m
-	@echo "Installing test application (httpbin) and Gateway API resources (Gateway + HTTPRoute)..."
 	@$(KUBECTL) apply -f test/e2e/manifests/00-test-application.yaml
-	@$(KUBECTL) apply -f test/e2e/manifests/10-gateway-api.yaml
-	@echo "Waiting for test application and Gateway to be ready..."
-	@$(KUBECTL) wait --for=condition=Ready pod/httpbin -n demo --timeout=2m
-	@$(KUBECTL) wait --for=condition=Programmed gateway/demo-gateway -n demo --timeout=2m
-	@echo "E2E test environment ready (demo namespace + httpbin + Envoy Gateway + demo-gateway/httpbin route)."
+	@$(KUBECTL) apply -f test/e2e/manifests/envoygateway/gateway.yaml
+	@$(KUBECTL) wait --for=condition=Ready pod/httpbin -n demo --timeout=2m || true
+	@echo "Envoy Gateway e2e environment ready."
 
+.PHONY: setup-test-e2e-istio
+setup-test-e2e-istio: kind-cluster ## Install Istio + demo app for e2e
+	@command -v $(HELM) >/dev/null 2>&1 || { echo "Helm is required"; exit 1; }
+	@echo "Installing Istio $(ISTIO_VERSION) via Helm..."
+	@$(HELM) repo add istio https://istio-release.storage.googleapis.com/charts 2>/dev/null || true
+	@$(HELM) repo update istio
+	@$(HELM) upgrade --install istio-base istio/base \
+		--namespace istio-system --create-namespace \
+		--version $(ISTIO_VERSION) --wait --timeout=5m
+	@$(HELM) upgrade --install istiod istio/istiod \
+		--namespace istio-system \
+		--version $(ISTIO_VERSION) --wait --timeout=5m \
+		--set pilot.env.PILOT_ENABLE_ALPHA_GATEWAY_API=true
+	@$(HELM) upgrade --install istio-ingress istio/gateway \
+		--namespace istio-system \
+		--version $(ISTIO_VERSION) --wait --timeout=5m
+	@$(KUBECTL) apply -f test/e2e/manifests/00-test-application.yaml
+	@echo "Istio e2e environment ready."
+
+.PHONY: setup-test-e2e-cilium
+setup-test-e2e-cilium: kind-cluster-cilium ## Install Cilium + demo app for e2e
+	@command -v $(HELM) >/dev/null 2>&1 || { echo "Helm is required"; exit 1; }
+	@echo "Installing Cilium $(CILIUM_VERSION)..."
+	@$(HELM) repo add cilium https://helm.cilium.io/ 2>/dev/null || true
+	@$(HELM) repo update cilium
+	@$(HELM) upgrade --install cilium cilium/cilium \
+		--version $(CILIUM_VERSION) \
+		--namespace kube-system \
+		--set gatewayAPI.enabled=true \
+		--set kubeProxyReplacement=true \
+		--set operator.replicas=1 \
+		--wait --timeout=10m
+	@$(KUBECTL) apply -f test/e2e/manifests/00-test-application.yaml
+	@echo "Cilium e2e environment ready."
+
+.PHONY: setup-test-e2e
+setup-test-e2e: setup-test-e2e-envoy-gateway ## Default e2e env (Envoy Gateway)
 
 .PHONY: test-e2e
-test-e2e: kind setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+test-e2e: kind manifests generate ## Run e2e (E2E_PROVIDER=all|envoy-gateway|istio|cilium|manager)
+	@echo "Running e2e with E2E_PROVIDER=$(E2E_PROVIDER)"
+	@case "$(E2E_PROVIDER)" in \
+		envoy-gateway) $(MAKE) setup-test-e2e-envoy-gateway ;; \
+		istio) $(MAKE) setup-test-e2e-istio ;; \
+		cilium) $(MAKE) setup-test-e2e-cilium ;; \
+		manager) $(MAKE) kind-cluster ;; \
+		all) $(MAKE) setup-test-e2e-envoy-gateway ;; \
+		*) echo "Unknown E2E_PROVIDER=$(E2E_PROVIDER)"; exit 1 ;; \
+	esac
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) \
+		E2E_PROVIDER=$(E2E_PROVIDER) E2E_IMG=$(E2E_IMG) \
+		E2E_WASM_SOURCE_URL="$(E2E_WASM_SOURCE_URL)" \
+		go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout 45m
+	@echo "e2e finished (cluster '$(KIND_CLUSTER)' left running; make cleanup-test-e2e to delete)"
+
+.PHONY: test-e2e-envoy-gateway
+test-e2e-envoy-gateway: ## E2E against Envoy Gateway
+	$(MAKE) test-e2e E2E_PROVIDER=envoy-gateway
+
+.PHONY: test-e2e-istio
+test-e2e-istio: ## E2E against Istio
+	$(MAKE) test-e2e E2E_PROVIDER=istio
+
+.PHONY: test-e2e-cilium
+test-e2e-cilium: ## E2E against Cilium
+	$(MAKE) test-e2e E2E_PROVIDER=cilium
+
+.PHONY: test-e2e-all-providers
+test-e2e-all-providers: ## Run EG + Istio + Cilium e2e sequentially
+	$(MAKE) cleanup-test-e2e || true
+	$(MAKE) test-e2e-envoy-gateway
+	$(MAKE) cleanup-test-e2e || true
+	$(MAKE) test-e2e-istio
+	$(MAKE) cleanup-test-e2e || true
+	$(MAKE) test-e2e-cilium
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+	@$(KIND) delete cluster --name $(KIND_CLUSTER) || true
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -466,3 +548,32 @@ endef
 .PHONY: golint
 golint: golangci-lint
 	$(GOLANGCI_LINT) run -c .golangci.yaml --verbose
+
+##@ Wasm modules (monorepo)
+
+# Build in-tree Proxy-Wasm modules and stage under dist/wasm/ for operator images.
+.PHONY: wasm-build
+wasm-build: ## Build modsecurity-proxy-wasm + challenge-proxy-wasm into dist/wasm/
+	@mkdir -p dist/wasm
+	@echo "Building modsecurity-proxy-wasm..."
+	@$(MAKE) -C modsecurity-proxy-wasm image extract-wasm || $(MAKE) -C modsecurity-proxy-wasm extract-wasm || true
+	@if [ -f modsecurity-proxy-wasm/dist/modsecurity-proxy-wasm.wasm ]; then \
+		cp -f modsecurity-proxy-wasm/dist/modsecurity-proxy-wasm.wasm dist/wasm/; \
+	elif [ -f modsecurity-proxy-wasm/dist/modsec.wasm ]; then \
+		cp -f modsecurity-proxy-wasm/dist/modsec.wasm dist/wasm/modsecurity-proxy-wasm.wasm; \
+	else \
+		echo "WARN: modsecurity wasm not found (run make -C modsecurity-proxy-wasm)"; \
+	fi
+	@echo "Building challenge-proxy-wasm (pow-proxy-wasm)..."
+	@$(MAKE) -C pow-proxy-wasm build
+	@if [ -f pow-proxy-wasm/build/main.wasm ]; then \
+		cp -f pow-proxy-wasm/build/main.wasm dist/wasm/challenge-proxy-wasm.wasm; \
+	else \
+		echo "WARN: challenge wasm not found"; \
+	fi
+	@ls -la dist/wasm/ || true
+
+.PHONY: wasm-stage-defaults
+wasm-stage-defaults: ## Copy staged wasm into container paths for local runs
+	@mkdir -p /wasm 2>/dev/null || mkdir -p $(CURDIR)/.wasm
+	@cp -f dist/wasm/*.wasm $(CURDIR)/.wasm/ 2>/dev/null || true

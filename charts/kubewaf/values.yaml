@@ -83,8 +83,50 @@ args:
   # -- A list of extra arguments to add
   extraArgs: []
 
-# -- Amount of replicas
-replicaCount: 1
+# Data-plane integration (ECDS + Envoy Gateway Extension Server + operator-hosted Wasm)
+dataplane:
+  ecds:
+    # -- Container / Service port for the ECDS gRPC server
+    port: 18001
+    # -- DNS name Envoy uses for the ECDS cluster (defaults to release service FQDN)
+    serviceHost: ""
+  extensionServer:
+    # -- Container / Service port for the Envoy Gateway Extension Server
+    port: 5005
+  wasmServe:
+    # -- Container / Service port for multi-module wasm HTTP
+    port: 18002
+  # -- Mount path for shared wasm volume (all modules)
+  wasmMountPath: /wasm
+  # Product WAF engine (engine=ModSecurity) — monorepo: modsecurity-proxy-wasm
+  modsecurityWasmFile: "/wasm/modsecurity-proxy-wasm.wasm"
+  modsecurityWasmSourceURL: ""
+  # Challenge / PoW filter (spec.challenge) — monorepo: pow-proxy-wasm
+  challengeWasmFile: "/wasm/challenge-proxy-wasm.wasm"
+  challengeWasmSourceURL: ""
+  # Optional alternate engine binary path (compat; not used in product docs)
+  wasmFile: "/wasm/modsecurity-proxy-wasm.wasm"
+  wasmSourceURL: ""
+  # -- Optional volume mounting all wasm binaries under wasmMountPath
+  wasmVolume: null
+  # -- Override WAF fetch URL only (compat)
+  wasmHTTPURL: ""
+
+# -- Amount of replicas (use >=2 with leader election for HA)
+replicaCount: 2
+
+# Leader election for Kubernetes write path (status, EnvoyFilters, finalizers).
+# Dataplane servers (ECDS, wasm HTTP, EG extension) always run on every pod.
+leaderElection:
+  # -- Enable leader election (required when replicaCount > 1)
+  enabled: true
+
+# PodDisruptionBudget (recommended when replicaCount > 1)
+podDisruptionBudget:
+  # -- Create a PDB
+  enabled: true
+  # -- Minimum available pods during voluntary disruptions
+  minAvailable: 1
 image:
   # -- Set the image registry
   registry: ghcr.io
@@ -205,7 +247,7 @@ monitoring:
     groups: []
 
     # -- Enable the recommended WAF data-plane + operator alerts and recording rules.
-    #   When true, a solid set of alerts for waf_filter_* and kubewaf_* metrics is included.
+    #   When true, a solid set of alerts for modsecurity_proxy_wasm_* and kubewaf_* metrics is included.
     wafAlerts:
       enabled: false
 

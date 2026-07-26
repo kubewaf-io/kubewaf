@@ -11,6 +11,7 @@ keywords:
 - operator
 - web application firewall
 - waf
-- coraza
+- modsecurity
+- proxy-wasm
 sources:
   - https://kubewaf.io/

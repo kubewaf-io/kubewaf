@@ -6,6 +6,14 @@ metadata:
     {{- include "helm.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  {{- if gt (int .Values.replicaCount) 1 }}
+  # Prefer rolling updates that keep at least one ready pod for ECDS/wasm.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  {{- end }}
   selector:
     matchLabels:
       {{- include "helm.selectorLabels" . | nindent 6 }}
@@ -32,10 +40,6 @@ spec:
       {{- if $.Values.podSecurityContext.enabled }}
       securityContext: {{- omit $.Values.podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
-      {{- with .Values.volumes }}
-      volumes:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           {{- if $.Values.securityContext.enabled }}
@@ -46,6 +50,34 @@ spec:
           args:
             - --zap-log-level={{ default 4 .Values.args.logLevel }}
             - --enable-pprof={{ .Values.args.pprof }}
+            - --leader-elect={{ .Values.leaderElection.enabled | default true }}
+            - --ecds-bind-address=:{{ .Values.dataplane.ecds.port | default 18001 }}
+            - --extension-server-bind-address=:{{ .Values.dataplane.extensionServer.port | default 5005 }}
+            - --ecds-service-host={{ .Values.dataplane.ecds.serviceHost | default (printf "%s-ecds.%s.svc.cluster.local" (include "helm.fullname" .) .Release.Namespace) }}
+            - --ecds-service-port={{ .Values.dataplane.ecds.port | default 18001 }}
+            - --wasm-serve-bind-address=:{{ .Values.dataplane.wasmServe.port | default 18002 }}
+            - --wasm-serve-port={{ .Values.dataplane.wasmServe.port | default 18002 }}
+            {{- if .Values.dataplane.wasmFile }}
+            - --wasm-file={{ .Values.dataplane.wasmFile }}
+            {{- end }}
+            {{- if .Values.dataplane.wasmSourceURL }}
+            - --wasm-source-url={{ .Values.dataplane.wasmSourceURL }}
+            {{- end }}
+            {{- if .Values.dataplane.modsecurityWasmFile }}
+            - --modsecurity-wasm-file={{ .Values.dataplane.modsecurityWasmFile }}
+            {{- end }}
+            {{- if .Values.dataplane.modsecurityWasmSourceURL }}
+            - --modsecurity-wasm-source-url={{ .Values.dataplane.modsecurityWasmSourceURL }}
+            {{- end }}
+            {{- if .Values.dataplane.challengeWasmFile }}
+            - --challenge-wasm-file={{ .Values.dataplane.challengeWasmFile }}
+            {{- end }}
+            {{- if .Values.dataplane.challengeWasmSourceURL }}
+            - --challenge-wasm-source-url={{ .Values.dataplane.challengeWasmSourceURL }}
+            {{- end }}
+            {{- if .Values.dataplane.wasmHTTPURL }}
+            - --wasm-http-url={{ .Values.dataplane.wasmHTTPURL }}
+            {{- end }}
           {{- with .Values.args.extraArgs }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -58,6 +90,15 @@ spec:
             {{- toYaml . | nindent 10 }}
           {{- end }}
           ports:
+          - name: ecds
+            containerPort: {{ .Values.dataplane.ecds.port | default 18001 }}
+            protocol: TCP
+          - name: extension
+            containerPort: {{ .Values.dataplane.extensionServer.port | default 5005 }}
+            protocol: TCP
+          - name: wasm
+            containerPort: {{ .Values.dataplane.wasmServe.port | default 18002 }}
+            protocol: TCP
           {{- if .Values.args.pprof }}
           - name: pprof
             containerPort: 8082
@@ -74,10 +115,27 @@ spec:
             {{- toYaml .Values.readinessProbe | nindent 12}}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- with .Values.volumeMounts }}
+          {{- if or (and .Values.dataplane.wasmFile .Values.dataplane.wasmVolume) .Values.volumeMounts }}
           volumeMounts:
-            {{- toYaml . | nindent 10 }}
+            {{- if and .Values.dataplane.wasmFile .Values.dataplane.wasmVolume }}
+            - name: wasm
+              mountPath: {{ .Values.dataplane.wasmMountPath | default "/wasm" }}
+              readOnly: true
+            {{- end }}
+            {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
+      {{- if or .Values.dataplane.wasmVolume .Values.volumes }}
+      volumes:
+        {{- if .Values.dataplane.wasmVolume }}
+        - name: wasm
+          {{- toYaml .Values.dataplane.wasmVolume | nindent 10 }}
+        {{- end }}
+        {{- with .Values.volumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
       priorityClassName: {{ .Values.priorityClassName }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -87,9 +145,20 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- if .Values.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if gt (int .Values.replicaCount) 1 }}
+      # Default soft anti-affinity so HA replicas spread across nodes.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "helm.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
       {{- end }}
       {{- with .Values.topologySpreadConstraints }}
       topologySpreadConstraints:

@@ -43,17 +43,33 @@ rules:
   - "rulesets/status"
   - "wafinstances"
   - "wafinstances/status"
-  - "wafenvoygateways"
-  - "wafenvoygateways/status"
+  - "wafs"
+  - "wafs/status"
+  - "wafs/finalizers"
   verbs:
   - "*"
 - apiGroups:
-  - "gateway.envoyproxy.io"
+  - "networking.istio.io"
   resources:
-  - "envoyextensionpolicies"
-  - "envoyextensionpolicies/status"
+  - "envoyfilters"
   verbs:
   - "*"
+- apiGroups:
+  - "cilium.io"
+  resources:
+  - "ciliumenvoyconfigs"
+  verbs:
+  - "*"
+- apiGroups:
+  - "gateway.networking.k8s.io"
+  resources:
+  - "gateways"
+  - "gatewayclasses"
+  - "httproutes"
+  verbs:
+  - get
+  - list
+  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

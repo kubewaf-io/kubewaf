@@ -20,10 +20,32 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// AddUpdateReconcile resolves references and writes back-references / finalizers
+// on target objects. Use Resolve for read-only expansion (e.g. non-leader
+// dataplane syncers).
 func (r *RuleRefResolver) AddUpdateReconcile(
 	ctx context.Context,
 	refs []wafv1beta1.RuleRef,
 	source client.Object,
+) ([]unstructured.Unstructured, []ReferenceError, error) {
+	return r.reconcileRefs(ctx, refs, source, true)
+}
+
+// Resolve expands RuleRefs into objects without mutating them (no finalizers /
+// back-references). Safe to run on every operator replica.
+func (r *RuleRefResolver) Resolve(
+	ctx context.Context,
+	refs []wafv1beta1.RuleRef,
+	source client.Object,
+) ([]unstructured.Unstructured, []ReferenceError, error) {
+	return r.reconcileRefs(ctx, refs, source, false)
+}
+
+func (r *RuleRefResolver) reconcileRefs(
+	ctx context.Context,
+	refs []wafv1beta1.RuleRef,
+	source client.Object,
+	lock bool,
 ) ([]unstructured.Unstructured, []ReferenceError, error) {
 
 	var (
@@ -32,14 +54,11 @@ func (r *RuleRefResolver) AddUpdateReconcile(
 	)
 
 	for _, ref := range refs {
-		// allowed is used to verify if object ref is allowed
 		var (
-			//	refObject client.Object
 			uList *unstructured.UnstructuredList
 			err   error
 		)
 
-		// get ref
 		if uList, err = r.lookupRef(ctx, ref); err != nil {
 			refError = append(refError, ReferenceError{Index: 0, Ref: ref, Err: fmt.Errorf("lookupRef=%s", err)})
 			continue
@@ -50,9 +69,11 @@ func (r *RuleRefResolver) AddUpdateReconcile(
 				continue
 			}
 
-			if err := r.lockObject(ctx, &refObject, source); err != nil {
-				refError = append(refError, ReferenceError{Index: 2, Ref: ref, Err: fmt.Errorf("lockObject=%s", err)})
-				continue
+			if lock {
+				if err := r.lockObject(ctx, &refObject, source); err != nil {
+					refError = append(refError, ReferenceError{Index: 2, Ref: ref, Err: fmt.Errorf("lockObject=%s", err)})
+					continue
+				}
 			}
 
 			switch refObject.GetKind() {
@@ -61,7 +82,7 @@ func (r *RuleRefResolver) AddUpdateReconcile(
 				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(refObject.Object, &ruleSet); err != nil {
 					return refObjects, refError, err
 				}
-				objects, errs, err := r.AddUpdateReconcile(ctx, ruleSet.Spec.RuleRefs, &ruleSet)
+				objects, errs, err := r.reconcileRefs(ctx, ruleSet.Spec.RuleRefs, &ruleSet, lock)
 				if err != nil {
 					return refObjects, refError, err
 				}
@@ -75,7 +96,6 @@ func (r *RuleRefResolver) AddUpdateReconcile(
 	}
 
 	return refObjects, refError, nil
-
 }
 func (r *RuleRefResolver) lookupRef(ctx context.Context, ref wafv1beta1.RuleRef) (*unstructured.UnstructuredList, error) {
 	groupVersionKind := schema.GroupVersionKind{Kind: ref.Kind, Group: ref.Group, Version: ref.Version}
@@ -94,21 +114,21 @@ func (r *RuleRefResolver) lookupRef(ctx context.Context, ref wafv1beta1.RuleRef)
 }
 
 func (r *RuleRefResolver) getDynamicObjects(ctx context.Context, gvk schema.GroupVersionKind, name, namespace string) (*unstructured.UnstructuredList, error) {
-	// Make sure the Kind ends with "List"
+	// Prefer a direct Get — works without a field indexer (required for multi-replica caches).
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, obj); err != nil {
+		return nil, err
+	}
+
 	listGVK := gvk
 	if !strings.HasSuffix(listGVK.Kind, "List") {
 		listGVK.Kind = listGVK.Kind + "List"
 	}
-
 	uList := &unstructured.UnstructuredList{}
 	uList.SetGroupVersionKind(listGVK)
-
-	err := r.List(ctx, uList,
-		client.InNamespace(namespace),
-		client.MatchingFields{"metadata.name": name},
-	)
-
-	return uList, err
+	uList.Items = []unstructured.Unstructured{*obj}
+	return uList, nil
 }
 
 func (r *RuleRefResolver) listDynamicObjects(ctx context.Context, gvk schema.GroupVersionKind, selector labels.Selector) (*unstructured.UnstructuredList, error) {

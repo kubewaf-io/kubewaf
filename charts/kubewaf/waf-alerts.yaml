@@ -4,7 +4,7 @@ groups:
     rules:
       - alert: KubeWAFHighBlockRate
         expr: |
-          sum(rate(waf_filter_tx_interruptions[5m])) / clamp_min(sum(rate(waf_filter_tx_total[5m])), 1) > 0.15
+          sum(rate(modsecurity_proxy_wasm_tx_interruptions[5m])) / clamp_min(sum(rate(modsecurity_proxy_wasm_tx_total[5m])), 1) > 0.15
         for: 5m
         labels:
           severity: warning

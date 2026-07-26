@@ -47,7 +47,7 @@ kubeWAF consists of the following components:
                     ▼              ▼
           ┌────────────────────────────────┐
           └───────────────────────────┐
-                    │   ModSecurity/Coraza Engine    │
+                    │   modsecurity-proxy-wasm       │
                     │   (WAF Proxy/Envoy Filter)     │
                     └────────────────────────────────┘
           ```
@@ -77,7 +77,7 @@ kubeWAF consists of the following components:
   - Cross-namespace rule references
   - Automatic finalizer management
 
-- **Automatic SecLang Generation**: Controllers convert CRs to valid ModSecurity/Coraza SecLang strings stored in `.status.secRuleString`
+- **Automatic SecLang Generation**: Controllers convert CRs to valid ModSecurity SecLang strings stored in `.status.secRuleString`
 
 - **OWASP CRS Support**: 
   - Tooling in `cmd/crs-converter` to convert OWASP Core Rule Set v4.x to kubeWAF CRs
@@ -87,7 +87,7 @@ kubeWAF consists of the following components:
 - **Envoy Gateway Integration**: 
   - WAF CRD for Kubernetes Gateway API integration
   - Support for HTTPRoute, TCPRoute, and Gateway routing
-  - WebAssembly (Wasm) proxy integration with Coraza
+  - WebAssembly (Wasm) proxy integration with **modsecurity-proxy-wasm** (optional PoW via **pow-proxy-wasm**)
 
 - **Status & Conditions**: Proper Kubernetes status reporting with conditions (e.g., `Ready`, `ReferencesResolved`)
 
@@ -169,7 +169,7 @@ kubewaf/
 │   └── samples/                  # Example CRs including CRS rules
 ├── internal/                     # Operator controllers and logic
 │   ├── controller/               # Reconcilers for each CRD
-│   ├── coraza/                   # Coraza/WASM integration
+│   ├── dataplane/                # ECDS, engines (modsecurity-proxy-wasm + optional challenge), provider slots
 │   ├── translator/               # SecLang parser and translator
 │   └── wasmregistry/             # Wasm registry for proxy integration
 ├── charts/                       # Helm chart for deployment

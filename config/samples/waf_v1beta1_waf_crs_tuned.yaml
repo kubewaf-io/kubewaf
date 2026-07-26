@@ -1,0 +1,49 @@
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: shop-waf-crs-tuned
+  namespace: shop
+  labels:
+    app.kubernetes.io/part-of: kubewaf
+spec:
+  # Attach to your HTTPRoute / Gateway as usual
+  parentRefs:
+    targetRef:
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: shop-frontend
+
+  # Pull in the full CRS (or a filtered RuleSet)
+  crsEnable: true
+
+  # Declarative CRS tuning (the PoC feature).
+  # These values are turned into correctly-ordered SecLang directives by the operator.
+  crs:
+    # Lower paranoia than the CRS default of 1 for a balanced start.
+    # This sets BOTH tx.detection_paranoia_level and tx.blocking_paranoia_level.
+    paranoiaLevel: 2
+
+    # Custom anomaly thresholds (common tuning values).
+    # Requests/responses whose anomaly score >= threshold will be blocked.
+    inboundAnomalyThreshold: 10
+    outboundAnomalyThreshold: 5
+
+    # Hard-drop entire rules you know are irrelevant or too noisy in your environment.
+    removeById:
+      - 942100   # SQLi (example - tune to your actual FPs)
+      - 941100   # XSS (example)
+
+    # Drop by tag instead of (or in addition to) ID.
+    removeByTag:
+      - "attack-php"   # if you have no PHP workloads
+
+    # Surgical exclusions: keep the rule but stop it from looking at certain variables.
+    # This is the most common real-world false-positive mitigation.
+    updateTargetById:
+      - id: 920273
+        removeTargets:
+          - "ARGS:json_blob"     # large JSON field that triggers protocol rules
+      - id: 942100
+        removeTargets:
+          - "ARGS:csrf_token"
+          - "REQUEST_COOKIES:sessionid"

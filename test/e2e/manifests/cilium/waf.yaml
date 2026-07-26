@@ -1,0 +1,28 @@
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: demo-waf-cilium
+  namespace: demo
+  labels:
+    e2e: "true"
+    provider: cilium
+spec:
+  provider:
+    type: Cilium
+    cilium:
+      # Attach CEC to the httpbin Service (Cilium L7 selection).
+      serviceName: httpbin
+      serviceNamespace: demo
+  parentRefs:
+    targetRef:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: demo-gateway
+  ruleRefs:
+  - kind: RuleSet
+    name: demo-rules
+    namespace: demo
+    group: waf.kubewaf.io
+    version: v1beta1
+  crsEnable: false
+  logLevel: 3

@@ -78,20 +78,36 @@ The initialization rules (usually `REQUEST-901-INITIALIZATION`) set:
 
 You can override these values with your own `SecRule` that runs early in phase 1 and sets the TX variables.
 
-Example (recommended for most applications):
+**Preferred for simple tuning: the declarative `crs:` block on the WAF**
+
+kubeWAF supports **declarative CRS tuning** directly on the `WAF` resource (PoC implementation per IDEAS.md).  
+This is the recommended approach for paranoia, thresholds, and common false-positive exclusions because:
+
+- The operator guarantees correct directive ordering (setup actions before CRS rules, `SecRuleRemove*` / `SecRuleUpdateTarget*` after the includes).
+- No need to hand-author early `SecAction` / `SecRule` objects just for tuning.
+- The intent is visible and reviewable at the WAF policy level.
+
+Example:
 
 ```yaml
-- metadata: { id: 900100, phase: "1" }
-  conditions: [{ always-match: true }]
-  actions:
-    nonDisruptive:
-    - nonDisruptiveActionType: setvar
-      value: tx.detection_paranoia_level=2
-    - nonDisruptiveActionType: setvar
-      value: tx.inbound_anomaly_score_threshold=7
-    - nonDisruptiveActionType: setvar
-      value: tx.outbound_anomaly_score_threshold=5
+spec:
+  crsEnable: true
+  crs:
+    paranoiaLevel: 2                 # sets both detection + blocking
+    inboundAnomalyThreshold: 10
+    outboundAnomalyThreshold: 5
+    removeById: [942100, 941100]     # drop noisy rules entirely
+    removeByTag: ["attack-php"]
+    updateTargetById:                # surgical variable exclusions (most common FP fix)
+      - id: 920273
+        removeTargets: ["ARGS:json_blob"]
+      - id: 942100
+        removeTargets: ["ARGS:csrf_token", "REQUEST_COOKIES:sessionid"]
 ```
+
+See `config/samples/waf_v1beta1_waf_crs_tuned.yaml` for a full example.
+
+The legacy approach (writing a phase-1 `SecRule` / `SecAction` with `setvar`) remains fully supported for advanced cases or when you need additional early logic.
 
 ## Using the CRS Converter Tool
 

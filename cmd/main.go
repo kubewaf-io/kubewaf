@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -42,6 +43,12 @@ import (
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	seclangcontroller "github.com/kubewaf-io/kubewaf/internal/controller/seclang"
 	wafcontroller "github.com/kubewaf-io/kubewaf/internal/controller/waf"
+	"github.com/kubewaf-io/kubewaf/internal/dataplane/config"
+	"github.com/kubewaf-io/kubewaf/internal/dataplane/ecds"
+	"github.com/kubewaf-io/kubewaf/internal/dataplane/engine"
+	"github.com/kubewaf-io/kubewaf/internal/dataplane/extensionserver"
+	"github.com/kubewaf-io/kubewaf/internal/dataplane/sync"
+	"github.com/kubewaf-io/kubewaf/internal/dataplane/wasmserve"
 	"github.com/kubewaf-io/kubewaf/internal/metrics"
 	// +kubebuilder:scaffold:imports
 )
@@ -69,13 +76,25 @@ func main() {
 	var probeAddr string
 	var secureMetrics, enablePprof bool
 	var enableHTTP2 bool
+	var ecdsBindAddr string
+	var extensionServerBindAddr string
+	var ecdsServiceHost string
+	var ecdsServicePort uint
+	var wasmHTTPURL string
+	var wasmServeBindAddr string
+	var wasmServePort uint
+	var wasmFile string
+	var wasmSourceURL string
+	var modsecWasmFile, modsecWasmURL string
+	var challengeWasmFile, challengeWasmURL string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":10080", "The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
+	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
 		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
+			"Required for multi-replica Deployments: only the leader writes status/EnvoyFilters; "+
+			"every replica still serves ECDS, wasm HTTP, and EG extension hooks.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
@@ -93,6 +112,32 @@ func main() {
 		false,
 		"Enables Pprof endpoint for profiling (not recommend in production)",
 	)
+	flag.StringVar(&ecdsBindAddr, "ecds-bind-address", ":18001",
+		"gRPC bind address for the Extension Config Discovery Service (ECDS) that serves Coraza Wasm configs")
+	flag.StringVar(&extensionServerBindAddr, "extension-server-bind-address", ":5005",
+		"gRPC bind address for the Envoy Gateway Extension Server (injects ECDS filter slots)")
+	flag.StringVar(&ecdsServiceHost, "ecds-service-host", "kubewaf-ecds.kubewaf-system.svc.cluster.local",
+		"DNS name Envoy uses to reach the ECDS gRPC service (cluster endpoint address)")
+	flag.UintVar(&ecdsServicePort, "ecds-service-port", 18001,
+		"Port Envoy uses to reach the ECDS gRPC service")
+	flag.StringVar(&wasmHTTPURL, "wasm-http-url", "",
+		"Default HTTP(S) URL for the Coraza engine (compat). Prefer operator multi-module serve.")
+	flag.StringVar(&wasmServeBindAddr, "wasm-serve-bind-address", ":18002",
+		"HTTP bind address for multi-module wasm serve (Coraza, ModSecurity, Challenge)")
+	flag.UintVar(&wasmServePort, "wasm-serve-port", 18002,
+		"Port advertised in operator-hosted wasm URLs")
+	flag.StringVar(&wasmFile, "wasm-file", "/wasm/coraza-proxy-wasm.wasm",
+		"Local path for Coraza wasm (engine=Coraza)")
+	flag.StringVar(&wasmSourceURL, "wasm-source-url", "",
+		"HTTP(S) URL to download Coraza wasm when --wasm-file is missing")
+	flag.StringVar(&modsecWasmFile, "modsecurity-wasm-file", "/wasm/modsecurity-proxy-wasm.wasm",
+		"Local path for modsecurity-proxy-wasm (engine=ModSecurity)")
+	flag.StringVar(&modsecWasmURL, "modsecurity-wasm-source-url", "",
+		"HTTP(S) URL to download modsecurity-proxy-wasm when file is missing")
+	flag.StringVar(&challengeWasmFile, "challenge-wasm-file", "/wasm/challenge-proxy-wasm.wasm",
+		"Local path for challenge/pow-proxy-wasm")
+	flag.StringVar(&challengeWasmURL, "challenge-wasm-source-url", "",
+		"HTTP(S) URL to download challenge-proxy-wasm when file is missing")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -226,11 +271,97 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "WAFInstance")
 		os.Exit(1)
 	}
+	// Shared dataplane services: ECDS (config push) + wasm HTTP + EG Extension Server.
+	// These run on every replica; SnapshotCache is local, so leader election should
+	// still be enabled for the reconciler. Envoy will reconnect if a pod restarts.
+	runCtx := ctrl.SetupSignalHandler()
+
+	// Multi-module wasm HTTP server (Coraza, ModSecurity, Challenge/PoW).
+	var wasmServer *wasmserve.Server
+	wasmPort := uint32(wasmServePort)
+	if wasmPort == 0 {
+		wasmPort = 18002
+	}
+	moduleHTTP := map[engine.ModuleID]string{}
+	moduleSHA := map[engine.ModuleID]string{}
+
+	if wasmServeBindAddr != "" {
+		wasmServer = wasmserve.New(setupLog)
+		loadOpts := wasmserve.Options{
+			Modules: []wasmserve.ModuleSource{
+				{ID: engine.ModuleCoraza, File: wasmFile, SourceURL: wasmSourceURL},
+				{ID: engine.ModuleModSecurity, File: modsecWasmFile, SourceURL: modsecWasmURL},
+				{ID: engine.ModuleChallenge, File: challengeWasmFile, SourceURL: challengeWasmURL},
+			},
+		}
+		if err := wasmServer.Load(runCtx, loadOpts); err != nil {
+			setupLog.Error(err, "wasm module load (continuing; missing engines return 503)")
+		}
+		if err := mgr.Add(wasmserve.Runnable{Server: wasmServer, BindAddr: wasmServeBindAddr}); err != nil {
+			setupLog.Error(err, "unable to add wasm HTTP server")
+			os.Exit(1)
+		}
+		// Default URLs point at the operator Service for every integrated module.
+		for _, m := range engine.AllModules() {
+			moduleHTTP[m.ID] = wasmserve.PublicURLFor(ecdsServiceHost, wasmPort, m.ID)
+			if wasmServer.Has(m.ID) {
+				moduleSHA[m.ID] = wasmServer.SHA256(m.ID)
+			}
+		}
+		setupLog.Info("operator-hosted wasm modules",
+			"coraza", moduleHTTP[engine.ModuleCoraza],
+			"modsecurity", moduleHTTP[engine.ModuleModSecurity],
+			"challenge", moduleHTTP[engine.ModuleChallenge],
+		)
+	}
+
+	// Compat: single --wasm-http-url overrides Coraza only.
+	if wasmHTTPURL != "" {
+		moduleHTTP[engine.ModuleCoraza] = wasmHTTPURL
+	}
+
+	ecdsServer := ecds.New(runCtx, setupLog)
+	if err := mgr.Add(ecds.Runnable{Server: ecdsServer, BindAddr: ecdsBindAddr}); err != nil {
+		setupLog.Error(err, "unable to add ECDS server")
+		os.Exit(1)
+	}
+
+	buildOpts := config.BuildOptions{
+		DefaultECDSHost:     ecdsServiceHost,
+		DefaultECDSPort:     uint32(ecdsServicePort),
+		DefaultModuleHTTP:   moduleHTTP,
+		DefaultModuleSHA256: moduleSHA,
+		DefaultWasmHTTPURL:  moduleHTTP[engine.ModuleCoraza],
+		DefaultWasmSHA256:   moduleSHA[engine.ModuleCoraza],
+	}
+
+	egExtServer := extensionserver.New(setupLog, mgr.GetClient(), buildOpts)
+	if err := mgr.Add(extensionserver.Runnable{Server: egExtServer, BindAddr: extensionServerBindAddr}); err != nil {
+		setupLog.Error(err, "unable to add Envoy Gateway extension server")
+		os.Exit(1)
+	}
+
 	if err := (&wafcontroller.WAFReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		ECDS:        ecdsServer,
+		EGExtension: egExtServer,
+		BuildOpts:   buildOpts,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "WAF")
+		os.Exit(1)
+	}
+
+	// Non-leader-elected: keep ECDS + EG extension indexes warm on every replica
+	// so Service load-balancing to any pod returns current config.
+	if err := (&sync.Reconciler{
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		ECDS:        ecdsServer,
+		EGExtension: egExtServer,
+		BuildOpts:   buildOpts,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "WAFDataplaneSync")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
@@ -251,8 +382,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	setupLog.Info("starting manager",
+		"ecds", ecdsBindAddr,
+		"extensionServer", extensionServerBindAddr,
+		"wasmServe", wasmServeBindAddr,
+		"wasmURL", wasmHTTPURL,
+		"ecdsService", fmt.Sprintf("%s:%d", ecdsServiceHost, ecdsServicePort),
+	)
+	if err := mgr.Start(runCtx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

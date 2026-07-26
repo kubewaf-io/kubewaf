@@ -1,0 +1,29 @@
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: demo-waf-istio
+  namespace: demo
+  labels:
+    e2e: "true"
+    provider: istio
+spec:
+  provider:
+    type: Istio
+    istio:
+      # Match Istio ingress gateway pods (demo profile / ambient gateway labels vary).
+      workloadSelector:
+        istio: ingressgateway
+      context: GATEWAY
+  parentRefs:
+    targetRef:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: demo-gateway
+  ruleRefs:
+  - kind: RuleSet
+    name: demo-rules
+    namespace: demo
+    group: waf.kubewaf.io
+    version: v1beta1
+  crsEnable: false
+  logLevel: 3

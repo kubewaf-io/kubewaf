@@ -22,18 +22,16 @@ spec:
       group: waf.kubewaf.io
       version: v1beta1
 
+  engine: ModSecurity
   crsEnable: true
   logLevel: 4
 
-  # === New Observability Configuration ===
+  # === Observability Configuration (modsecurity-proxy-wasm) ===
   metrics:
-    # Custom name for the Wasm filter (affects metric names)
-    name: "coraza-shop-prod"
+    # Custom name for the Wasm filter (affects Envoy VM / filter naming)
+    name: "shop-prod"
 
-    # Recommended rootID for the module
-    rootID: "coraza"
-
-    # Extra labels that will appear on all waf_filter_tx_interruptions metrics
+    # Extra labels attached via metric_labels in the plugin config
     extraLabels:
       team: "payments"
       environment: "production"

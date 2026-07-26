@@ -4,7 +4,7 @@ This page explains the fundamental building blocks of kubeWAF.
 
 ## SecRule
 
-A `SecRule` is the atomic unit of protection. It describes a single security check using the same concepts as ModSecurity / Coraza:
+A `SecRule` is the atomic unit of protection. It describes a single security check using ModSecurity SecLang concepts:
 
 - **Variables** (what to inspect)
 - **Operator** (how to compare)
@@ -55,40 +55,61 @@ spec:
 
 ## WAF
 
-This is currently the **primary way** to enforce rules on live traffic.
+`WAF` is the **primary way** to enforce rules on live traffic.
 
-It uses the Envoy Gateway extension policy mechanism (`EnvoyExtensionPolicy`) to inject the Coraza WASM filter into the request path for selected Gateway API objects (Gateway, HTTPRoute, etc.).
+It:
 
-Features:
+1. Resolves `ruleRefs` into SecLang  
+2. Runs **modsecurity-proxy-wasm** (optional **pow-proxy-wasm** challenge first)  
+3. Publishes ECDS resources  
+4. Installs a **provider-specific slot** so Envoy loads those configs  
 
-- `parentRefs` — which Gateway API resources to protect
-- `ruleRefs` — which RuleSets to apply
-- `crsEnable` — automatically include the full OWASP CRS
-- `logLevel` — control WASM filter verbosity
+```mermaid
+flowchart LR
+  WAF --> M[modsecurity-proxy-wasm]
+  WAF --> CH[optional challenge<br/>pow-proxy-wasm]
+  CH --> M
+  WAF --> P{provider}
+  P -->|EnvoyGateway| EG[Extension Server]
+  P -->|Istio| EF[EnvoyFilter]
+  P -->|Cilium| CEC[CiliumEnvoyConfig]
+```
+
+Important fields:
+
+| Field | Purpose |
+|-------|---------|
+| `parentRefs` | Gateway API targets (Gateway, HTTPRoute, …) |
+| `provider.type` | `EnvoyGateway` · `Istio` · `Cilium` · `Auto` |
+| `engine` | WAF Wasm implementation (`ModSecurity`) |
+| `challenge` | Optional PoW filter before WAF |
+| `ruleRefs` | RuleSets only |
+| `crsEnable` / `crs` | OWASP CRS + declarative tuning |
+| `wasmHTTP` / `wasmSHA256` | Override WAF binary fetch |
+
+See [WAF CRD](../reference/crds/waf.md), [Engines](../guides/engines.md), [Data plane](../guides/dataplane-ecds.md).
 
 ## WAFInstance (Future)
 
-`WAFInstance` is intended for cases where you want a **standalone WAF proxy** or **sidecar injection**, independent of Envoy Gateway.
+`WAFInstance` is intended for a **standalone WAF proxy** or **sidecar**, independent of an external gateway product.
 
-As of the current release, the controller only performs reference resolution. Full workload deployment is under development.
+Today the controller only performs reference resolution. Full workload deployment is under development.
 
-## Rule Reference Resolution
-
-One of kubeWAF's most powerful features is the **RuleRefResolver**.
+## Rule reference resolution
 
 When you reference a `RuleSet`, the resolver:
 
-1. Recursively expands all nested RuleSets
-2. Collects matching `SecRule` / `SecAction` resources
-3. Validates namespace policies (`allowedRules`)
-4. Creates back-references (the SecRule knows which RuleSets use it)
-5. Sets the `ReferencesResolved` condition
+1. Recursively expands nested RuleSets  
+2. Collects matching `SecRule` / `SecAction` resources  
+3. Validates namespace policies (`allowedRules`)  
+4. Creates back-references (leader path)  
+5. Sets `ReferencesResolved`
 
-This means you can reorganize rules without touching your gateway policies.
+Non-leader pods use a **read-only** resolve path to keep ECDS warm without fighting over finalizers.
 
 ## Phases
 
-Like ModSecurity, rules run in phases:
+Like classic ModSecurity, rules run in phases:
 
 - **Phase 1** — Request headers (very early)
 - **Phase 2** — Request body
@@ -98,18 +119,24 @@ Like ModSecurity, rules run in phases:
 
 Most application-level rules live in phase 2.
 
-## Anomaly Scoring
+## Portable config
 
-The OWASP CRS (and many custom rules) use **anomaly scoring** rather than immediate blocking:
+Authors never write Envoy JSON. The operator builds a **PortableConfig** with an ordered
+`Filters` list (optional challenge, then WAF) shared by every provider. That is what
+ECDS serves and what slots point at.
 
-1. Rules increment `TX.anomaly_score` (or per-paranoia-level scores)
-2. At the end of the phase, a separate rule compares the score against a threshold
-3. Only then is a blocking decision made
+## Engines (monorepo)
 
-This dramatically reduces false positives while still catching sophisticated attacks.
+| Module | Directory | Use |
+|--------|-----------|-----|
+| **modsecurity-proxy-wasm** | `modsecurity-proxy-wasm/` | Product WAF engine |
+| **pow-proxy-wasm** | `pow-proxy-wasm/` | Optional PoW challenge before WAF |
 
-kubeWAF fully supports this model because it faithfully converts your structured rules into real SecLang that Coraza executes.
+Build artifacts: `make wasm-build` → `dist/wasm/`.
 
 ## Next
 
-Ready to start writing rules? Read the [Writing Security Rules](../guides/writing-rules.md) guide.
+- [Architecture](architecture.md)  
+- [Wasm engines](../guides/engines.md)  
+- [Writing rules](../guides/writing-rules.md)  
+- Providers: [Envoy Gateway](../guides/envoy-gateway.md) · [Istio](../guides/istio.md) · [Cilium](../guides/cilium.md)

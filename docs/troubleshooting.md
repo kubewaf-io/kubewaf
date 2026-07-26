@@ -2,7 +2,7 @@
 
 Common issues and how to diagnose them.
 
-## Installation Problems
+## Installation problems
 
 **CRDs not registered**
 
@@ -10,11 +10,9 @@ Common issues and how to diagnose them.
 kubectl get crd | grep kubewaf
 ```
 
-If empty, re-run the Helm install or `kubectl apply -k config/crd`.
+Expect at least: `secrules`, `secactions`, `rulesets`, `wafs`, `wafinstances`.
 
 **Operator pod CrashLooping**
-
-Check logs:
 
 ```bash
 kubectl logs -n kubewaf-system -l app.kubernetes.io/name=kubewaf -f
@@ -22,108 +20,147 @@ kubectl logs -n kubewaf-system -l app.kubernetes.io/name=kubewaf -f
 
 Common causes:
 
-- Missing RBAC (rare after correct install)
-- Envoy Gateway CRDs not present when WAF controller starts (it registers the scheme but does not require them at startup)
+- Missing RBAC (rare after correct Helm install)
+- Failed wasm download (`--wasm-source-url` unreachable) — pod may still start but wasm serve returns 503
+- Port conflicts on 18001 / 5005 / 18002
 
-## Rule Not Enforced
+**Multi-replica not electing leader**
 
-1. Check the `WAF` status:
+```bash
+kubectl get lease -n kubewaf-system
+```
+
+Ensure `--leader-elect=true` and RBAC for `coordination.k8s.io/leases`.
+
+## Rule not enforced
+
+```mermaid
+flowchart TD
+  A[WAF Ready?] -->|No| B[describe waf conditions]
+  A -->|Yes| C[status.provider correct?]
+  C -->|No| D[fix provider.type]
+  C -->|Yes| E[ECDS / slot present?]
+  E -->|EG| F[EG extensionManager configured?]
+  E -->|Istio| G[EnvoyFilter exists?]
+  E -->|Cilium| H[CEC exists? Wasm capable?]
+  F & G & H --> I[Envoy / WAF filter logs]
+```
+
+1. Check WAF status:
 
    ```bash
-   kubectl describe wafenvoygateway <name>
+   kubectl describe waf <name> -n <ns>
    ```
 
-   Look for `ReferencesResolved: False`.
+   Look for `ReferencesResolved` and `Ready`.
 
-2. Check the referenced `RuleSet`:
+2. Confirm ECDS identity:
 
    ```bash
-   kubectl describe ruleset <name>
+   kubectl get waf <name> -n <ns> -o jsonpath='{.status.ecdsResourceName}{"\n"}{.status.slotKind}{"\n"}'
    ```
 
-3. Verify the generated EnvoyExtensionPolicy exists and has the Wasm filter configured.
+3. Provider-specific:
 
-4. Increase log level:
+   | Provider | Check |
+   |----------|--------|
+   | Envoy Gateway | EG ConfigMap `extensionManager`; operator Service `:5005` |
+   | Istio | `kubectl get envoyfilter -n <ns>` contains `config_discovery` |
+   | Cilium | `kubectl get cec -n <ns>`; Cilium Envoy Wasm support |
+
+4. Wasm modules reachable:
+
+   ```bash
+   # WAF engine
+   curl -sI http://kubewaf-ecds.kubewaf-system.svc:18002/wasm/modsecurity-proxy-wasm.wasm
+   # Challenge / PoW (if enabled)
+   curl -sI http://kubewaf-ecds.kubewaf-system.svc:18002/wasm/challenge-proxy-wasm.wasm
+   ```
+
+   Expect `200`, `X-Checksum-Sha256`, and `X-Wasm-Module`.
+
+5. Engine / challenge status:
+
+   ```bash
+   kubectl get waf <name> -n <ns> -o jsonpath='{.status.engine}{" challenge="}{.status.challengeEnabled}{"\n"}'
+   ```
+
+6. Raise WAF engine verbosity:
 
    ```yaml
    spec:
      logLevel: 7
    ```
 
-   Then look at the Envoy proxy pod logs for Coraza output.
+   Then inspect Envoy proxy logs.
 
 ## ReferencesResolved = False
 
-Possible reasons:
+- Missing SecRule / RuleSet  
+- `allowedRules` namespace policy  
+- Reference cycle  
+- Wrong `group` / `version` on RuleRef  
 
-- A referenced `SecRule` or `RuleSet` does not exist
-- Namespace policy violation (`allowedRules.from`)
-- Recursive reference cycle (the resolver detects and reports this)
-- Wrong `group`/`version` in the `RuleRef`
+Message is on the condition.
 
-The error is also written to the `status.conditions` message.
+## Ready = False with ECDS errors
 
-## Rules Work Locally but Not in Prod
+- modsecurity-proxy-wasm not loaded on the operator (`/wasm/modsecurity-proxy-wasm.wasm` or source URL)  
+- Challenge enabled but challenge wasm / secret missing  
+- Invalid HTTP URL / sha256 mismatch  
+- ECDS snapshot reject — check operator logs for `ECDS upsert`
 
-- Different CRS versions between environments
-- Missing initialization rules that set paranoia level / thresholds
-- Label selectors that match in dev but not in prod (different labeling)
+## 403 on every request
 
-## High Latency / CPU After Enabling WAF
+Usually CRS init / thresholds:
 
-CRS with paranoia level 3–4 + hundreds of rules adds measurable cost.
+- Enable `crsEnable: true`, or  
+- Set `spec.crs.inboundAnomalyThreshold` and paranoia explicitly  
 
-Mitigations:
+## High latency / CPU
 
-- Start with `crsEnable: true` + your own low paranoia initialization rule
-- Exclude entire rule files using label selectors on your CRS RuleSet
-- Use `ctl:ruleRemoveByTag` or `ctl:ruleRemoveById` in early phase-1 rules
+CRS at high paranoia is expensive.
 
-## 403 on Legitimate Traffic (False Positive)
+- Lower `crs.paranoiaLevel`  
+- Use exclusions (`removeById`, `updateTargetById`)  
+- Split heavy RuleSets only onto sensitive routes  
 
-This is normal when first enabling CRS.
+## Multi-replica flapping / intermittent bypass
 
-Steps:
+- All pods must run dataplane sync (built-in); verify every pod logs ECDS upserts  
+- Service must select **all** operator pods  
+- PDB / rolling update should keep at least one Ready pod  
 
-1. Identify the rule ID from the WAF log (`[id "942100"]`)
-2. Create an exclusion rule that runs before the CRS rule:
+## Envoy Gateway Extension Server errors
 
-   ```yaml
-   - metadata: { id: 1000001, phase: "1" }
-     conditions: [ { variables: [{name: REQUEST_URI}], operator: {name: rx, value: ^/healthz} } ]
-     actions:
-       nonDisruptive:
-       - nonDisruptiveActionType: ctl
-         value: ruleRemoveById=942100
-   ```
+- Hostname/port must match operator Service  
+- NetworkPolicy allowing EG → operator:5005  
+- `policyResources` must include `waf.kubewaf.io/WAF`  
+- EG logs: `extension` / hook errors  
 
-3. Or raise the anomaly threshold in your initialization rule.
+## Istio EnvoyFilter present but no effect
 
-## Status.secRuleString Is Empty
+- `workloadSelector` must match ingress pods (`istio: ingressgateway` etc.)  
+- `context: GATEWAY` vs sidecar contexts  
+- Confirm Envoy has a second xDS stream to `kubewaf_ecds` (not only istiod)  
 
-The `SecRule` controller only populates `secRuleString` after successful conversion. If conversion fails (bad operator name, unknown variable, etc.), the condition `Ready` will be `False` and an event will be emitted.
+## Cilium CEC present but no blocking
 
-Inspect:
+Expected on builds without Wasm. Treat CEC as the attachment artifact; consider
+ExtProc roadmap or run WAF on Envoy Gateway/Istio for full enforcement.
 
-```bash
-kubectl describe secrule <name>
-```
-
-## Getting Help
-
-- Open a GitHub issue with:
-  - `kubectl get wafenvoygateway, ruleset, secrule -A -o yaml` output (redact secrets)
-  - Relevant operator and Envoy logs
-  - Reproduction steps (minimal YAML)
-
-- Discussions: https://github.com/kubewaf-io/kubewaf/discussions
-
-- Email: hello@kubewaf.io
-
-When filing bugs, please include the output of:
+## Collecting support info
 
 ```bash
-kubectl version
-helm list -n kubewaf-system
-kubectl get wafenvoygateway -o wide
+kubectl get waf,ruleset,secrule -A -o yaml   # redact secrets
+kubectl logs -n kubewaf-system -l app.kubernetes.io/name=kubewaf --tail=200
+kubectl get envoyfilter,ciliumenvoyconfig -A
+# Envoy Gateway:
+kubectl -n envoy-gateway-system logs deploy/envoy-gateway --tail=100
 ```
+
+## Related docs
+
+- [Architecture](concepts/architecture.md)
+- [Data plane](guides/dataplane-ecds.md)
+- [Envoy Gateway](guides/envoy-gateway.md) · [Istio](guides/istio.md) · [Cilium](guides/cilium.md)

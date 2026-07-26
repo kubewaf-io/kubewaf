@@ -1,19 +1,22 @@
 # Observability & Metrics
 
-kubeWAF surfaces rich Prometheus metrics from the **coraza-proxy-wasm** filter running inside Envoy. These metrics give you visibility into traffic volume, blocked attacks, and which rules are firing.
+kubeWAF surfaces rich Prometheus metrics from the **modsecurity-proxy-wasm** filter running inside Envoy. These metrics give you visibility into traffic volume, blocked attacks, and which rules are firing.
 
-## Metrics Exposed by Coraza WASM
+## Metrics exposed by modsecurity-proxy-wasm
 
-| Metric                              | Type     | Labels                                      | Description |
-|-------------------------------------|----------|---------------------------------------------|-------------|
-| `waf_filter_tx_total`               | Counter  | —                                           | Total number of transactions processed by the WAF |
-| `waf_filter_tx_interruptions`       | Counter  | `phase`, `rule_id`, `owner`, + custom labels | Number of requests **blocked** (interrupted) by rules |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `modsecurity_proxy_wasm_tx_total` | Counter | custom labels | Total transactions inspected by the WAF |
+| `modsecurity_proxy_wasm_tx_allowed` | Counter | custom labels | Transactions that completed without intervention |
+| `modsecurity_proxy_wasm_tx_interruptions` | Counter | `phase`, `rule_id`, + custom labels | Requests **blocked** (interrupted) by rules |
 
-**Important labels on `waf_filter_tx_interruptions`**:
+**Important labels on interruptions**:
 
 - `phase`: `http_request_headers`, `http_request_body`, `http_response_headers`, `http_response_body`
 - `rule_id`: The exact rule that caused the block (e.g. `942100`, `913100`, your custom IDs)
-- Any labels you pass via `spec.metrics.extraLabels`
+- Any labels you pass via `spec.metrics.extraLabels` (and an automatic `owner=modsecurity-proxy-wasm` label)
+
+See also [modsecurity-proxy-wasm metrics](../../modsecurity-proxy-wasm/docs/METRICS.md) for the full catalog.
 
 ## Enabling Metrics in Your WAF Policy
 
@@ -23,6 +26,7 @@ kind: WAF
 metadata:
   name: shop-waf
 spec:
+  engine: ModSecurity
   parentRefs:
     targetRef:
       kind: HTTPRoute
@@ -35,8 +39,7 @@ spec:
   crsEnable: true
 
   metrics:
-    name: "coraza-shop-prod"          # Affects metric naming
-    rootID: "coraza"
+    name: "shop-prod"                 # Affects Envoy Wasm filter / VM naming
     extraLabels:
       team: "payments"
       environment: "prod"
@@ -91,7 +94,7 @@ kubectl get pods -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway
 kubectl -n envoy-gateway-system port-forward <pod> 19000:19000
 
 # Query WAF metrics
-curl -s http://localhost:19000/stats/prometheus | grep waf_filter
+curl -s http://localhost:19000/stats/prometheus | grep modsecurity_proxy_wasm
 ```
 
 ### Production: ServiceMonitor Example
@@ -102,34 +105,34 @@ Key points:
 
 - Scrape the `admin` port on Envoy pods
 - Path: `/stats/prometheus`
-- Use `metricRelabelings` to keep only `waf_filter_*` metrics if you want to reduce volume
+- Use `metricRelabelings` to keep only `modsecurity_proxy_wasm_*` metrics if you want to reduce volume
 
 ## Recommended Grafana Panels
 
 **1. WAF Block Rate (most important)**
 
 ```promql
-sum(rate(waf_filter_tx_interruptions[5m])) / sum(rate(waf_filter_tx_total[5m]))
+sum(rate(modsecurity_proxy_wasm_tx_interruptions[5m])) / sum(rate(modsecurity_proxy_wasm_tx_total[5m]))
 ```
 
 **2. Top Blocked Rules**
 
 ```promql
 topk(15,
-  sum by (rule_id, phase) (rate(waf_filter_tx_interruptions[5m]))
+  sum by (rule_id, phase) (rate(modsecurity_proxy_wasm_tx_interruptions[5m]))
 )
 ```
 
 **3. Blocks by Phase**
 
 ```promql
-sum by (phase) (rate(waf_filter_tx_interruptions[5m]))
+sum by (phase) (rate(modsecurity_proxy_wasm_tx_interruptions[5m]))
 ```
 
 **4. Per-Team / Per-Environment View** (thanks to `extraLabels`)
 
 ```promql
-sum by (team, environment) (rate(waf_filter_tx_interruptions[5m]))
+sum by (team, environment) (rate(modsecurity_proxy_wasm_tx_interruptions[5m]))
 ```
 
 ## Reducing Cardinality
@@ -144,7 +147,7 @@ Solutions:
 
 ## Operator Metrics
 
-In addition to the data-plane `waf_filter_*` metrics, the operator publishes its own high-value metrics under the `kubewaf_*` prefix:
+In addition to the data-plane `modsecurity_proxy_wasm_*` metrics, the operator publishes its own high-value metrics under the `kubewaf_*` prefix:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -206,4 +209,4 @@ See the [WAF CRD reference](../reference/crds/waf.md) for the full schema of the
 - Deploy the [example with metrics enabled](../getting-started/quickstart.md)
 - Import the Grafana dashboard from `docs/assets/grafana-kubewaf-dashboard.json`
 - Import Grafana alert rules from `docs/assets/grafana-kubewaf-alert-rules.json` (into Grafana Alerting → Alert rules → Import)
-- Set up alerts on sudden spikes in `waf_filter_tx_interruptions`
+- Set up alerts on sudden spikes in `modsecurity_proxy_wasm_tx_interruptions`

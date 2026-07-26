@@ -1,14 +1,13 @@
-# [kubeWAF](https://kubewaf.io)
+# kubeWAF
 
 **Kubernetes-native Web Application Firewall**
 
-Protect your Kubernetes workloads with **ModSecurity-compatible rules** and the OWASP Core Rule Set — all defined as clean, version-controlled Custom Resources.
+Protect workloads with **ModSecurity-compatible rules** and the OWASP Core Rule Set — defined as version-controlled Custom Resources and enforced by **modsecurity-proxy-wasm** inside Envoy (optional **PoW challenge** via **pow-proxy-wasm**).
 
 !!! warning "Alpha Software"
 
     **kubeWAF is currently in alpha.**  
-    The project is under active development. Core features are functional and we use them in real environments, but breaking changes to APIs, CRDs, and behavior are still possible.  
-    We recommend it for **experimentation, development, and non-critical workloads** today.
+    Core features work in real environments, but APIs may still change. Prefer non-critical workloads for production today.
 
 ---
 
@@ -24,15 +23,27 @@ Protect your Kubernetes workloads with **ModSecurity-compatible rules** and the 
 
     Group, reuse, and compose rules across namespaces with automatic resolution and status conditions.
 
--   :fontawesome-solid-plug: **Gateway API Native**
+-   :fontawesome-solid-plug: **Multi-gateway data plane**
 
-    Attach WAF policies to your HTTPRoutes and Gateways using the standard Kubernetes Gateway API (via Envoy Gateway today).
+    Push one rule model over **ECDS** to **Envoy Gateway**, **Istio**, and **Cilium** — only the filter slot differs.
 
 -   :fontawesome-solid-shield-halved: **OWASP CRS Included**
 
-    Enable the entire OWASP Core Rule Set with one boolean flag. No manual downloads or sidecar hacks.
+    Enable the OWASP Core Rule Set with one flag; CRS is embedded in **modsecurity-proxy-wasm**.
 
 </div>
+
+```mermaid
+flowchart LR
+  SR[SecRule] --> RS[RuleSet]
+  RS --> WAF[WAF]
+  WAF --> M[modsecurity-proxy-wasm]
+  WAF --> CH[optional PoW]
+  WAF --> ECDS[ECDS gRPC]
+  ECDS --> EG[Envoy Gateway]
+  ECDS --> IST[Istio]
+  ECDS --> CIL[Cilium]
+```
 
 ---
 
@@ -42,46 +53,53 @@ Protect your Kubernetes workloads with **ModSecurity-compatible rules** and the 
 
 -   :fontawesome-solid-rocket: **[Quick Start →](getting-started/quickstart.md)**
 
-    Deploy a protected service in under 10 minutes.
+    Deploy a protected service end to end.
 
--   :fontawesome-solid-download: **[Installation Guide →](getting-started/installation.md)**
+-   :fontawesome-solid-download: **[Installation →](getting-started/installation.md)**
 
-    Helm-based operator installation (recommended).
+    Helm install (2 replicas, ECDS, wasm serve).
 
--   :fontawesome-brands-github: **[View on GitHub →](https://github.com/kubewaf-io/kubewaf)**
+-   :fontawesome-solid-sitemap: **[Architecture →](concepts/architecture.md)**
 
-    Star the repo and follow development.
+    Detailed diagrams of control plane and HA.
+
+-   :fontawesome-brands-github: **[GitHub →](https://github.com/kubewaf-io/kubewaf)**
+
+    Source, issues, and e2e matrix.
 
 </div>
 
 ---
 
-## Current Status (Alpha)
-
-While still in alpha, kubeWAF already provides solid, usable functionality for many use cases:
+## Current status (Alpha)
 
 | Status | Feature |
 |--------|---------|
-| ✅ | `SecRule` + `SecAction` CRDs with automatic SecLang conversion |
-| ✅ | `RuleSet` with cross-namespace references and recursive expansion |
-| ✅ | `WAF` policy attachment for **Envoy Gateway** (Gateway API) |
-| ✅ | One-click OWASP CRS v4 integration |
-| ✅ | Automatic reference resolution + rich status conditions |
-| ✅ | Prometheus metrics (`waf_filter_tx_*`) with cardinality controls |
+| ✅ | `SecRule` + `SecAction` CRDs with SecLang conversion |
+| ✅ | `RuleSet` with cross-namespace refs and recursion |
+| ✅ | `WAF` + **gRPC ECDS** config push |
+| ✅ | Providers: **Envoy Gateway**, **Istio**, **Cilium** |
+| ✅ | Engine: **modsecurity-proxy-wasm** (embedded CRS) |
+| ✅ | Optional **PoW challenge** (**pow-proxy-wasm**) before WAF |
+| ✅ | Operator multi-module wasm HTTP serve |
+| ✅ | Multi-replica HA (leader writes, all pods serve dataplane) |
+| ✅ | OWASP CRS + declarative tuning |
+| ✅ | Provider e2e suite |
 
-**Roadmap highlights:**
-- Full `WAFInstance` support (sidecar / standalone proxy)
-- Validation webhooks
-- Enhanced observability integrations
-
----
-
-## Next Steps
-
-1. **[Install the operator](getting-started/installation.md)** using Helm
-2. **[Follow the Quick Start](getting-started/quickstart.md)** to protect your first route
-3. **[Write your first rules](guides/writing-rules.md)** or import the CRS
+**Roadmap highlights:** full `WAFInstance`, validation webhooks, deeper Cilium path.
 
 ---
 
-**Need help?** Open an issue on [GitHub](https://github.com/kubewaf-io/kubewaf/issues) or reach out at [hello@kubewaf.io](mailto:hello@kubewaf.io).
+## Documentation map
+
+| Area | Docs |
+|------|------|
+| Concepts | [Why kubeWAF](concepts/why-kubewaf.md) · [Architecture](concepts/architecture.md) · [Core concepts](concepts/core-concepts.md) |
+| Data plane | [ECDS & providers](guides/dataplane-ecds.md) · [Wasm engines](guides/engines.md) |
+| Providers | [Envoy Gateway](guides/envoy-gateway.md) · [Istio](guides/istio.md) · [Cilium](guides/cilium.md) |
+| Rules | [Writing rules](guides/writing-rules.md) · [RuleSets](guides/rulesets.md) · [CRS](guides/using-crs.md) |
+| Ops | [Installation](getting-started/installation.md) · [Observability](guides/observability.md) · [Troubleshooting](troubleshooting.md) |
+
+---
+
+**Need help?** Open an issue on [GitHub](https://github.com/kubewaf-io/kubewaf/issues) or email [hello@kubewaf.io](mailto:hello@kubewaf.io).

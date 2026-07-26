@@ -7,7 +7,7 @@
 
 ## Purpose
 
-`SecRule` represents one or more ModSecurity/Coraza security rules in a structured, Kubernetes-native format.
+`SecRule` represents one or more ModSecurity SecLang rules in a structured, Kubernetes-native format.
 
 ## Example
 
@@ -80,7 +80,7 @@ status:
     namespace: shop
 ```
 
-- `secRuleString` — the exact SecLang emitted by the controller. This is what Coraza receives.
+- `secRuleString` — the exact SecLang emitted by the controller. This is what the WAF engine (modsecurity-proxy-wasm) receives.
 - `ruleSetRefs` — back-references showing which RuleSets include this rule.
 
 ## Validation

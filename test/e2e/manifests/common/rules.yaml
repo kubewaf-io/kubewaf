@@ -1,0 +1,51 @@
+# Shared SecRule + RuleSet for provider e2e tests.
+# Blocks known scanner User-Agents with HTTP 403.
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: block-bad-user-agent
+  namespace: demo
+  labels:
+    app: demo-waf
+    e2e: "true"
+spec:
+  secLangRules:
+  - metadata:
+      id: 100001
+      phase: "1"
+      message: "Malicious scanner detected"
+      severity: "ERROR"
+      tags:
+        - "attack-generic"
+        - "e2e"
+    conditions:
+    - collections:
+      - name: REQUEST_HEADERS
+        arguments:
+        - User-Agent
+      operator:
+        name: rx
+        value: (?:nikto|sqlmap|nessus|openvas)
+    actions:
+      disruptive:
+        disruptiveActionType: deny
+      data:
+      - dataActionType: status
+        value: "403"
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: demo-rules
+  namespace: demo
+  labels:
+    e2e: "true"
+spec:
+  ruleRefs:
+  - kind: SecRule
+    group: seclang.kubewaf.io
+    version: v1beta1
+    selector:
+      matchLabels:
+        app: demo-waf

@@ -9,8 +9,8 @@
       "pluginName": "Prometheus"
     }
   ],
-  "title": "kubeWAF - Coraza WASM Metrics",
-  "tags": ["kubewaf", "waf", "coraza", "security"],
+  "title": "kubeWAF - modsecurity-proxy-wasm Metrics",
+  "tags": ["kubewaf", "waf", "modsecurity", "security"],
   "time": { "from": "now-1h", "to": "now" },
   "panels": [
     {
@@ -19,7 +19,7 @@
       "datasource": "${DS_PROMETHEUS}",
       "targets": [
         {
-          "expr": "sum(rate(waf_filter_tx_interruptions[5m])) / sum(rate(waf_filter_tx_total[5m]))",
+          "expr": "sum(rate(modsecurity_proxy_wasm_tx_interruptions[5m])) / sum(rate(modsecurity_proxy_wasm_tx_total[5m]))",
           "refId": "A"
         }
       ],
@@ -41,14 +41,14 @@
       "title": "Total Transactions / sec",
       "type": "stat",
       "datasource": "${DS_PROMETHEUS}",
-      "targets": [{ "expr": "sum(rate(waf_filter_tx_total[5m]))", "refId": "A" }],
+      "targets": [{ "expr": "sum(rate(modsecurity_proxy_wasm_tx_total[5m]))", "refId": "A" }],
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 }
     },
     {
       "title": "Blocked Requests / sec",
       "type": "stat",
       "datasource": "${DS_PROMETHEUS}",
-      "targets": [{ "expr": "sum(rate(waf_filter_tx_interruptions[5m]))", "refId": "A" }],
+      "targets": [{ "expr": "sum(rate(modsecurity_proxy_wasm_tx_interruptions[5m]))", "refId": "A" }],
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 }
     },
     {
@@ -57,7 +57,7 @@
       "datasource": "${DS_PROMETHEUS}",
       "targets": [
         {
-          "expr": "topk(15, sum by (rule_id, phase) (rate(waf_filter_tx_interruptions[5m])))",
+          "expr": "topk(15, sum by (rule_id, phase) (rate(modsecurity_proxy_wasm_tx_interruptions[5m])))",
           "legendFormat": "{{rule_id}} ({{phase}})",
           "refId": "A"
         }
@@ -70,7 +70,7 @@
       "datasource": "${DS_PROMETHEUS}",
       "targets": [
         {
-          "expr": "sum by (phase) (rate(waf_filter_tx_interruptions[5m]))",
+          "expr": "sum by (phase) (rate(modsecurity_proxy_wasm_tx_interruptions[5m]))",
           "legendFormat": "{{phase}}",
           "refId": "A"
         }
@@ -83,7 +83,7 @@
       "datasource": "${DS_PROMETHEUS}",
       "targets": [
         {
-          "expr": "sum by (team, environment) (rate(waf_filter_tx_interruptions[5m]))",
+          "expr": "sum by (team, environment) (rate(modsecurity_proxy_wasm_tx_interruptions[5m]))",
           "legendFormat": "{{team}} / {{environment}}",
           "refId": "A"
         }

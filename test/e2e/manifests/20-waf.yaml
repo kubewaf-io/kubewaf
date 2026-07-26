@@ -72,8 +72,7 @@ spec:
 
 
   metrics:
-    name: "coraza-shop-prod"          # Affects metric naming
-    rootID: "coraza"
+    name: "shop-prod"                 # Affects Envoy Wasm filter naming
     extraLabels:
       team: "payments"
       environment: "prod"

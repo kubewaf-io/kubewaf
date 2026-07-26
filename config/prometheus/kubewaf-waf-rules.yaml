@@ -19,23 +19,23 @@ spec:
         # WAF effectiveness (percentage of requests blocked)
         - record: kubewaf:waf_effectiveness:ratio
           expr: |
-            sum(rate(waf_filter_tx_interruptions[5m])) / clamp_min(sum(rate(waf_filter_tx_total[5m])), 1)
+            sum(rate(modsecurity_proxy_wasm_tx_interruptions[5m])) / clamp_min(sum(rate(modsecurity_proxy_wasm_tx_total[5m])), 1)
 
         # Blocked requests per second by rule
         - record: kubewaf:blocked_by_rule:rate5m
           expr: |
-            sum by (rule_id, phase, namespace) (rate(waf_filter_tx_interruptions[5m]))
+            sum by (rule_id, phase, namespace) (rate(modsecurity_proxy_wasm_tx_interruptions[5m]))
 
         # Total WAF traffic
         - record: kubewaf:total_traffic:rate5m
           expr: |
-            sum by (namespace) (rate(waf_filter_tx_total[5m]))
+            sum by (namespace) (rate(modsecurity_proxy_wasm_tx_total[5m]))
 
         # Top 10 noisiest rules (by blocks) per namespace - very useful for dashboards
         - record: kubewaf:top10_noisy_rules:rate5m
           expr: |
             topk by (namespace) (10,
-              sum by (namespace, rule_id, phase) (rate(waf_filter_tx_interruptions[5m]))
+              sum by (namespace, rule_id, phase) (rate(modsecurity_proxy_wasm_tx_interruptions[5m]))
             )
 
     # =====================
@@ -77,9 +77,9 @@ spec:
         - alert: KubeWAFTrafficDrop
           expr: |
             (
-              avg_over_time(sum by (namespace) (rate(waf_filter_tx_total[5m]))[10m:1m])
+              avg_over_time(sum by (namespace) (rate(modsecurity_proxy_wasm_tx_total[5m]))[10m:1m])
               /
-              avg_over_time(sum by (namespace) (rate(waf_filter_tx_total[5m]))[60m:1m])
+              avg_over_time(sum by (namespace) (rate(modsecurity_proxy_wasm_tx_total[5m]))[60m:1m])
             ) < 0.6
           for: 5m
           labels:
@@ -92,7 +92,7 @@ spec:
         # Specific rule firing at very high rate (possible bypass or false positive storm)
         - alert: KubeWAFHighRuleActivity
           expr: |
-            rate(waf_filter_tx_interruptions[5m]) > 50
+            rate(modsecurity_proxy_wasm_tx_interruptions[5m]) > 50
           for: 10m
           labels:
             severity: warning
@@ -161,9 +161,9 @@ spec:
         # A single rule is responsible for the majority of blocks (possible tuning opportunity)
         - alert: KubeWAFDominantRule
           expr: |
-            topk(1, sum by (rule_id, namespace) (rate(waf_filter_tx_interruptions[10m])))
+            topk(1, sum by (rule_id, namespace) (rate(modsecurity_proxy_wasm_tx_interruptions[10m])))
               >
-            (sum by (namespace) (rate(waf_filter_tx_interruptions[10m])) * 0.6)
+            (sum by (namespace) (rate(modsecurity_proxy_wasm_tx_interruptions[10m])) * 0.6)
           for: 15m
           labels:
             severity: info
@@ -177,9 +177,9 @@ spec:
         - alert: KubeWAFRuleSpike
           expr: |
             (
-              rate(waf_filter_tx_interruptions[5m])
+              rate(modsecurity_proxy_wasm_tx_interruptions[5m])
               /
-              clamp_min(avg_over_time(rate(waf_filter_tx_interruptions[5m])[1h:5m]), 0.1)
+              clamp_min(avg_over_time(rate(modsecurity_proxy_wasm_tx_interruptions[5m])[1h:5m]), 0.1)
             ) > 8
           for: 5m
           labels:

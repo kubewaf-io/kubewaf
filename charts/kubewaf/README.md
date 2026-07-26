@@ -21,7 +21,7 @@ Please see the official documentation site:
 
 - [Installation Guide](https://kubewaf.io/getting-started/installation/)
 - [Quick Start](https://kubewaf.io/getting-started/quickstart/)
-- [Observability & Metrics](https://kubewaf.io/guides/observability/) — How to scrape `waf_filter_tx_*` metrics from coraza-proxy-wasm
+- [Observability & Metrics](https://kubewaf.io/guides/observability/) — How to scrape `modsecurity_proxy_wasm_*` metrics from modsecurity-proxy-wasm
 - [Helm Values Reference](https://kubewaf.io/) (values are documented via Artifact Hub schema)
 
 ## Values

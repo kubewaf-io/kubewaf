@@ -6,6 +6,7 @@
 *.dylib
 bin/*
 Dockerfile.cross
+site/
 
 # Test binary, built with `go test -c`
 *.test
@@ -30,3 +31,6 @@ go.work
 *.kubeconfig
 
 */TODO.md
+
+# Local brainstorming / not for publication
+IDEAS.md

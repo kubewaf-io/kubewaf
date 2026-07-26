@@ -1,4 +1,4 @@
-# ServiceMonitor for scraping Coraza WAF metrics from Envoy data plane
+# ServiceMonitor for scraping modsecurity-proxy-wasm metrics from Envoy data plane
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -23,11 +23,11 @@ spec:
       metricRelabelings:
         # Only keep WAF and Wasm related metrics
         - sourceLabels: [__name__]
-          regex: 'waf_filter.*|wasm.*|http.*waf.*'
+          regex: 'modsecurity_proxy_wasm.*|wasm.*|http.*waf.*'
           action: keep
         # Example: drop very high cardinality rule_id if needed
         # - sourceLabels: [__name__]
-        #   regex: 'waf_filter_tx_interruptions'
+        #   regex: 'modsecurity_proxy_wasm_tx_interruptions'
         #   action: drop
 ---
 # Also scrape the operator metrics (already partially supported in the chart)

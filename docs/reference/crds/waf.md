@@ -7,85 +7,159 @@
 
 ## Purpose
 
-`WAF` attaches WAF rules (via RuleSets) to Kubernetes Gateway API resources using Envoy Gateway's extension policy mechanism.
+`WAF` attaches RuleSets to a data-plane **provider**, runs the
+**modsecurity-proxy-wasm** engine (optional **PoW challenge** first), and pushes
+configuration over **ECDS**.
 
-This is currently the **primary production integration path** for kubeWAF.
-
-## Spec
+## Spec overview
 
 ```yaml
 spec:
-  parentRefs: PolicyTargetReferences   # from gateway.envoyproxy.io
+  parentRefs: PolicyTargetReferences
+  provider:
+    type: EnvoyGateway | Istio | Cilium | Auto
+    ecdsCluster: string
+    ecdsService: string
+    istio: { workloadSelector, context }
+    cilium: { serviceName, serviceNamespace }
+
+  engine: ModSecurity                   # product engine
+  challenge:                            # optional, before WAF
+    enabled: bool
+    secret: string
+    secretRef: { name, key }
+    baseDifficulty / minDifficulty / maxDifficulty: int
+    header / headerValue: string
+    wasmHTTP / wasmSHA256: string
+
   ruleRefs: []RuleRef
   crsEnable: bool
+  crs: CRSTuning
   logLevel: int
-  corazaProxyWasmImage: string
+
+  wasmHTTP / wasmSHA256 / wasmImage: string
+  metrics: WAFMetrics
 ```
 
-### parentRefs
+## Engine
 
-Uses the standard Envoy Gateway `PolicyTargetReferences` type. You can target:
+Use **ModSecurity** — the in-tree [`modsecurity-proxy-wasm`](../../../modsecurity-proxy-wasm/README.md) module:
 
-- A `Gateway`
-- An `HTTPRoute`
-- A `GatewayClass` (affects many gateways)
+```yaml
+spec:
+  engine: ModSecurity
+  crsEnable: true   # Include @owasp_crs/*.conf (CRS embedded in the wasm)
+```
 
-Example:
+SecLang from RuleSets is emitted as `directives_map` JSON that the module
+loads on `onConfigure`. See [Wasm engines](../../guides/engines.md).
+
+## Challenge (Proof-of-Work)
+
+Optional filter from **pow-proxy-wasm**, installed **before** the WAF:
+
+```yaml
+spec:
+  challenge:
+    enabled: true
+    secret: "long-random-hmac-secret-shared-by-all-replicas"
+    # secretRef: { name: challenge-hmac, key: secret }
+    baseDifficulty: 18
+    minDifficulty: 12
+    maxDifficulty: 26
+    header: x-challenge-passed
+    headerValue: "1"
+```
+
+ECDS names:
+
+| Filter | Extension name |
+|--------|----------------|
+| Challenge | `kubewaf/<ns>/<name>/challenge` |
+| WAF | `kubewaf/<ns>/<name>` |
+
+## parentRefs
 
 ```yaml
 parentRefs:
   targetRef:
     group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: checkout
-    namespace: shop   # optional
+    kind: Gateway
+    name: external
 ```
 
-### ruleRefs
+## provider
 
-Same `RuleRef` type used everywhere. You should reference `RuleSet` objects (not raw `SecRule`).
+| `type` | Slot |
+|--------|------|
+| `EnvoyGateway` | Extension Server hooks |
+| `Istio` | `EnvoyFilter` |
+| `Cilium` | `CiliumEnvoyConfig` |
 
-### crsEnable
+## ruleRefs
 
-When `true`, the OWASP Core Rule Set is merged with your own rules.
+**RuleSet** only (not raw SecRules).
 
-### logLevel
+## crsEnable / crs
 
-WASM filter log level (0–7). Higher = more verbose. Default: `7` (debug/trace during development).
+When `crsEnable: true`, CRS is included with correct directive order (virtual
+includes for the embedded CRS in modsecurity-proxy-wasm). Optional `crs`:
+paranoia, anomaly thresholds, exclusions.
 
-### corazaProxyWasmImage
+## logLevel
 
-Override the Wasm module image. Default:
+Engine log level 0–7.
 
-```
-ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0
-```
+## Wasm fields
 
-### metrics
+| Field | Purpose |
+|-------|---------|
+| `wasmHTTP` | Override HTTP(S) URL for the WAF `.wasm` |
+| `wasmSHA256` | Integrity pin |
+| `wasmImage` | Optional OCI ref for docs / tooling |
 
-New in v0.2+: Full control over WAF metrics exposure.
+Defaults when the operator hosts modules:
+
+| Module | Path on `:18002` |
+|--------|------------------|
+| WAF (ModSecurity) | `/wasm/modsecurity-proxy-wasm.wasm` |
+| Challenge | `/wasm/challenge-proxy-wasm.wasm` |
+
+## metrics
 
 ```yaml
 metrics:
-  name: "coraza-prod"
-  rootID: "coraza"
+  name: "waf-prod"
   extraLabels:
     team: payments
-    env: prod
-  includeRuleID: true     # default
-  enableStats: true       # default
+  includeRuleID: true
+  enableStats: true
 ```
-
-See the [Observability guide](../../guides/observability.md) for details and recommended Grafana queries.
 
 ## Status
 
-Standard conditions:
+```yaml
+status:
+  provider: EnvoyGateway
+  engine: ModSecurity
+  challengeEnabled: true
+  ecdsResourceName: kubewaf/shop/shop-waf
+  ecdsVersion: 42
+  slotKind: ExtensionServer
+  conditions:
+  - type: Ready
+  - type: ReferencesResolved
+```
 
-- `Ready`
-- `ReferencesResolved`
+| Field | Meaning |
+|-------|---------|
+| `provider` | Data-plane attach path |
+| `engine` | Active WAF wasm implementation |
+| `challengeEnabled` | PoW filter present |
+| `ecdsResourceName` | Primary WAF ECDS name |
+| `slotKind` | Platform slot type |
 
-## Full Example
+## Full example
 
 ```yaml
 apiVersion: waf.kubewaf.io/v1beta1
@@ -94,6 +168,15 @@ metadata:
   name: public-waf
   namespace: ingress
 spec:
+  engine: ModSecurity
+  challenge:
+    enabled: true
+    secretRef:
+      name: challenge-hmac
+      key: secret
+    baseDifficulty: 18
+  provider:
+    type: EnvoyGateway
   parentRefs:
     targetRef:
       group: gateway.networking.k8s.io
@@ -103,20 +186,17 @@ spec:
   - kind: RuleSet
     name: baseline
     namespace: platform
-  - kind: RuleSet
-    name: public-strict
-    namespace: ingress
   crsEnable: true
+  crs:
+    paranoiaLevel: 2
   logLevel: 3
+  metrics:
+    extraLabels:
+      env: prod
 ```
 
-## Notes
+## Related
 
-- The controller creates an `EnvoyExtensionPolicy` with the same name in the same namespace.
-- Multiple `WAF` objects can target the same route; Envoy Gateway merges them according to its policy precedence rules.
-- Changes to referenced rules or RuleSets are picked up automatically.
-
-## See Also
-
-- [Envoy Gateway Integration Guide](../../guides/envoy-gateway.md)
-- [Envoy Gateway Policy Attachment](https://gateway.envoyproxy.io/docs/design/policy-attachment/)
+- [Wasm engines](../../guides/engines.md)
+- [Data plane (ECDS)](../../guides/dataplane-ecds.md)
+- [Architecture](../../concepts/architecture.md)

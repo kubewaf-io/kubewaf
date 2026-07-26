@@ -6,11 +6,24 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: wafinstance-sample
 spec:
+  # Data-plane provider: EnvoyGateway (default), Istio, or Cilium
+  provider:
+    type: EnvoyGateway
+
+  # Product WAF engine (modsecurity-proxy-wasm)
+  engine: ModSecurity
+
+  # Optional browser PoW challenge (pow-proxy-wasm) before the WAF filter
+  # challenge:
+  #   enabled: true
+  #   secret: "change-me-to-a-long-random-hmac-secret"
+  #   baseDifficulty: 18
+
   parentRefs:
     targetRef:
       group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: backend
+      kind: Gateway
+      name: eg
 
   ruleRefs:
     - kind: "RuleSet"
@@ -19,4 +32,4 @@ spec:
       group: "waf.kubewaf.io"
       version: "v1beta1"
 
-  # corazaProxyWasmImage: ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0  # customizable, default kept
+  # wasmImage: ghcr.io/kubewaf-io/modsecurity-proxy-wasm:latest  # OCI ref (docs / future)
