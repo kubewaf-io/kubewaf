@@ -4,19 +4,36 @@ kubeWAF surfaces rich Prometheus metrics from the **modsecurity-proxy-wasm** fil
 
 ## Metrics exposed by modsecurity-proxy-wasm
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `modsecurity_proxy_wasm_tx_total` | Counter | custom labels | Total transactions inspected by the WAF |
-| `modsecurity_proxy_wasm_tx_allowed` | Counter | custom labels | Transactions that completed without intervention |
-| `modsecurity_proxy_wasm_tx_interruptions` | Counter | `phase`, `rule_id`, + custom labels | Requests **blocked** (interrupted) by rules |
+Envoy embeds labels in the metric **name** (not as separate Prometheus labels).
+The filter dual-emits core series under both prefixes:
 
-**Important labels on interruptions**:
+| Legacy prefix | Product prefix | Description |
+|---------------|----------------|-------------|
+| `modsecurity_proxy_wasm.tx.total` | `kubewaf_waf.tx.total` | Transactions inspected |
+| `modsecurity_proxy_wasm.tx.allowed` | `kubewaf_waf.tx.allowed` | Completed without intervention |
+| `modsecurity_proxy_wasm.tx.interruptions_phase=…` | `kubewaf_waf.tx.interruptions_phase=…` | Blocked requests |
+| `modsecurity_proxy_wasm.rule.matches…` | `kubewaf_waf.rule.matches…` | Rule match counters |
+
+**Labels always injected by the operator** (and overridable via `extraLabels`):
+
+- `waf_namespace`, `waf_name` — multi-tenant identity
+- `engine` — `modsecurity` or `coraza`
+- `owner` — filter implementation
+
+**Interruption series also encode**:
 
 - `phase`: `http_request_headers`, `http_request_body`, `http_response_headers`, `http_response_body`
-- `rule_id`: The exact rule that caused the block (e.g. `942100`, `913100`, your custom IDs)
-- Any labels you pass via `spec.metrics.extraLabels` (and an automatic `owner=modsecurity-proxy-wasm` label)
+- `rule_id` when `spec.metrics.includeRuleID` is true (default)
 
-See also [modsecurity-proxy-wasm metrics](../../modsecurity-proxy-wasm/docs/METRICS.md) for the full catalog.
+**Cardinality controls** (wired end-to-end into plugin JSON):
+
+| WAF field | Plugin JSON | Effect |
+|-----------|-------------|--------|
+| `spec.metrics.includeRuleID` | `metrics.per_rule_id` | Per-rule series |
+| `spec.metrics.enableStats` | `metrics.enabled` | All stats on/off |
+| `spec.metrics.extraLabels` | `metric_labels` | Custom dimensions |
+
+Plugin contract: [`schemas/waf-plugin-config.json`](../../schemas/waf-plugin-config.json).
 
 ## Enabling Metrics in Your WAF Policy
 

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
@@ -18,6 +19,11 @@ func TestBuildFromWAF_ModSecurityEngine(t *testing.T) {
 			Engine:   wafv1beta1.EngineModSecurity,
 			LogLevel: 3,
 			Provider: &wafv1beta1.WAFProvider{Type: wafv1beta1.ProviderEnvoyGateway},
+			Metrics: &wafv1beta1.WAFMetrics{
+				IncludeRuleID: boolPtr(false),
+				EnableStats:   boolPtr(true),
+				ExtraLabels:   map[string]string{"team": "payments"},
+			},
 		},
 	}
 	opts := BuildOptions{
@@ -40,6 +46,92 @@ func TestBuildFromWAF_ModSecurityEngine(t *testing.T) {
 	labels, _ := p.PluginJSON["metric_labels"].(map[string]string)
 	if labels["owner"] != "modsecurity-proxy-wasm" {
 		t.Fatalf("labels=%v", labels)
+	}
+	if labels["waf_namespace"] != "ns1" || labels["waf_name"] != "shop" {
+		t.Fatalf("identity labels=%v", labels)
+	}
+	if labels["engine"] != "modsecurity" {
+		t.Fatalf("engine label=%v", labels)
+	}
+	if labels["team"] != "payments" {
+		t.Fatalf("extra labels=%v", labels)
+	}
+	if p.PluginJSON["mode"] != "kubewaf" {
+		t.Fatalf("mode=%v", p.PluginJSON["mode"])
+	}
+	if p.PluginJSON["config_id"] != "kubewaf/ns1/shop" {
+		t.Fatalf("config_id=%v", p.PluginJSON["config_id"])
+	}
+	if p.PluginJSON["allow_fallback"] != false {
+		t.Fatalf("allow_fallback=%v", p.PluginJSON["allow_fallback"])
+	}
+	metrics, ok := p.PluginJSON["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("metrics type %T", p.PluginJSON["metrics"])
+	}
+	if metrics["per_rule_id"] != false {
+		t.Fatalf("per_rule_id=%v", metrics["per_rule_id"])
+	}
+	if metrics["enabled"] != true {
+		t.Fatalf("enabled=%v", metrics["enabled"])
+	}
+	if p.PluginJSON["metrics_per_rule_id"] != false {
+		t.Fatalf("flat metrics_per_rule_id=%v", p.PluginJSON["metrics_per_rule_id"])
+	}
+	block, ok := p.PluginJSON["block"].(map[string]any)
+	if !ok {
+		t.Fatalf("block type %T", p.PluginJSON["block"])
+	}
+	if block["message"] != "blocked by kubeWAF" {
+		t.Fatalf("block.message=%v", block["message"])
+	}
+	// Directives must start with production baseline virtual include.
+	if len(p.Directives) == 0 || p.Directives[0] != "Include @kubewaf-defaults" {
+		t.Fatalf("directives[0]=%v full=%v", firstOrEmpty(p.Directives), p.Directives)
+	}
+}
+
+func firstOrEmpty(ss []string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	return ss[0]
+}
+
+func TestBuildDirectives_Order(t *testing.T) {
+	waf := &wafv1beta1.WAF{
+		Spec: wafv1beta1.WAFSpec{
+			Engine:    wafv1beta1.EngineModSecurity,
+			LogLevel:  3,
+			CRSEnable: true,
+			CRS: &wafv1beta1.CRSTuning{
+				ParanoiaLevel: intPtr(2),
+			},
+		},
+	}
+	dirs := BuildDirectives(waf, []string{`SecRule ARGS "@rx x" "id:100001,phase:2,pass"`})
+	if dirs[0] != "Include @kubewaf-defaults" {
+		t.Fatalf("want kubewaf-defaults first, got %v", dirs)
+	}
+	joined := strings.Join(dirs, "\n")
+	for _, want := range []string{
+		"SecRuleEngine On",
+		"Include @crs-setup-conf",
+		"Include @owasp_crs/*.conf",
+		"id:100001",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("directives missing %q: %v", want, dirs)
+		}
+	}
+
+	// Coraza must not receive @kubewaf-defaults (not in that binary).
+	waf.Spec.Engine = wafv1beta1.EngineCoraza
+	corazaDirs := BuildDirectives(waf, nil)
+	for _, d := range corazaDirs {
+		if d == "Include @kubewaf-defaults" {
+			t.Fatalf("coraza should not include @kubewaf-defaults: %v", corazaDirs)
+		}
 	}
 }
 

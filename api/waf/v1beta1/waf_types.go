@@ -344,11 +344,17 @@ type TargetExclusion struct {
 	RemoveTargets []string `json:"removeTargets"`
 }
 
-// WAFMetrics configures how metrics from the coraza-proxy-wasm filter are emitted.
+// WAFMetrics configures observability for the WAF Proxy-Wasm filter
+// (modsecurity-proxy-wasm or coraza-proxy-wasm).
+//
+// The operator maps these fields into the engine plugin JSON:
+//   - ExtraLabels → metric_labels (merged with waf_namespace/waf_name/engine)
+//   - IncludeRuleID → metrics.per_rule_id / metrics_per_rule_id
+//   - EnableStats → metrics.enabled
 type WAFMetrics struct {
 	// Name sets the logical name / VM ID of the Wasm filter inside Envoy.
 	// This influences metric prefixes (e.g. wasm.<name>.*).
-	// If unset, the controller uses "kubewaf.io".
+	// If unset, the controller uses the engine default (e.g. kubewaf.modsecurity).
 	// +optional
 	Name *string `json:"name,omitempty"`
 
@@ -356,22 +362,23 @@ type WAFMetrics struct {
 	// +optional
 	RootID *string `json:"rootID,omitempty"`
 
-	// ExtraLabels are key/value pairs passed to coraza-proxy-wasm.
-	// They will be attached to waf_filter_tx_interruptions metrics.
+	// ExtraLabels are key/value pairs attached to all WAF filter metrics
+	// (modsecurity_proxy_wasm.* / kubewaf_waf.*).
+	// The operator always injects waf_namespace, waf_name, engine, and owner;
+	// ExtraLabels override those keys when set.
 	// Example: { "team": "payments", "env": "prod", "gateway": "external" }
 	// +optional
 	ExtraLabels map[string]string `json:"extraLabels,omitempty"`
 
-	// IncludeRuleID controls whether the specific `rule_id` label is included
-	// on waf_filter_tx_interruptions metrics.
-	// Disabling this significantly reduces cardinality in high-traffic environments.
+	// IncludeRuleID controls whether per-rule_id series are emitted
+	// (tx interruptions and rule matches). Disabling reduces cardinality.
 	// Default: true
 	// +optional
 	// +kubebuilder:default=true
 	IncludeRuleID *bool `json:"includeRuleID,omitempty"`
 
-	// EnableStats enables the core WAF metrics (tx total + interruptions).
-	// Default: true
+	// EnableStats enables the core WAF metrics (tx total, allowed, interruptions,
+	// rule matches). Default: true
 	// +optional
 	// +kubebuilder:default=true
 	EnableStats *bool `json:"enableStats,omitempty"`

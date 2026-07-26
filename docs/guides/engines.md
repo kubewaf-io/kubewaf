@@ -44,13 +44,18 @@ spec:
 
 ### How config reaches the filter
 
-The operator builds the same JSON shape the module expects:
+The operator builds the plugin JSON described by
+[`schemas/waf-plugin-config.json`](../../schemas/waf-plugin-config.json):
 
 ```json
 {
+  "mode": "kubewaf",
+  "config_id": "kubewaf/shop/shop-waf",
+  "allow_fallback": false,
   "default_directives": "default",
   "directives_map": {
     "default": [
+      "Include @kubewaf-defaults",
       "SecRuleEngine On",
       "SecDebugLogLevel 3",
       "Include @crs-setup-conf",
@@ -59,16 +64,28 @@ The operator builds the same JSON shape the module expects:
     ]
   },
   "metric_labels": {
-    "owner": "modsecurity-proxy-wasm",
-    "identifier": "edge"
+    "waf_namespace": "shop",
+    "waf_name": "shop-waf",
+    "engine": "modsecurity",
+    "owner": "modsecurity-proxy-wasm"
+  },
+  "metrics": {
+    "enabled": true,
+    "per_rule_id": true,
+    "rule_tags": true
+  },
+  "block": {
+    "message": "blocked by kubeWAF"
   }
 }
 ```
 
+- **`@kubewaf-defaults`** — production body access / tmp dirs (always first).
 - **CRS** is **embedded in the wasm binary** (virtual includes such as
-  `@owasp_crs/*.conf`, `@crs-setup-conf`, `@demo-conf`).
+  `@owasp_crs/*.conf`, `@crs-setup-conf`).
 - **User RuleSets** from kubeWAF are appended as SecLang directives — no need to
   ship large CRS ConfigMaps.
+- **Fail-closed**: `mode=kubewaf` refuses silent fallback rules.
 - Config is pushed via **ECDS**; Envoy loads the binary from the operator
   (or `spec.wasmHTTP`).
 

@@ -132,7 +132,7 @@ func BuildFromWAF(waf *wafv1beta1.WAF, rules []string, opts BuildOptions) (*Port
 		}
 	}
 
-	directives := BuildDirectives(waf, rules)
+	directives := BuildDirectives(waf, rules, eng)
 	plugin := buildWAFPluginJSON(waf, eng, directives)
 
 	httpURL := firstNonEmpty(
@@ -201,32 +201,66 @@ func BuildFromWAF(waf *wafv1beta1.WAF, rules []string, opts BuildOptions) (*Port
 }
 
 func buildWAFPluginJSON(waf *wafv1beta1.WAF, eng wafv1beta1.EngineType, directives []string) map[string]any {
-	// Both Coraza and modsecurity-proxy-wasm accept the same shape.
+	// Both Coraza and modsecurity-proxy-wasm accept the same shape (see
+	// schemas/waf-plugin-config.json). kubeWAF always emits mode + identity labels.
 	plugin := map[string]any{
 		"default_directives": "default",
 		"directives_map": map[string]any{
 			"default": directives,
 		},
+		"mode":           "kubewaf",
+		"allow_fallback": false,
+		"config_id":      ExtensionName(waf.Namespace, waf.Name),
 	}
-	labels := map[string]string{}
+
+	engineLabel := "coraza"
+	owner := "coraza-proxy-wasm"
+	if eng == wafv1beta1.EngineModSecurity {
+		engineLabel = "modsecurity"
+		owner = "modsecurity-proxy-wasm"
+	}
+
+	// Stable multi-tenant identity labels (overridable via extraLabels).
+	labels := map[string]string{
+		"waf_namespace": waf.Namespace,
+		"waf_name":      waf.Name,
+		"engine":        engineLabel,
+		"owner":         owner,
+	}
 	if m := waf.Spec.Metrics; m != nil && len(m.ExtraLabels) > 0 {
 		for k, v := range m.ExtraLabels {
 			labels[k] = v
 		}
 	}
-	// Engine identity for multi-module metrics.
-	switch eng {
-	case wafv1beta1.EngineModSecurity:
-		if _, ok := labels["owner"]; !ok {
-			labels["owner"] = "modsecurity-proxy-wasm"
+	plugin["metric_labels"] = labels
+
+	// Nested metrics object (preferred) + flat aliases for older filters.
+	perRuleID := true
+	ruleTags := true
+	enabled := true
+	if m := waf.Spec.Metrics; m != nil {
+		if m.IncludeRuleID != nil {
+			perRuleID = *m.IncludeRuleID
 		}
-	default:
-		if _, ok := labels["owner"]; !ok {
-			labels["owner"] = "coraza-proxy-wasm"
+		if m.EnableStats != nil {
+			enabled = *m.EnableStats
 		}
 	}
-	if len(labels) > 0 {
-		plugin["metric_labels"] = labels
+	plugin["metrics"] = map[string]any{
+		"enabled":     enabled,
+		"per_rule_id": perRuleID,
+		"rule_tags":   ruleTags,
+	}
+	plugin["metrics_per_rule_id"] = perRuleID
+	plugin["metrics_rule_tags"] = ruleTags
+
+	// Product-branded local replies from the ModSecurity engine.
+	if eng == wafv1beta1.EngineModSecurity {
+		plugin["block"] = map[string]any{
+			"message":            "blocked by kubeWAF",
+			"add_rule_id_header": false,
+			"rule_id_header":     "x-kubewaf-rule-id",
+		}
 	}
 	return plugin
 }
@@ -301,15 +335,30 @@ func challengeEnabled(ch *wafv1beta1.ChallengeSpec) bool {
 }
 
 // BuildDirectives constructs the ordered SecLang directive list for a WAF.
-func BuildDirectives(waf *wafv1beta1.WAF, rules []string) []string {
+//
+// Order is intentional:
+//  1. Include @kubewaf-defaults — ModSecurity only: body access, tmp dirs
+//  2. SecRuleEngine / SecDebugLogLevel
+//  3. CRS setup + rules (when enabled)
+//  4. User RuleSet SecLang
+func BuildDirectives(waf *wafv1beta1.WAF, rules []string, eng ...wafv1beta1.EngineType) []string {
 	logLevel := waf.Spec.LogLevel
 	if logLevel == 0 {
 		logLevel = 7
 	}
-	out := []string{
-		"SecRuleEngine On",
-		"SecDebugLogLevel " + strconv.Itoa(logLevel),
+	engineType := engine.NormalizeEngine(waf.Spec.Engine)
+	if len(eng) > 0 && eng[0] != "" {
+		engineType = engine.NormalizeEngine(eng[0])
 	}
+	out := make([]string, 0, 8+len(rules))
+	// @kubewaf-defaults is embedded in modsecurity-proxy-wasm only.
+	if engineType == wafv1beta1.EngineModSecurity {
+		out = append(out, "Include @kubewaf-defaults")
+	}
+	out = append(out,
+		"SecRuleEngine On",
+		"SecDebugLogLevel "+strconv.Itoa(logLevel),
+	)
 	if waf.Spec.CRSEnable {
 		// ModSecurity engine embeds CRS; Coraza proxy-wasm also supports virtual includes.
 		out = append(out, "Include @crs-setup-conf")
