@@ -5,7 +5,7 @@ services:
 
   chown:
     # renovate: datasource=docker depName=alpine
-    image: alpine:3.20
+    image: alpine:3.24
     command:
       - /bin/sh
       - -c
