@@ -13,7 +13,7 @@
   "dependencies": {
     "@orama/orama": "^3.1.18",
     "cnfast": "^0.0.8",
-    "fumadocs-core": "16.12.1",
+    "fumadocs-core": "16.13.0",
     "fumadocs-mdx": "15.2.0",
     "fumadocs-mermaid": "^1.3.1",
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.12.1",
