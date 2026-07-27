@@ -26,7 +26,7 @@ services:
 
   k6:
     # renovate: datasource=docker depName=grafana/k6
-    image: ${K6_IMAGE:-grafana/k6:0.57.0}
+    image: ${K6_IMAGE:-grafana/k6:0.59.0}
     depends_on:
       - envoy
     volumes:
