@@ -43,7 +43,7 @@ BUILD_ARGS := $(if $(CRS_VERSION),--build-arg CRS_VERSION=$(CRS_VERSION),) \
 include build/build.mk
 include build/test.mk
 
-.PHONY: help image image-builder image-oci extract-wasm test-envoy test-envoy-keep \
+.PHONY: help image image-builder image-oci extract-wasm inspect-wasm test-envoy test-envoy-keep \
 	test-regression test-regression-keep test-unit test-fuzz test-bats deps-test \
 	test-perf-k6 test-perf-k6-compare test-perf-k6-ci test-perf-k6-keep \
 	test-perf-charts test-perf-release deps-perf-charts \
@@ -52,11 +52,18 @@ include build/test.mk
 
 .DEFAULT_GOAL := help
 
+# Finished .wasm to inspect (path relative to this Makefile or absolute).
+WASM ?= dist/modsecurity-proxy-wasm.wasm
+
 help:
 	@echo "Build (make is the single source of truth; Dockerfile runs 'make all'):"
 	@echo "  make all            Build deps + dist/modsecurity-proxy-wasm.wasm + dist/modsecurity-proxy-wasm.wat"
 	@echo "  make deps           Fetch/build emsdk, SDK, PCRE2, ModSecurity, CRS"
 	@echo "  make modsecurity-proxy-wasm.wasm    Link plugin (implies deps + generate-rules)"
+	@echo ""
+	@echo "Inspect a finished .wasm (version, source, capabilities):"
+	@echo "  make inspect-wasm                 # defaults to WASM=dist/modsecurity-proxy-wasm.wasm"
+	@echo "  make inspect-wasm WASM=path.wasm  # any finished binary"
 	@echo ""
 	@echo "Container images:"
 	@echo "  make image          Build wasm + OCI artifact (build/docker/Dockerfile)"
@@ -77,6 +84,13 @@ help:
 	@echo "  make test-perf-charts      Overlay chart from latest perf results"
 	@echo "  make test-perf-release     Perf smoke + release overlay chart"
 	@echo "  make verify-getentropy-stub  Policy check for wasm getentropy stub"
+
+# --- Inspect finished .wasm ---
+
+.PHONY: inspect-wasm
+inspect-wasm: ## Analyze a finished .wasm for version / source / capabilities
+	@test -f "$(WASM)" || { echo "ERROR: WASM file not found: $(WASM)"; echo "Usage: make inspect-wasm WASM=path/to/file.wasm"; exit 1; }
+	@bash "$(CURDIR)/build/scripts/inspect-wasm.sh" "$(WASM)"
 
 # --- OCI / Podman / Docker ---
 

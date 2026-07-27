@@ -41,16 +41,41 @@ MODSEC_CONFIGURE_FLAGS := \
 	--disable-debug-logs --disable-mutex-on-pm --without-lmdb --without-maxmind \
 	--without-ssdeep
 
+# Memory: full OWASP CRS load is heavy (regex compile + rule graph). 16MB/1MB stack
+# was too tight under Envoy V8 and aborted as "Uncaught RuntimeError: unreachable".
 EMSCRIPTEN_LINK_OPTS := --no-entry \
 	-sSTANDALONE_WASM -sEXPORTED_FUNCTIONS=_malloc -sFILESYSTEM=1 \
-	-sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=16MB -sSTACK_SIZE=1MB
+	-sALLOW_MEMORY_GROWTH=1 \
+	-sINITIAL_MEMORY=64MB \
+	-sMAXIMUM_MEMORY=512MB \
+	-sSTACK_SIZE=4MB \
+	-sDISABLE_EXCEPTION_CATCHING=1
 
 PLUGIN_SRCS := \
 	$(BUILD_DIR)/src/modsecurity_proxy_wasm.cc \
 	$(BUILD_DIR)/src/metrics.cc \
 	$(BUILD_DIR)/src/waf_config.cc \
 	$(BUILD_DIR)/src/wasm_vfs.cc \
+	$(BUILD_DIR)/src/version.cc \
 	$(GENERATED_CC)
+
+# Identity baked into the wasm (logged first on onStart/onConfigure + inspect-wasm).
+# Override VERSION= from CI/release; git fields are best-effort when .git exists.
+VERSION                 ?= 0.1.0-alpha8
+GIT_COMMIT              ?= $(shell git -C $(BUILD_DIR) rev-parse --short HEAD 2>/dev/null || echo unknown)
+GIT_DESCRIBE            ?= $(shell git -C $(BUILD_DIR) describe --tags --always --dirty 2>/dev/null || echo unknown)
+BUILD_DATE              ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
+BUILD_HOST              ?= $(shell hostname 2>/dev/null || echo unknown)
+SOURCE_REPO             ?= github.com/kubewaf-io/kubewaf/modsecurity-proxy-wasm
+WASM_VERSION_CPPFLAGS   := \
+	-DMODSECURITY_PROXY_WASM_VERSION=\"$(VERSION)\" \
+	-DMODSECURITY_PROXY_WASM_GIT_COMMIT=\"$(GIT_COMMIT)\" \
+	-DMODSECURITY_PROXY_WASM_GIT_DESCRIBE=\"$(GIT_DESCRIBE)\" \
+	-DMODSECURITY_PROXY_WASM_CRS_VERSION=\"$(CRS_VERSION)\" \
+	-DMODSECURITY_PROXY_WASM_MODSECURITY_VERSION=\"$(MODSECURITY_VERSION)\" \
+	-DMODSECURITY_PROXY_WASM_SOURCE=\"$(SOURCE_REPO)\" \
+	-DMODSECURITY_PROXY_WASM_BUILD_DATE=\"$(BUILD_DATE)\" \
+	-DMODSECURITY_PROXY_WASM_BUILD_HOST=\"$(BUILD_HOST)\"
 
 .PHONY: all build deps clean-build modsecurity-proxy-wasm.wasm modsecurity-proxy-wasm.wat
 
@@ -165,9 +190,12 @@ $(WASM_STUBS_OBJ): $(BUILD_DIR)/src/wasm_stubs.c | $(STAMPS_DIR)/emsdk
 	$(EMS_ENV) emcc -c $(BUILD_DIR)/src/wasm_stubs.c -o $(WASM_STUBS_OBJ)
 
 $(MODSECURITY_PROXY_WASM_OUT): deps $(GENERATED_CC) $(WASM_GETENTROPY_OBJ) $(WASM_STUBS_OBJ) $(PLUGIN_SRCS) \
-		$(BUILD_DIR)/src/waf_config.h $(STAMPS_DIR)/proxy-wasm-cpp-sdk
+		$(BUILD_DIR)/src/waf_config.h $(BUILD_DIR)/src/version.h $(BUILD_DIR)/src/version.cc \
+		$(STAMPS_DIR)/proxy-wasm-cpp-sdk
 	@mkdir -p $(dir $(MODSECURITY_PROXY_WASM_OUT))
+	@echo "Linking modsecurity-proxy-wasm VERSION=$(VERSION) git=$(GIT_COMMIT) crs=$(CRS_VERSION)"
 	$(EMS_ENV) em++ --std=c++17 -O3 -flto \
+		$(WASM_VERSION_CPPFLAGS) \
 		$(EMSCRIPTEN_LINK_OPTS) \
 		--js-library $(PROXY_WASM_CPP_SDK)/proxy_wasm_intrinsics.js \
 		-I$(BUILD_DIR)/src \
@@ -179,6 +207,7 @@ $(MODSECURITY_PROXY_WASM_OUT): deps $(GENERATED_CC) $(WASM_GETENTROPY_OBJ) $(WAS
 		$(BUILD_DIR)/src/metrics.cc \
 		$(BUILD_DIR)/src/waf_config.cc \
 		$(BUILD_DIR)/src/wasm_vfs.cc \
+		$(BUILD_DIR)/src/version.cc \
 		$(GENERATED_CC) \
 		$(MODSECURITY_LIB)/lib/libmodsecurity.a \
 		$(WASM_GETENTROPY_OBJ) \
@@ -186,9 +215,25 @@ $(MODSECURITY_PROXY_WASM_OUT): deps $(GENERATED_CC) $(WASM_GETENTROPY_OBJ) $(WAS
 		$(PCRE2_EM)/lib/libpcre2-8.a \
 		-o $(MODSECURITY_PROXY_WASM_OUT)
 
+# Optional text form for debugging (requires wabt: apt install wabt / brew install wabt).
+# Never fail the main build if wasm2wat is missing — leave a placeholder .wat.
 $(MODSECURITY_PROXY_WAT_OUT): $(MODSECURITY_PROXY_WASM_OUT)
 	@mkdir -p $(dir $(MODSECURITY_PROXY_WAT_OUT))
-	$(EMS_ENV) wasm2wat $(MODSECURITY_PROXY_WASM_OUT) -o $(MODSECURITY_PROXY_WAT_OUT) || touch $(MODSECURITY_PROXY_WAT_OUT)
+	@WASM2WAT=$$(command -v wasm2wat 2>/dev/null || true); \
+	if [ -z "$$WASM2WAT" ] && [ -n "$$(command -v emsdk 2>/dev/null || true)" ]; then \
+	  :; \
+	fi; \
+	if [ -z "$$WASM2WAT" ]; then \
+	  EMS_BIN="$(EMSDK)/upstream/bin/wasm2wat"; \
+	  if [ -x "$$EMS_BIN" ]; then WASM2WAT="$$EMS_BIN"; fi; \
+	fi; \
+	if [ -n "$$WASM2WAT" ]; then \
+	  echo "Generating $(MODSECURITY_PROXY_WAT_OUT) with $$WASM2WAT"; \
+	  "$$WASM2WAT" $(MODSECURITY_PROXY_WASM_OUT) -o $(MODSECURITY_PROXY_WAT_OUT); \
+	else \
+	  echo "WARN: wasm2wat not found (install package 'wabt' for .wat output); writing empty placeholder"; \
+	  : > $(MODSECURITY_PROXY_WAT_OUT); \
+	fi
 
 clean-build:
 	rm -rf $(STAMPS_DIR) $(OBJ_DIR) $(BUILD_DIR)/src/generated $(BUILD_DIR)/dist $(BUILD_DIR)/.cache

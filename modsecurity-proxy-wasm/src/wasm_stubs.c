@@ -1,4 +1,7 @@
 // libc/syscall stubs unavailable in Envoy proxy-wasm V8 (see src/wasm_getentropy.c for RNG).
+//
+// Signatures must match Emscripten's WASI/libc stubs used under LTO (emsdk 3.x).
+// Mismatch examples cause: wasm-ld: warning: function signature mismatch: __syscall_fchmod
 
 #include <stddef.h>
 
@@ -23,22 +26,24 @@ int getaddrinfo(const char *node, const char *service, const void *hints, void *
 
 void freeaddrinfo(void *res) { (void)res; }
 
-int __syscall_fchmod(int a, int b, int c) {
-  (void)a;
-  (void)b;
-  (void)c;
+// fchmod(fd, mode) — two i32 args (not three; older stubs were wrong under emsdk 3.x LTO).
+int __syscall_fchmod(int fd, int mode) {
+  (void)fd;
+  (void)mode;
   return -1;
 }
 
-int __syscall_chmod(const char *p, int m) {
-  (void)p;
-  (void)m;
+// chmod(path, mode)
+int __syscall_chmod(const char *path, int mode) {
+  (void)path;
+  (void)mode;
   return -1;
 }
 
-int __syscall_unlinkat(int d, const char *p, int f) {
-  (void)d;
-  (void)p;
-  (void)f;
+// unlinkat(dirfd, path, flags)
+int __syscall_unlinkat(int dirfd, const char *path, int flags) {
+  (void)dirfd;
+  (void)path;
+  (void)flags;
   return -1;
 }

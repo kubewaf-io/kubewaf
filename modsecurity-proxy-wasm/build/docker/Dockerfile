@@ -26,15 +26,20 @@ WORKDIR /build
 COPY . /build/
 
 ARG CRS_VERSION=v4.27.0
+ARG VERSION=0.1.0-alpha8
 ENV CRS_VERSION=${CRS_VERSION}
+ENV VERSION=${VERSION}
 
-RUN make all PREFIX=/opt MODSECURITY_PROXY_WASM_OUT=/modsecurity-proxy-wasm.wasm MODSECURITY_PROXY_WAT_OUT=/modsecurity-proxy-wasm.wat
+RUN make all PREFIX=/opt \
+	VERSION=${VERSION} \
+	MODSECURITY_PROXY_WASM_OUT=/modsecurity-proxy-wasm.wasm \
+	MODSECURITY_PROXY_WAT_OUT=/modsecurity-proxy-wasm.wat
 
 # OCI distribution image (default target): wasm + default WAF JSON + Envoy example.
 FROM scratch AS release
 
 ARG CRS_VERSION=v4.27.0
-ARG VERSION=0.1.0
+ARG VERSION=0.1.0-alpha8
 
 LABEL org.opencontainers.image.title="modsecurity-proxy-wasm" \
       org.opencontainers.image.description="ModSecurity proxy-wasm module with embedded OWASP CRS for Envoy envoy.wasm.runtime.v8" \

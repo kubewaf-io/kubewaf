@@ -14,6 +14,7 @@
 
 #include "proxy_wasm_intrinsics.h"
 #include "metrics.h"
+#include "version.h"
 #include "waf_config.h"
 #include "wasm_vfs.h"
 
@@ -80,7 +81,7 @@ public:
   explicit ModSecRootContext(uint32_t id, std::string_view root_id) : RootContext(id, root_id) {}
 
   bool onConfigure(size_t configuration_size) override;
-  bool onStart(size_t) override { return true; }
+  bool onStart(size_t) override;
 
   ModSecurity* modsec_{nullptr};
   RulesSet* rules_{nullptr};
@@ -187,25 +188,61 @@ SecRule ARGS "@rx <script" "id:1000,phase:2,deny,status:403,msg:'Basic XSS block
 namespace {
 
 bool loadRuleChunk(const char* label, const char* data, std::size_t size, void* user, std::string& err) {
-  (void)label;
   if (data == nullptr || size == 0) {
     return true;
   }
   auto* rules = static_cast<RulesSet*>(user);
-  std::string chunk(data, size);
-  const char* ref = modsecurity_proxy_wasm_rule_ref_path(label);
+  const char* lab = (label != nullptr && label[0] != '\0') ? label : "(anonymous)";
+  // Progress log — if Envoy dies with "unreachable" right after a label, that chunk is the culprit.
+  LOG_WARN(std::string("[modsecurity-proxy-wasm] loading rules label=") + lab +
+           " bytes=" + std::to_string(size));
+  // Always log a short preview for small inline chunks (custom user rules).
+  if (size > 0 && size < 512) {
+    std::string preview(data, size);
+    // Single-line for Envoy's truncated log lines.
+    for (char& c : preview) {
+      if (c == '\n' || c == '\r') c = ' ';
+    }
+    LOG_WARN(std::string("[modsecurity-proxy-wasm] rules preview: ") + preview);
+  }
+
+  // Keep ref in a real std::string for the duration of load() (API takes const std::string&).
+  std::string ref(modsecurity_proxy_wasm_rule_ref_path(label));
+  // Always copy into a mutable buffer. RulesSet::load may mutate/parse in place;
+  // zero-copy into read-only catalog/rodata has caused unreachable traps on some
+  // custom SecRule text after a full CRS load.
+  std::string chunk;
+  chunk.reserve(size + 1);
+  chunk.assign(data, size);
   int ret = rules->load(chunk.c_str(), ref);
   if (ret < 0) {
     err = rules->m_parserError.str();
+    if (err.empty()) {
+      err = std::string("RulesSet::load failed for ") + lab;
+    }
+    LOG_ERROR(std::string("[modsecurity-proxy-wasm] rules load failed label=") + lab + ": " + err);
     return false;
   }
+  LOG_WARN(std::string("[modsecurity-proxy-wasm] loaded rules label=") + lab);
   return true;
 }
 
 }  // namespace
 
+bool ModSecRootContext::onStart(size_t /*vm_configuration_size*/) {
+  // First log line from this VM — use it to confirm which .wasm Envoy actually loaded.
+  // Also touch embedded metadata so LTO cannot strip the inspect-wasm block.
+  (void)modsecurity_proxy_wasm_metadata();
+  LOG_WARN(MODSECURITY_PROXY_WASM_VERSION_LINE);
+  return true;
+}
+
 bool ModSecRootContext::onConfigure(size_t configuration_size) {
-  LOG_WARN("[modsecurity-proxy-wasm] onConfigure size=" + std::to_string(configuration_size));
+  // Repeat version first on every configure (Envoy may not surface onStart in all dumps).
+  (void)modsecurity_proxy_wasm_metadata();
+  LOG_WARN(MODSECURITY_PROXY_WASM_VERSION_LINE);
+  LOG_WARN(std::string("[modsecurity-proxy-wasm] onConfigure size=") +
+           std::to_string(configuration_size));
 
   std::string config;
   if (!readPluginConfig(configuration_size, config)) {
