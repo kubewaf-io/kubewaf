@@ -1,7 +1,7 @@
 services:
   envoy:
     # Standard Envoy image works with Go wasip1 WASM + V8 runtime.
-    image: envoyproxy/envoy:v1.33-latest
+    image: envoyproxy/envoy:v1.39-latest
     ports:
       - "8080:8080"
     volumes:

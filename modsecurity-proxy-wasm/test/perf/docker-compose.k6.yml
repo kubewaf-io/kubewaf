@@ -8,7 +8,7 @@
 
 services:
   envoy:
-    image: ${ENVOY_IMAGE:-envoyproxy/envoy:v1.38-latest}
+    image: ${ENVOY_IMAGE:-envoyproxy/envoy:v1.39-latest}
     container_name: ${PERF_ENVOY_CONTAINER:-modsecurity-proxy-wasm-perf-envoy}
     command: ["envoy", "-c", "/etc/envoy.yaml", "--log-level", "warn"]
     ports:
