@@ -1,0 +1,66 @@
+# Advanced CodeQL setup for the monorepo.
+# Analyzes Go (operator/API) and GitHub Actions only — not c-cpp/python/JS
+# from engine submodules or external docs/UI trees.
+#
+# If default CodeQL setup is still enabled in repo Settings → Code security,
+# disable it (or switch to advanced) so only this workflow runs.
+
+name: CodeQL
+
+permissions: {}
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Weekly Monday 06:00 UTC
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: actions
+            build-mode: none
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Private engine sources are not required for CodeQL on this monorepo.
+          submodules: false
+
+      - name: Setup Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@34950e1b113b30df4edee1a6d3a605242df0c40b
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@34950e1b113b30df4edee1a6d3a605242df0c40b
+        with:
+          category: "/language:${{ matrix.language }}"

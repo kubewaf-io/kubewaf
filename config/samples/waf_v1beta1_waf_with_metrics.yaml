@@ -21,7 +21,6 @@ spec:
       group: waf.kubewaf.io
       version: v1beta1
 
-  engine: ModSecurity
   crsEnable: true
   logLevel: 4
 
@@ -41,6 +40,14 @@ spec:
 
     # Enable the core WAF metrics (tx_total + interruptions)
     enableStats: true
+
+  # Client-visible deny local-replies (product-neutral headers)
+  block:
+    message: Forbidden
+    addBlockedHeader: true
+    blockedHeader: x-blocked
+    addRequestIDHeader: true
+    requestIDHeader: x-request-id
 ---
 # Optional: Also create a matching EnvoyProxy for proper Prometheus exposure
 apiVersion: gateway.envoyproxy.io/v1alpha1

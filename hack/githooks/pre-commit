@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Native git pre-commit hook (no Python / pre-commit framework).
+# Mirrors cheap CI gates: helm-docs, ah lint, manifests, yamllint, golint.
+#
+# Install:  make githooks
+# Skip:     git commit --no-verify
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "${ROOT}"
+
+# Staged paths (Added / Copied / Modified), relative to repo root.
+mapfile -t STAGED < <(git diff --cached --name-only --diff-filter=ACM || true)
+if [[ ${#STAGED[@]} -eq 0 || -z "${STAGED[0]:-}" ]]; then
+  exit 0
+fi
+
+staged_match() {
+  local re="$1"
+  local f
+  for f in "${STAGED[@]}"; do
+    if [[ "${f}" =~ ${re} ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+run() {
+  local title="$1"
+  shift
+  echo "==> ${title}"
+  "$@"
+}
+
+MAKE_DIFF="${ROOT}/hack/scripts/pre-commit-make-diff.sh"
+AH_LINT="${ROOT}/hack/scripts/pre-commit-ah-lint.sh"
+
+need_charts=false
+need_manifests=false
+need_go=false
+need_yaml=false
+
+if staged_match '^charts/'; then
+  need_charts=true
+fi
+if staged_match '^(api/|charts/kubewaf/crds/|hack/|Makefile$|PROJECT$)'; then
+  need_manifests=true
+fi
+if staged_match '\.go$'; then
+  need_go=true
+fi
+if staged_match '\.(ya?ml)$'; then
+  need_yaml=true
+fi
+
+if [[ "${need_charts}" == true ]]; then
+  run "make helm-docs" "${MAKE_DIFF}" helm-docs charts/
+  run "ah lint (charts)" "${AH_LINT}"
+  if staged_match '^charts/kubewaf/'; then
+    run "make helm-schema" "${MAKE_DIFF}" helm-schema charts/kubewaf/values.schema.json
+  fi
+  run "make helm-lint" make helm-lint
+fi
+
+if [[ "${need_manifests}" == true ]]; then
+  run "make manifests" "${MAKE_DIFF}" manifests charts/kubewaf/crds config/crd/bases
+fi
+
+if [[ "${need_yaml}" == true ]]; then
+  if ! command -v yamllint >/dev/null 2>&1; then
+    echo "yamllint not found on PATH (required for staged YAML)." >&2
+    echo "Install via your package manager, e.g. apt install yamllint" >&2
+    exit 1
+  fi
+  yaml_files=()
+  for f in "${STAGED[@]}"; do
+    if [[ "${f}" =~ \.(ya?ml)$ && -f "${f}" ]]; then
+      yaml_files+=("${f}")
+    fi
+  done
+  if [[ ${#yaml_files[@]} -gt 0 ]]; then
+    run "yamllint" yamllint -c=.github/configs/lintconf.yaml "${yaml_files[@]}"
+  fi
+fi
+
+if [[ "${need_go}" == true ]]; then
+  run "make golint" make golint
+fi
+
+echo "pre-commit checks passed."

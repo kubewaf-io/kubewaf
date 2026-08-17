@@ -1,0 +1,350 @@
+name: E2E Release (full)
+
+# Full end-to-end matrix (parallel slices) — all jobs use path-b wasm (no embedded CRS):
+#   1. Envoy Gateway provider smoke (custom SecRules; no Path A FTW)
+#   2. Envoy Gateway + Path B go-ftw (structured CRS — first-class CRS regression)
+#   3. Istio provider (+ traffic)
+#   4. Cilium provider (slot smoke)
+#
+# Path A (crsEnable + full-catalog wasm) is second-class: published as *-full images
+# but not CI-gated here. Opt-in locally: E2E_FTW_PATH_A=true with CATALOG_MODE=full.
+#
+# When it runs:
+#   - pull_request  → every PR (not on push to main)
+#   - workflow_call → release tags via releaser.yml (before GoReleaser)
+#   - workflow_dispatch → manual
+#
+# Fast EG-only smoke on PR + main remains in test-e2e.yml.
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    # Full matrix on PRs only — do not run on push to main/master.
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_call:
+    inputs:
+      ftw_include:
+        description: "go-ftw -i filter (use 'all' for full CRS suite)"
+        type: string
+        required: false
+        default: "^913"
+      run_path_b:
+        description: "Run EG Path B go-ftw"
+        type: boolean
+        required: false
+        default: true
+      run_istio:
+        description: "Run Istio provider e2e"
+        type: boolean
+        required: false
+        default: true
+      run_cilium:
+        description: "Run Cilium provider e2e"
+        type: boolean
+        required: false
+        default: true
+  workflow_dispatch:
+    inputs:
+      ftw_include:
+        description: "go-ftw -i filter (use 'all' for full CRS suite)"
+        type: string
+        required: false
+        default: "^913"
+      run_path_b:
+        description: "Run EG Path B go-ftw"
+        type: boolean
+        required: false
+        default: true
+      run_istio:
+        description: "Run Istio provider e2e"
+        type: boolean
+        required: false
+        default: true
+      run_cilium:
+        description: "Run Cilium provider e2e"
+        type: boolean
+        required: false
+        default: true
+
+concurrency:
+  group: e2e-release-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Cancel superseded PR runs; keep release/call runs to completion.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  E2E_FTW_INCLUDE: ${{ inputs.ftw_include || '^913' }}
+
+jobs:
+  setup-meta:
+    name: Resolve inputs
+    runs-on: ubuntu-latest
+    outputs:
+      ftw_include: ${{ steps.out.outputs.ftw_include }}
+      run_path_b: ${{ steps.out.outputs.run_path_b }}
+      run_istio: ${{ steps.out.outputs.run_istio }}
+      run_cilium: ${{ steps.out.outputs.run_cilium }}
+    steps:
+      - id: out
+        run: |
+          # PR events have an empty inputs context. The previous
+          #   inputs.run_x == false && 'false' || 'true'
+          # treated unset as false and skipped Path B / Istio / Cilium on every PR.
+          # Full matrix is intended on pull_request; only workflow_call /
+          # workflow_dispatch honor the boolean inputs (defaults true).
+          echo "ftw_include=${{ inputs.ftw_include || '^913' }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "run_path_b=true" >> "$GITHUB_OUTPUT"
+            echo "run_istio=true" >> "$GITHUB_OUTPUT"
+            echo "run_cilium=true" >> "$GITHUB_OUTPUT"
+          else
+            # Boolean inputs stringify as true/false; workflow_call defaults are true.
+            echo "run_path_b=${{ inputs.run_path_b }}" >> "$GITHUB_OUTPUT"
+            echo "run_istio=${{ inputs.run_istio }}" >> "$GITHUB_OUTPUT"
+            echo "run_cilium=${{ inputs.run_cilium }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  unit-smoke:
+    name: Unit smoke
+    # Skip draft PRs; still run for release (workflow_call) and manual dispatch.
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: go test (critical packages)
+        run: |
+          go mod tidy
+          # Controller Ginkgo suites need kube-apiserver/etcd (envtest assets).
+          make test-unit-smoke
+
+  e2e-eg-smoke:
+    name: EG provider smoke (path-b wasm)
+    needs: [setup-meta, unit-smoke]
+    if: needs.unit-smoke.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install kind
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-$(go env GOARCH)"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.3
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+      - name: Run EG provider e2e (path-b wasm, no Path A FTW)
+        env:
+          E2E_PROVIDER: envoy-gateway
+          # Provider Ready + scanner UA smoke against path-b wasm + custom SecRules.
+          # CRS regression lives in e2e-eg-path-b (structured SecRules).
+          E2E_FTW: "false"
+          E2E_FTW_PATH_A: "false"
+          E2E_FTW_PATH_B: "false"
+        run: |
+          go mod tidy
+          make test-e2e-envoy-gateway
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get pods -A
+          kubectl get waf -A -o wide 2>/dev/null
+          kubectl logs -n kubewaf-system -l app.kubernetes.io/instance=kubewaf --tail=300 2>/dev/null
+
+  e2e-eg-path-b:
+    name: EG + Path B go-ftw
+    needs: [setup-meta, unit-smoke]
+    if: needs.unit-smoke.result == 'success' && needs.setup-meta.outputs.run_path_b == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install kind
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-$(go env GOARCH)"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.3
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+      - name: Run EG Path B FTW
+        env:
+          E2E_PROVIDER: envoy-gateway
+          E2E_FTW: "false"
+          E2E_FTW_PATH_B: "true"
+          # Smoke Path B (^913 by default) applies 901/905/913/949/959/980 +
+          # PhraseLists in-test. E2E_CRS_FULL would install all 626 SecRules
+          # during kind setup and has wedged the EG proxy (HTTP 000) on Kind.
+          E2E_CRS_FULL: "false"
+          E2E_FTW_INCLUDE: ${{ needs.setup-meta.outputs.ftw_include }}
+        run: |
+          go mod tidy
+          make test-e2e-envoy-gateway
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get pods -A
+          kubectl get secrules -n demo --no-headers 2>/dev/null | wc -l
+          kubectl get phraselists -n demo --no-headers 2>/dev/null | wc -l
+          kubectl get waf -A -o wide 2>/dev/null
+          kubectl get pods -n envoy-gateway-system -o wide
+          kubectl logs -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=demo-gateway -c envoy --tail=120 2>/dev/null
+          kubectl logs -n kubewaf-system -l app.kubernetes.io/instance=kubewaf --tail=300 2>/dev/null
+
+  e2e-istio:
+    name: Istio provider
+    needs: [setup-meta, unit-smoke]
+    if: needs.unit-smoke.result == 'success' && needs.setup-meta.outputs.run_istio == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install kind
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-$(go env GOARCH)"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.3
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+      - name: Run Istio e2e
+        env:
+          E2E_PROVIDER: istio
+          E2E_FTW: "false"
+          # Slot + real traffic (benign 200 / sqlmap 403); same smoke as EG.
+          E2E_ISTIO_TRAFFIC: "true"
+        run: |
+          go mod tidy
+          make test-e2e-istio
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get pods -A
+          kubectl get envoyfilter -A 2>/dev/null
+          kubectl get waf -A -o wide 2>/dev/null
+          kubectl logs -n kubewaf-system -l app.kubernetes.io/instance=kubewaf --tail=300 2>/dev/null
+
+  e2e-cilium:
+    name: Cilium provider
+    needs: [setup-meta, unit-smoke]
+    if: needs.unit-smoke.result == 'success' && needs.setup-meta.outputs.run_cilium == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install kind
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-$(go env GOARCH)"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.3
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+      - name: Run Cilium e2e
+        env:
+          E2E_PROVIDER: cilium
+          E2E_FTW: "false"
+          # Slot + real traffic (ECDS bootstrap remesh; same UA smoke as EG/Istio).
+          E2E_CILIUM_TRAFFIC: "true"
+        run: |
+          go mod tidy
+          make test-e2e-cilium
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get pods -A
+          kubectl get ciliumenvoyconfig -A 2>/dev/null
+          kubectl get waf -A -o wide 2>/dev/null
+          kubectl -n kube-system get ds,pods -l k8s-app=cilium-envoy -o wide 2>/dev/null
+          kubectl -n kube-system describe pod -l k8s-app=cilium-envoy 2>/dev/null | tail -120
+          kubectl -n kube-system logs -l k8s-app=cilium-envoy --tail=200 --all-containers --prefix 2>/dev/null
+          kubectl -n kube-system get cm cilium-envoy-bootstrap-kubewaf -o jsonpath='{.data.bootstrap-config\.json}' 2>/dev/null \
+            | python3 -c 'import json,sys; raw=sys.stdin.read(); d=json.loads(raw) if raw.strip() else {}; print("bootstrap keys", sorted(d)); sr=d.get("static_resources") or d.get("staticResources") or {}; print("clusters", [c.get("name") for c in (sr.get("clusters") or [])])'
+          kubectl logs -n kubewaf-system -l app.kubernetes.io/instance=kubewaf --tail=300 2>/dev/null
+
+  e2e-release-gate:
+    name: Release e2e gate
+    needs:
+      - unit-smoke
+      - e2e-eg-smoke
+      - e2e-eg-path-b
+      - e2e-istio
+      - e2e-cilium
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate results
+        run: |
+          set -e
+          echo "unit:      ${{ needs.unit-smoke.result }}"
+          echo "eg-smoke:  ${{ needs.e2e-eg-smoke.result }}"
+          echo "eg-path-b: ${{ needs.e2e-eg-path-b.result }}"
+          echo "istio:     ${{ needs.e2e-istio.result }}"
+          echo "cilium:    ${{ needs.e2e-cilium.result }}"
+
+          # Draft PRs skip unit-smoke → treat gate as success (no full e2e yet).
+          if [ "${{ needs.unit-smoke.result }}" = "skipped" ]; then
+            echo "unit-smoke skipped (e.g. draft PR) — gate soft-pass"
+            exit 0
+          fi
+
+          fail=0
+          # First-class path-b coverage: EG provider smoke always required.
+          if [ "${{ needs.e2e-eg-smoke.result }}" != "success" ]; then
+            echo "FAIL: EG provider smoke (path-b)"
+            fail=1
+          fi
+          # Path B CRS FTW required when enabled (default on PR / dispatch defaults).
+          case "${{ needs.e2e-eg-path-b.result }}" in
+            success) ;;
+            skipped)
+              echo "NOTE: EG Path B skipped (run_path_b=false)"
+              ;;
+            *)
+              echo "FAIL: EG Path B go-ftw"
+              fail=1
+              ;;
+          esac
+          # Optional provider jobs: success or skipped only.
+          for r in \
+            "${{ needs.e2e-istio.result }}" \
+            "${{ needs.e2e-cilium.result }}"; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "FAIL: job result=$r"; fail=1 ;;
+            esac
+          done
+          exit $fail

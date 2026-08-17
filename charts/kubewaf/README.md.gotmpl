@@ -21,7 +21,7 @@ Please see the official documentation site:
 
 - [Installation Guide](https://kubewaf.io/getting-started/installation/)
 - [Quick Start](https://kubewaf.io/getting-started/quickstart/)
-- [Observability & Metrics](https://kubewaf.io/guides/observability/) — How to scrape `modsecurity_proxy_wasm_*` metrics from modsecurity-proxy-wasm
+- [Observability & Metrics](https://kubewaf.io/guides/observability/) — Managed path is Envoy OTLP (`kubewaf_otel`) into VictoriaMetrics. DIY scrape of Envoy `/stats` is not the product API. `profile=full` converts access-log records to `waf.eval` traces in VictoriaTraces.
 - [Helm Values Reference](https://kubewaf.io/) (values are documented via Artifact Hub schema)
 
 ## Values

@@ -1,0 +1,69 @@
+# {{ template "chart.header" . }}
+
+{{ template "chart.deprecationWarning" . }}
+
+{{ template "chart.badgesSection" . }}
+
+{{ template "chart.description" . }}
+
+## Prerequisites
+
+- Kubernetes 1.28+
+- [kubeWAF operator](https://github.com/kubewaf-io/kubewaf) chart installed (CRDs: `SecRule`, `RuleSet`, `WAF`)
+
+## What it deploys
+
+| Resource | Purpose |
+|----------|---------|
+| `SecRule` (many) | Converted CRS rules under `files/crs/` |
+| `PhraseList` (21) | Stock CRS `@pmFromFile` data pack under `files/phraselists/` (Path B `data_files`, basename discovery) |
+| `RuleSet/crs-core` | Foundation (init, protocol, scanners, scoring) |
+| `RuleSet/ruleset-*` | Profiles: api, backend, frontend, golang, php, java, dotnet |
+| Extras SecRules + `ruleset-extras-baseline` | Sensitive paths, TRACE, Log4Shell, CMS noise |
+
+CRS RuleSets do **not** use `phraseListRefs`; lists are resolved from SecRule
+`@pmFromFile` basenames. There is **no stock CRS IPList pack**.
+
+## Install
+
+```bash
+helm upgrade --install kubewaf ./charts/kubewaf -n kubewaf-system --create-namespace
+helm upgrade --install kubewaf-crs ./charts/kubewaf-crs -n demo --create-namespace
+```
+
+Path B WAF (no engine CRS includes):
+
+```yaml
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: my-api
+spec:
+  crsEnable: false
+  crs:
+    paranoiaLevel: 1
+    inboundAnomalyThreshold: 5
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: my-api
+  ruleRefs:
+    - kind: RuleSet
+      name: ruleset-api
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: RuleSet
+      name: ruleset-extras-baseline
+      group: waf.kubewaf.io
+      version: v1beta1
+```
+
+{{ template "chart.homepageLine" . }}
+
+{{ template "chart.maintainersSection" . }}
+
+{{ template "chart.sourcesSection" . }}
+
+{{ template "chart.requirementsSection" . }}
+
+{{ template "chart.valuesSection" . }}

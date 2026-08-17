@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Lightweight conventional-commit subject check (bash only — no commitlint/node/python).
+# Format: type(scope)!: subject
+#   types: feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert
+#
+# Install:  make githooks
+# Skip:     git commit --no-verify
+set -euo pipefail
+
+MSG_FILE="${1:-}"
+if [[ -z "${MSG_FILE}" || ! -f "${MSG_FILE}" ]]; then
+  echo "commit-msg: missing commit message file" >&2
+  exit 1
+fi
+
+# First non-comment, non-empty line is the subject.
+subject=""
+while IFS= read -r line || [[ -n "${line}" ]]; do
+  # strip CR
+  line="${line//$'\r'/}"
+  [[ -z "${line}" || "${line}" =~ ^# ]] && continue
+  subject="${line}"
+  break
+done <"${MSG_FILE}"
+
+if [[ -z "${subject}" ]]; then
+  echo "commit-msg: empty commit message" >&2
+  exit 1
+fi
+
+# Allow merge / revert / fixup / squash noise.
+if [[ "${subject}" =~ ^Merge\  ||
+      "${subject}" =~ ^Revert\  ||
+      "${subject}" =~ ^fixup!\  ||
+      "${subject}" =~ ^squash!\  ]]; then
+  exit 0
+fi
+
+re='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9._/-]+\))?(!)?: .+'
+if [[ ! "${subject}" =~ ${re} ]]; then
+  cat >&2 <<EOF
+commit-msg: subject is not conventional-commit format:
+
+  ${subject}
+
+Expected:
+  type(scope)!: description
+
+  type = feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert
+  scope optional; ! optional for breaking change
+
+Examples:
+  feat(waf): add DetectionOnly mode status
+  fix: correct PhraseList Ready condition
+  chore: bump engine image
+EOF
+  exit 1
+fi

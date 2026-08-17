@@ -1,0 +1,101 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: secruleidpools.seclang.kubewaf.io
+spec:
+  group: seclang.kubewaf.io
+  names:
+    categories:
+    - waf
+    - security
+    kind: SecRuleIDPool
+    listKind: SecRuleIDPoolList
+    plural: secruleidpools
+    shortNames:
+    - sridpool
+    singular: secruleidpool
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.minId
+      name: Min
+      type: integer
+    - jsonPath: .spec.maxId
+      name: Max
+      type: integer
+    - jsonPath: .status.nextId
+      name: Next
+      type: integer
+    - jsonPath: .status.lastAllocatedId
+      name: Last
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SecRuleIDPool is a cluster-scoped allocator for SecRule metadata ids.
+          The operator ensures a singleton named "cluster" with defaults minId=100000.
+          Only the leader advances status.nextId.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              SecRuleIDPoolSpec configures the cluster-wide auto ID range for SecRules
+              (and future SecActions) that omit metadata.id.
+            properties:
+              maxId:
+                default: 999999
+                description: MaxID is the last id the pool may allocate (inclusive).
+                minimum: 1
+                type: integer
+              minId:
+                default: 100000
+                description: |-
+                  MinID is the first id the pool may allocate (inclusive).
+                  Custom rules should use high ids so they do not collide with CRS (typically < 100000).
+                minimum: 1
+                type: integer
+            type: object
+          status:
+            description: SecRuleIDPoolStatus is the leader-managed allocation cursor.
+            properties:
+              allocatedCount:
+                description: AllocatedCount is a monotonic counter of successful allocations
+                  (not live occupancy).
+                format: int64
+                type: integer
+              lastAllocatedId:
+                description: LastAllocatedID is the last id successfully granted.
+                type: integer
+              nextId:
+                description: NextID is the next candidate id to try (not necessarily
+                  free if objects were deleted).
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

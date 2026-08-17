@@ -1,0 +1,35 @@
+{{- if .Values.exampleWAF.enabled }}
+{{- $profile := .Values.exampleWAF.profile | default "api" }}
+{{- $rsName := printf "ruleset-%s" $profile }}
+{{- if eq $profile "core" }}
+{{- $rsName = "crs-core" }}
+{{- end }}
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: {{ .Values.exampleWAF.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubewaf-crs.labels" . | nindent 4 }}
+    waf.kubewaf.io/profile: {{ $profile | quote }}
+spec:
+  crsEnable: {{ .Values.exampleWAF.crsEnable }}
+  targetRef:
+    {{- toYaml .Values.exampleWAF.targetRef | nindent 4 }}
+  ruleRefs:
+    - kind: RuleSet
+      name: {{ $rsName }}
+      group: waf.kubewaf.io
+      version: v1beta1
+    {{- if and .Values.extras.enabled .Values.exampleWAF.attachExtras }}
+    - kind: RuleSet
+      name: {{ .Values.extras.rulesetName }}
+      group: waf.kubewaf.io
+      version: v1beta1
+    {{- end }}
+  {{- with .Values.exampleWAF.crs }}
+  crs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

@@ -4,7 +4,7 @@ groups:
     rules:
       - alert: KubeWAFHighBlockRate
         expr: |
-          sum(rate(modsecurity_proxy_wasm_tx_interruptions[5m])) / clamp_min(sum(rate(modsecurity_proxy_wasm_tx_total[5m])), 1) > 0.15
+          sum(rate(kubewaf_waf_tx_interruptions[5m])) / clamp_min(sum(rate(kubewaf_waf_tx_total[5m])), 1) > 0.15
         for: 5m
         labels:
           severity: warning
@@ -13,7 +13,7 @@ groups:
           description: "The WAF is blocking a large percentage of traffic."
 
       - alert: KubeWAFPolicyNotReady
-        expr: kubewaf_wafenvoygateway_ready == 0
+        expr: kubewaf_waf_ready == 0
         for: 15m
         labels:
           severity: critical
@@ -29,4 +29,3 @@ groups:
         annotations:
           summary: "WAF policy has zero rules loaded"
           description: "WAF {{ $labels.name }} is protecting nothing."
-

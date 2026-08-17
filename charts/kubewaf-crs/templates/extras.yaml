@@ -1,0 +1,212 @@
+{{- /*
+Additional baseline SecRules + RuleSet inspired by common CRS / virtual-patch
+practice. IDs live in 1_000_000+ to avoid colliding with OWASP CRS 9xxxxx.
+*/ -}}
+{{- if .Values.extras.enabled }}
+{{- $labels := include "kubewaf-crs.labels" . }}
+{{- $ns := .Release.Namespace }}
+{{- $extras := .Values.extras | default dict }}
+
+{{- if and $extras.sensitivePaths $extras.sensitivePaths.enabled }}
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: extras-block-sensitive-paths
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/extras: "true"
+    waf.kubewaf.io/extras-group: sensitive-paths
+    seclang.kubewaf.io/id: "1000100"
+    seclang.kubewaf.io/order: "1000100"
+spec:
+  order: 1000100
+  metadata:
+    id: 1000100
+    phase: "1"
+    severity: CRITICAL
+    message: "Access to sensitive path or VCS/backup artifact blocked"
+    tags:
+      - attack-disclosure
+      - kubewaf-extras
+      - paranoia-level/1
+  match:
+    - variables:
+        - name: REQUEST_URI
+      operator:
+        name: rx
+        # .env, .git, backups, common secret dumps (URI path)
+        value: '(?i)(?:/\.env(?:\.|$)|/\.git(?:/|$)|/\.svn(?:/|$)|/\.hg(?:/|$)|/\.DS_Store|/wp-config\.php|/web\.config|/id_rsa|/credentials(?:\.json)?|\.(?:bak|old|swp|sql|dump)(?:\.|$))'
+      transformations:
+        - lowercase
+        - urlDecodeUni
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "403"
+    non-disruptive:
+      - nonDisruptiveActionType: log
+      - nonDisruptiveActionType: setvar
+        value: TX.inbound_anomaly_score_pl1=+5
+{{- end }}
+
+{{- if and $extras.methodBlock $extras.methodBlock.enabled }}
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: extras-block-trace-track
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/extras: "true"
+    waf.kubewaf.io/extras-group: method-block
+    seclang.kubewaf.io/id: "1000101"
+    seclang.kubewaf.io/order: "1000101"
+spec:
+  order: 1000101
+  metadata:
+    id: 1000101
+    phase: "1"
+    severity: CRITICAL
+    message: "HTTP TRACE/TRACK method not allowed"
+    tags:
+      - attack-protocol
+      - kubewaf-extras
+      - paranoia-level/1
+  match:
+    - variables:
+        - name: REQUEST_METHOD
+      operator:
+        name: rx
+        value: '^(?:TRACE|TRACK)$'
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "405"
+    non-disruptive:
+      - nonDisruptiveActionType: log
+{{- end }}
+
+{{- if and $extras.log4shell $extras.log4shell.enabled }}
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: extras-block-log4shell
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/extras: "true"
+    waf.kubewaf.io/extras-group: log4shell
+    seclang.kubewaf.io/id: "1000102"
+    seclang.kubewaf.io/order: "1000102"
+spec:
+  order: 1000102
+  metadata:
+    id: 1000102
+    phase: "2"
+    severity: CRITICAL
+    message: "Possible Log4Shell / JNDI injection pattern"
+    tags:
+      - attack-rce
+      - kubewaf-extras
+      - cve-2021-44228
+      - paranoia-level/1
+  match:
+    - variables:
+        - name: REQUEST_HEADERS
+        - name: ARGS
+        - name: REQUEST_COOKIES
+        - name: REQUEST_BODY
+      operator:
+        name: rx
+        value: '(?i)(?:\$\{(?:jndi|lower|upper|::-)|ldap(?:s)?://|rmi://)'
+      transformations:
+        - urlDecodeUni
+        - lowercase
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "403"
+    non-disruptive:
+      - nonDisruptiveActionType: log
+      - nonDisruptiveActionType: setvar
+        value: TX.inbound_anomaly_score_pl1=+5
+{{- end }}
+
+{{- if and $extras.cmsNoise $extras.cmsNoise.enabled }}
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: extras-cms-scanner-paths
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/extras: "true"
+    waf.kubewaf.io/extras-group: cms-noise
+    seclang.kubewaf.io/id: "1000103"
+    seclang.kubewaf.io/order: "1000103"
+spec:
+  order: 1000103
+  metadata:
+    id: 1000103
+    phase: "1"
+    severity: WARNING
+    message: "CMS / admin tooling path often probed by scanners"
+    tags:
+      - attack-reputation-scanner
+      - kubewaf-extras
+      - paranoia-level/1
+  match:
+    - variables:
+        - name: REQUEST_URI
+      operator:
+        name: rx
+        value: '(?i)(?:/xmlrpc\.php|/wp-login\.php|/wp-admin(?:/|$)|/phpmyadmin(?:/|$)|/adminer(?:\.php)?(?:/|$)|/vendor/phpunit|/cgi-bin/|/actuator(?:/|$))'
+      transformations:
+        - lowercase
+        - urlDecodeUni
+  actions:
+    # Score rather than hard-deny so legitimate CMS installs can remove this
+    # rule or raise thresholds; pair with CRS scanner detection for block.
+    disruptive:
+      disruptiveActionType: pass
+    non-disruptive:
+      - nonDisruptiveActionType: log
+      - nonDisruptiveActionType: setvar
+        value: TX.inbound_anomaly_score_pl1=+3
+{{- end }}
+
+---
+# Aggregate RuleSet for all enabled extras (attach alongside a CRS profile).
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: {{ ($extras.rulesetName | default "ruleset-extras-baseline") }}
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/profile: extras
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/extras: "true"
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          waf.kubewaf.io/extras: "true"
+          app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

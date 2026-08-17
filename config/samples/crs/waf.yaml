@@ -2,9 +2,9 @@ apiVersion: waf.kubewaf.io/v1beta1
 kind: WAF
 metadata:
   labels:
-    app.kubernetes.io/name: wafv2
+    app.kubernetes.io/name: kubewaf
     app.kubernetes.io/managed-by: kustomize
-  name: wafinstance-sample
+  name: waf-sample
 spec:
   targetRef:
     group: gateway.networking.k8s.io
@@ -18,5 +18,3 @@ spec:
       group: "waf.kubewaf.io"
       version: "v1beta1"
 
-  engine: ModSecurity
-  # wasmImage: "ghcr.io/kubewaf-io/modsecurity-proxy-wasm:latest" # optional OCI ref

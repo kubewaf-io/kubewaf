@@ -2,16 +2,14 @@ apiVersion: waf.kubewaf.io/v1beta1
 kind: WAF
 metadata:
   labels:
-    app.kubernetes.io/name: wafv2
+    app.kubernetes.io/name: kubewaf
     app.kubernetes.io/managed-by: kustomize
-  name: wafinstance-sample
+  name: waf-sample
 spec:
-  # Data-plane provider: EnvoyGateway (default), Istio, or Cilium
-  provider:
-    type: EnvoyGateway
-
-  # Product WAF engine (modsecurity-proxy-wasm)
-  engine: ModSecurity
+  # provider is omitted on purpose: the operator discovers the data plane from
+  # targetRef → Gateway → GatewayClass.controllerName (Envoy Gateway / Istio /
+  # Cilium). See status.provider and status.providerDetection after reconcile.
+  # Override only if needed: provider.type: EnvoyGateway|Istio|Cilium
 
   # Optional browser PoW challenge (pow-proxy-wasm) before the WAF filter.
   # HMAC is auto-generated into a managed Secret (<waf-name>-challenge-hmac).
@@ -30,5 +28,3 @@ spec:
       namespace: default
       group: "waf.kubewaf.io"
       version: "v1beta1"
-
-  # wasmImage: ghcr.io/kubewaf-io/modsecurity-proxy-wasm:latest  # OCI ref (docs / future)

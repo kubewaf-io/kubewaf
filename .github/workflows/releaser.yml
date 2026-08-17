@@ -4,14 +4,25 @@ permissions: {}
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Full multi-provider e2e must pass before publishing artifacts.
+  e2e-release:
+    name: Full e2e (release gate)
+    uses: ./.github/workflows/test-e2e-release.yml
+    with:
+      ftw_include: "^913"
+      run_path_b: true
+      run_istio: true
+      run_cilium: true
+
   create-release:
+    needs: e2e-release
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -21,6 +32,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          # Private engine sources are not required; wasm is pulled from GHCR.
       - name: Setup caches
         uses: ./.github/actions/setup-caches
         timeout-minutes: 5

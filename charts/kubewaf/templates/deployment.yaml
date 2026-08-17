@@ -51,32 +51,24 @@ spec:
             - --zap-log-level={{ default 4 .Values.args.logLevel }}
             - --enable-pprof={{ .Values.args.pprof }}
             - --leader-elect={{ .Values.leaderElection.enabled | default true }}
+            - --enable-webhooks={{ .Values.webhooks.enabled | default false }}
+            {{- if .Values.webhooks.enabled }}
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+            {{- end }}
             - --ecds-bind-address=:{{ .Values.dataplane.ecds.port | default 18001 }}
             - --extension-server-bind-address=:{{ .Values.dataplane.extensionServer.port | default 5005 }}
             - --ecds-service-host={{ .Values.dataplane.ecds.serviceHost | default (printf "%s-ecds.%s.svc.cluster.local" (include "helm.fullname" .) .Release.Namespace) }}
             - --ecds-service-port={{ .Values.dataplane.ecds.port | default 18001 }}
             - --wasm-serve-bind-address=:{{ .Values.dataplane.wasmServe.port | default 18002 }}
             - --wasm-serve-port={{ .Values.dataplane.wasmServe.port | default 18002 }}
-            {{- if .Values.dataplane.wasmFile }}
-            - --wasm-file={{ .Values.dataplane.wasmFile }}
-            {{- end }}
-            {{- if .Values.dataplane.wasmSourceURL }}
-            - --wasm-source-url={{ .Values.dataplane.wasmSourceURL }}
-            {{- end }}
-            {{- if .Values.dataplane.modsecurityWasmFile }}
-            - --modsecurity-wasm-file={{ .Values.dataplane.modsecurityWasmFile }}
-            {{- end }}
-            {{- if .Values.dataplane.modsecurityWasmSourceURL }}
-            - --modsecurity-wasm-source-url={{ .Values.dataplane.modsecurityWasmSourceURL }}
-            {{- end }}
-            {{- if .Values.dataplane.challengeWasmFile }}
-            - --challenge-wasm-file={{ .Values.dataplane.challengeWasmFile }}
-            {{- end }}
-            {{- if .Values.dataplane.challengeWasmSourceURL }}
-            - --challenge-wasm-source-url={{ .Values.dataplane.challengeWasmSourceURL }}
-            {{- end }}
-            {{- if .Values.dataplane.wasmHTTPURL }}
-            - --wasm-http-url={{ .Values.dataplane.wasmHTTPURL }}
+            {{- if .Values.observability.managed.enabled }}
+            - --otel-service-host={{ include "kubewaf.otelHost" . }}
+            - --otel-service-port=4317
+            - --telemetry-profile={{ .Values.observability.managed.profile | default "lite" }}
+            - --telemetry-sample-non-disruptive={{ .Values.observability.managed.traces.sampleNonDisruptive | default "0.25" }}
+            - --telemetry-sample-disruptive={{ .Values.observability.managed.traces.sampleDisruptive | default "1.0" }}
+            - --telemetry-redact={{ .Values.observability.managed.traces.redact }}
+            - --telemetry-include-match-data={{ .Values.observability.managed.traces.includeMatchDataDefault }}
             {{- end }}
           {{- with .Values.args.extraArgs }}
             {{- toYaml . | nindent 12 }}
@@ -99,6 +91,11 @@ spec:
           - name: wasm
             containerPort: {{ .Values.dataplane.wasmServe.port | default 18002 }}
             protocol: TCP
+          {{- if .Values.webhooks.enabled }}
+          - name: webhook
+            containerPort: 9443
+            protocol: TCP
+          {{- end }}
           {{- if .Values.args.pprof }}
           - name: pprof
             containerPort: 8082
@@ -115,9 +112,15 @@ spec:
             {{- toYaml .Values.readinessProbe | nindent 12}}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if or (and .Values.dataplane.wasmFile .Values.dataplane.wasmVolume) .Values.volumeMounts }}
+          {{- $needVolumes := or .Values.webhooks.enabled .Values.dataplane.wasmVolume .Values.volumeMounts }}
+          {{- if $needVolumes }}
           volumeMounts:
-            {{- if and .Values.dataplane.wasmFile .Values.dataplane.wasmVolume }}
+            {{- if .Values.webhooks.enabled }}
+            - name: webhook-certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+            {{- end }}
+            {{- if .Values.dataplane.wasmVolume }}
             - name: wasm
               mountPath: {{ .Values.dataplane.wasmMountPath | default "/wasm" }}
               readOnly: true
@@ -126,8 +129,13 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- end }}
-      {{- if or .Values.dataplane.wasmVolume .Values.volumes }}
+      {{- if or .Values.webhooks.enabled .Values.dataplane.wasmVolume .Values.volumes }}
       volumes:
+        {{- if .Values.webhooks.enabled }}
+        - name: webhook-certs
+          secret:
+            secretName: {{ include "helm.fullname" . }}-webhook-certs
+        {{- end }}
         {{- if .Values.dataplane.wasmVolume }}
         - name: wasm
           {{- toYaml .Values.dataplane.wasmVolume | nindent 10 }}

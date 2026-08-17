@@ -1,0 +1,17 @@
+# CodeQL advanced-setup config for the monorepo.
+# Product code is Go (+ GitHub Actions workflows). Engines live in private
+# submodules; docs site and Headlamp plugin are separate repos.
+name: kubewaf
+
+paths-ignore:
+  - engines/**
+  - website2/**
+  - headlamp-plugin/**
+  - dist/**
+  - bin/**
+  - docs-site/**
+  - "**/vendor/**"
+  - "**/node_modules/**"
+
+queries:
+  - uses: security-extended

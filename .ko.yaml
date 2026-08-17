@@ -7,3 +7,11 @@ builds:
   main: ./cmd/
   ldflags:
   - '{{ if index .Env "LD_FLAGS" }}{{ .Env.LD_FLAGS }}{{ end }}'
+- id: kubewaf-subresource-api
+  main: ./cmd/subresource-api
+  ldflags:
+  - '{{ if index .Env "LD_FLAGS" }}{{ .Env.LD_FLAGS }}{{ end }}'
+- id: kubewaf-probe-test-server
+  main: ./cmd/probe-test-server
+  ldflags:
+  - '{{ if index .Env "LD_FLAGS" }}{{ .Env.LD_FLAGS }}{{ end }}'

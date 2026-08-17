@@ -48,9 +48,64 @@
                 }
             }
         },
+        "dataplane": {
+            "type": "object",
+            "properties": {
+                "ecds": {
+                    "type": "object",
+                    "properties": {
+                        "port": {
+                            "description": "Container / Service port for the ECDS gRPC server",
+                            "type": "integer"
+                        },
+                        "serviceHost": {
+                            "description": "DNS name Envoy uses for the ECDS cluster (defaults to release service FQDN)",
+                            "type": "string"
+                        }
+                    }
+                },
+                "extensionServer": {
+                    "type": "object",
+                    "properties": {
+                        "port": {
+                            "description": "Container / Service port for the Envoy Gateway Extension Server",
+                            "type": "integer"
+                        }
+                    }
+                },
+                "wasmMountPath": {
+                    "description": "Mount path for shared wasm volume",
+                    "type": "string"
+                },
+                "wasmServe": {
+                    "type": "object",
+                    "properties": {
+                        "port": {
+                            "description": "Container / Service port for multi-module wasm HTTP",
+                            "type": "integer"
+                        }
+                    }
+                },
+                "wasmVolume": {
+                    "description": "Optional volume mounting wasm binaries under wasmMountPath",
+                    "type": "null"
+                }
+            }
+        },
         "env": {
             "description": "Environment variables",
-            "type": "array"
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "value": {
+                        "type": "string"
+                    }
+                }
+            }
         },
         "fullnameOverride": {
             "type": "string"
@@ -216,6 +271,15 @@
             "description": "Configuration for `imagePullSecrets` so that you can use a private images registry.",
             "type": "array"
         },
+        "leaderElection": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "description": "Enable leader election (required when replicaCount \u003e 1)",
+                    "type": "boolean"
+                }
+            }
+        },
         "livenessProbe": {
             "description": "Configure the liveness probe using Deployment probe spec",
             "type": "object",
@@ -252,7 +316,7 @@
                             "type": "boolean"
                         },
                         "groups": {
-                            "description": "Prometheus Groups for the rule",
+                            "description": "Prometheus Groups for the rule. You can also enable the built-in WAF alerts below.",
                             "type": "array"
                         },
                         "labels": {
@@ -262,6 +326,15 @@
                         "namespace": {
                             "description": "Install the rules into a different Namespace, as the monitoring stack one (default: the release one)",
                             "type": "string"
+                        },
+                        "wafAlerts": {
+                            "description": "Enable the recommended WAF data-plane + operator alerts and recording rules. When true, a solid set of alerts for modsecurity_proxy_wasm_* and kubewaf_* metrics is included.",
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
                         }
                     }
                 },
@@ -339,9 +412,288 @@
             "description": "Set the node selector",
             "type": "object"
         },
+        "observability": {
+            "type": "object",
+            "properties": {
+                "managed": {
+                    "type": "object",
+                    "properties": {
+                        "alerts": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "ciliumNetworkPolicy": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                },
+                                "nodeCIDRs": {
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "collector": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                },
+                                "image": {
+                                    "type": "object",
+                                    "properties": {
+                                        "pullPolicy": {
+                                            "type": "string"
+                                        },
+                                        "registry": {
+                                            "type": "string"
+                                        },
+                                        "repository": {
+                                            "type": "string"
+                                        },
+                                        "tag": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "resources": {
+                                    "type": "object",
+                                    "properties": {
+                                        "limits": {
+                                            "type": "object",
+                                            "properties": {
+                                                "cpu": {
+                                                    "type": "string"
+                                                },
+                                                "memory": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "requests": {
+                                            "type": "object",
+                                            "properties": {
+                                                "cpu": {
+                                                    "type": "string"
+                                                },
+                                                "memory": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "enabled": {
+                            "description": "Enable the managed OTLP plane (Collector + metrics backend)",
+                            "type": "boolean"
+                        },
+                        "grafana": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "injectConfigured": {
+                            "description": "Set true after applying the Envoy/Istio bootstrap fragment (cluster + sink + tags).",
+                            "type": "boolean"
+                        },
+                        "networkPolicy": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "otlp": {
+                            "type": "object",
+                            "properties": {
+                                "endpoint": {
+                                    "description": "Empty = in-cluster {{ fullname }}-otel-collector:4317",
+                                    "type": "string"
+                                },
+                                "protocol": {
+                                    "description": "Envoy sink / access logger protocol",
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "profile": {
+                            "description": "lite = metrics only; full = metrics + security traces",
+                            "type": "string"
+                        },
+                        "prometheusRemoteWrite": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "description": "Prometheus remote_write (not OTLP). Use victoriaMetrics.endpoint for OTLP ingest.",
+                                    "type": "boolean"
+                                },
+                                "endpoint": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "traces": {
+                            "type": "object",
+                            "properties": {
+                                "includeMatchDataDefault": {
+                                    "type": "boolean"
+                                },
+                                "redact": {
+                                    "type": "boolean"
+                                },
+                                "sampleDisruptive": {
+                                    "type": "string"
+                                },
+                                "sampleNonDisruptive": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "victoriaMetrics": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "description": "In-cluster single-node VM (required for lite/full unless endpoint or remote_write is set)",
+                                    "type": "boolean"
+                                },
+                                "endpoint": {
+                                    "description": "External VM / vmagent OTLP metrics ingest. Empty uses in-cluster VM when enabled.",
+                                    "type": "string"
+                                },
+                                "image": {
+                                    "type": "object",
+                                    "properties": {
+                                        "pullPolicy": {
+                                            "type": "string"
+                                        },
+                                        "registry": {
+                                            "type": "string"
+                                        },
+                                        "repository": {
+                                            "type": "string"
+                                        },
+                                        "tag": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "resources": {
+                                    "type": "object",
+                                    "properties": {
+                                        "limits": {
+                                            "type": "object",
+                                            "properties": {
+                                                "cpu": {
+                                                    "type": "string"
+                                                },
+                                                "memory": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "requests": {
+                                            "type": "object",
+                                            "properties": {
+                                                "cpu": {
+                                                    "type": "string"
+                                                },
+                                                "memory": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "retentionPeriod": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "victoriaTraces": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                },
+                                "endpoint": {
+                                    "type": "string"
+                                },
+                                "image": {
+                                    "type": "object",
+                                    "properties": {
+                                        "pullPolicy": {
+                                            "type": "string"
+                                        },
+                                        "registry": {
+                                            "type": "string"
+                                        },
+                                        "repository": {
+                                            "type": "string"
+                                        },
+                                        "tag": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "resources": {
+                                    "type": "object",
+                                    "properties": {
+                                        "limits": {
+                                            "type": "object",
+                                            "properties": {
+                                                "cpu": {
+                                                    "type": "string"
+                                                },
+                                                "memory": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "requests": {
+                                            "type": "object",
+                                            "properties": {
+                                                "cpu": {
+                                                    "type": "string"
+                                                },
+                                                "memory": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "podAnnotations": {
             "description": "Annotations to add to pod",
             "type": "object"
+        },
+        "podDisruptionBudget": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "description": "Create a PDB",
+                    "type": "boolean"
+                },
+                "minAvailable": {
+                    "description": "Minimum available pods during voluntary disruptions",
+                    "type": "integer"
+                }
+            }
         },
         "podLabels": {
             "description": "Annotations to add to pod",
@@ -368,6 +720,106 @@
             "description": "Set the priority class name",
             "type": "string"
         },
+        "probeTestServer": {
+            "type": "object",
+            "properties": {
+                "auth": {
+                    "type": "object",
+                    "properties": {
+                        "tokenSecretName": {
+                            "description": "Shared bearer Secret name (empty = {{ fullname }}-probe-eval-token)",
+                            "type": "string"
+                        }
+                    }
+                },
+                "concurrency": {
+                    "type": "object",
+                    "properties": {
+                        "globalMaxInFlight": {
+                            "type": "integer"
+                        },
+                        "maxConcurrentCompiles": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "enabled": {
+                    "description": "Deploy go-coraza Test HTTP Server (required only when subresourceApi.probes.enabled)",
+                    "type": "boolean"
+                },
+                "image": {
+                    "type": "object",
+                    "properties": {
+                        "pullPolicy": {
+                            "type": "string"
+                        },
+                        "registry": {
+                            "type": "string"
+                        },
+                        "repository": {
+                            "type": "string"
+                        },
+                        "tag": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "networkPolicy": {
+                    "description": "Create NetworkPolicy allowing only Subresource API pods",
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        }
+                    }
+                },
+                "podAnnotations": {
+                    "type": "object"
+                },
+                "podLabels": {
+                    "type": "object"
+                },
+                "replicaCount": {
+                    "description": "Replica count (compile cache is per-pod if enabled later)",
+                    "type": "integer"
+                },
+                "resources": {
+                    "type": "object",
+                    "properties": {
+                        "limits": {
+                            "type": "object",
+                            "properties": {
+                                "cpu": {
+                                    "type": "string"
+                                },
+                                "memory": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "requests": {
+                            "type": "object",
+                            "properties": {
+                                "cpu": {
+                                    "type": "string"
+                                },
+                                "memory": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                },
+                "service": {
+                    "type": "object",
+                    "properties": {
+                        "port": {
+                            "type": "integer"
+                        }
+                    }
+                }
+            }
+        },
         "readinessProbe": {
             "description": "Configure the readiness probe using Deployment probe spec",
             "type": "object",
@@ -386,7 +838,7 @@
             }
         },
         "replicaCount": {
-            "description": "Amount of replicas",
+            "description": "Amount of replicas (use \u003e=2 with leader election for HA)",
             "type": "integer"
         },
         "resources": {
@@ -442,6 +894,151 @@
                 }
             }
         },
+        "subresourceApi": {
+            "description": "------------------------------------------------------------------------- Subresource API Server (aggregated subresources.kubewaf.io) + probe Test Server Disabled by default. Probes still require probeTestServer; directives/query do not.",
+            "type": "object",
+            "properties": {
+                "concurrency": {
+                    "type": "object",
+                    "properties": {
+                        "globalMaxInFlight": {
+                            "description": "Process-wide max concurrent probes",
+                            "type": "integer"
+                        },
+                        "perNamespace": {
+                            "description": "Max in-flight probes per namespace",
+                            "type": "integer"
+                        }
+                    }
+                },
+                "directives": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "description": "Register GET …/wafs/{name}/directives (no Test Server)",
+                            "type": "boolean"
+                        }
+                    }
+                },
+                "enabled": {
+                    "description": "Deploy the Subresource API Server + APIService",
+                    "type": "boolean"
+                },
+                "image": {
+                    "type": "object",
+                    "properties": {
+                        "pullPolicy": {
+                            "description": "Image pull policy",
+                            "type": "string"
+                        },
+                        "registry": {
+                            "description": "Image registry (empty inherits image.registry)",
+                            "type": "string"
+                        },
+                        "repository": {
+                            "description": "Image repository for cmd/subresource-api",
+                            "type": "string"
+                        },
+                        "tag": {
+                            "description": "Image tag (empty inherits image.tag / Chart.AppVersion)",
+                            "type": "string"
+                        }
+                    }
+                },
+                "networkPolicy": {
+                    "description": "Create NetworkPolicy (defense-in-depth; kind often permissive)",
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        }
+                    }
+                },
+                "podAnnotations": {
+                    "description": "Optional pod annotations",
+                    "type": "object"
+                },
+                "podLabels": {
+                    "description": "Optional pod labels",
+                    "type": "object"
+                },
+                "probes": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "description": "Register /probes (requires probeTestServer.enabled)",
+                            "type": "boolean"
+                        }
+                    }
+                },
+                "query": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "description": "Register GET …/metrics, /traces, /clustermetrics (operator-side VM/VT proxy)",
+                            "type": "boolean"
+                        }
+                    }
+                },
+                "replicaCount": {
+                    "description": "Replica count",
+                    "type": "integer"
+                },
+                "resources": {
+                    "description": "Resources for Subresource API pods",
+                    "type": "object",
+                    "properties": {
+                        "limits": {
+                            "type": "object",
+                            "properties": {
+                                "cpu": {
+                                    "type": "string"
+                                },
+                                "memory": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "requests": {
+                            "type": "object",
+                            "properties": {
+                                "cpu": {
+                                    "type": "string"
+                                },
+                                "memory": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                },
+                "service": {
+                    "type": "object",
+                    "properties": {
+                        "port": {
+                            "description": "Service port exposed to apiserver (APIService)",
+                            "type": "integer"
+                        }
+                    }
+                },
+                "testServer": {
+                    "type": "object",
+                    "properties": {
+                        "connectTimeoutSeconds": {
+                            "type": "integer"
+                        },
+                        "tokenSecretName": {
+                            "description": "Shared bearer Secret name (empty = {{ fullname }}-probe-eval-token)",
+                            "type": "string"
+                        },
+                        "url": {
+                            "description": "URL of Test HTTP Server (cluster DNS) leave empty to use http://{{ fullname }}-probe-test-server:port",
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "tolerations": {
             "description": "Set list of tolerations",
             "type": "array"
@@ -452,11 +1049,54 @@
         },
         "volumeMounts": {
             "description": "VolumeMounts",
-            "type": "array"
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "mountPath": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                }
+            }
         },
         "volumes": {
             "description": "Volumes",
-            "type": "array"
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "emptyDir": {
+                        "type": "object",
+                        "properties": {
+                            "medium": {
+                                "type": "string"
+                            },
+                            "sizeLimit": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "webhooks": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "description": "Install ValidatingWebhookConfiguration + TLS secret and enable --enable-webhooks",
+                    "type": "boolean"
+                },
+                "failurePolicy": {
+                    "description": "Fail or Ignore when the webhook is unreachable",
+                    "type": "string"
+                }
+            }
         }
     }
 }

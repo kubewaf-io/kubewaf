@@ -1,0 +1,14 @@
+http.ingress_http.downstream_rq_total: 100
+http.ingress_http.downstream_rq_2xx: 90
+cluster.kubewaf_ecds.upstream_cx_total: 4
+wasmcustom.kubewaf_waf.tx.total_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 20
+wasmcustom.modsecurity_proxy_wasm.tx.total_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 20
+wasmcustom.kubewaf_waf.tx.allowed_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 15
+wasmcustom.kubewaf_waf.tx.interruptions_phase=http_request_headers_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 5
+wasmcustom.kubewaf_waf.tx.interruptions_ruleid=942100_phase=http_request_headers_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 3
+wasmcustom.kubewaf_waf.rule.matches_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 8
+wasmcustom.kubewaf_waf.rule.matches_phase=http_request_headers_severity=2_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 8
+wasmcustom.kubewaf_waf.rule.matches_disruptive_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 5
+wasmcustom.kubewaf_waf.rule.matches_ruleid=942100_phase=http_request_headers_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 3
+wasmcustom.kubewaf_waf.rule.matches_tag=attack-sqli_phase=http_request_headers_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 3
+wasmcustom.kubewaf_waf.memory.wasm_heap_bytes_waf_namespace=shop_waf_name=shop-waf_engine=modsecurity_owner=modsecurity-proxy-wasm: 4096

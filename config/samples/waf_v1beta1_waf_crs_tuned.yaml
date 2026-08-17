@@ -12,11 +12,12 @@ spec:
     kind: HTTPRoute
     name: shop-frontend
 
-  # Pull in the full CRS (or a filtered RuleSet)
+  # Path A: engine-embedded CRS includes. For Path B (structured SecRules only),
+  # set crsEnable: false and attach a RuleSet; spec.crs tuning still applies.
   crsEnable: true
 
-  # Declarative CRS tuning (the PoC feature).
-  # These values are turned into correctly-ordered SecLang directives by the operator.
+  # Declarative CRS tuning — works with Path A (crsEnable) or Path B structured RuleSets.
+  # Setup setvars before rules; exclusions after includes (A) or after RuleSet SecLang (B).
   crs:
     # Lower paranoia than the CRS default of 1 for a balanced start.
     # This sets BOTH tx.detection_paranoia_level and tx.blocking_paranoia_level.

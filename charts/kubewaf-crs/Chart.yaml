@@ -1,0 +1,33 @@
+apiVersion: v2
+name: kubewaf-crs
+description: >
+  OWASP Core Rule Set (CRS) packaged as kubeWAF SecRule CRs plus optimized
+  RuleSet profiles and optional extras. Install after the kubewaf operator
+  chart (requires seclang.kubewaf.io / waf.kubewaf.io CRDs).
+type: application
+version: 0.1.0-beta.1
+appVersion: "4.27.0"
+annotations:
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: security
+  artifacthub.io/links: |
+    - name: OWASP CRS
+      url: https://coreruleset.org/
+    - name: kubeWAF docs
+      url: https://kubewaf.io/
+home: https://github.com/kubewaf-io/kubewaf
+icon: https://avatars.githubusercontent.com/u/269678461?s=200&v=4
+keywords:
+  - waf
+  - coreruleset
+  - owasp-crs
+  - modsecurity
+  - security
+  - secrule
+maintainers:
+  - name: kubeWAF
+    url: https://github.com/kubewaf-io
+sources:
+  - https://github.com/kubewaf-io/kubewaf
+  - https://github.com/coreruleset/coreruleset

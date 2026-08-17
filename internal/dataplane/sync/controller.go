@@ -20,15 +20,15 @@ limitations under the License.
 // Kubernetes writes (status, finalizers, EnvoyFilter slots) stay on the
 // leader-elected WAF controller. Envoy and Envoy Gateway load-balance against
 // the Service, so every pod must serve the same ECDS configs.
+//
+// Build+publish uses the shared internal/dataplane/pipeline package so this
+// path cannot drift from the leader reconciler.
 package sync
 
 import (
 	"context"
-	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,11 +39,11 @@ import (
 
 	seclangv1beta1 "github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
-	wafctrl "github.com/kubewaf-io/kubewaf/internal/controller/waf"
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/config"
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/ecds"
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/extensionserver"
-	"github.com/kubewaf-io/kubewaf/internal/references2"
+	dpindex "github.com/kubewaf-io/kubewaf/internal/dataplane/index"
+	"github.com/kubewaf-io/kubewaf/internal/dataplane/pipeline"
 )
 
 // Reconciler publishes portable WAF config into local ECDS / EG extension indexes.
@@ -56,6 +56,10 @@ type Reconciler struct {
 	BuildOpts   config.BuildOptions
 }
 
+func (r *Reconciler) publishers() pipeline.Publishers {
+	return pipeline.Publishers{ECDS: r.ECDS, EGExtension: r.EGExtension}
+}
+
 // Reconcile keeps this pod's dataplane caches in sync with the WAF CR.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx).WithValues("controller", "waf-dataplane-sync")
@@ -63,74 +67,36 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	var waf wafv1beta1.WAF
 	if err := r.Get(ctx, req.NamespacedName, &waf); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			// Deleted: drop from local caches.
-			name := config.ExtensionName(req.Namespace, req.Name)
-			if r.ECDS != nil {
-				_ = r.ECDS.Delete(name)
-			}
-			if r.EGExtension != nil {
-				r.EGExtension.Delete(req.Namespace, req.Name)
-			}
+			pipeline.DropLocal(req.Namespace, req.Name, r.publishers())
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
 	if !waf.DeletionTimestamp.IsZero() {
-		name := config.ExtensionName(waf.Namespace, waf.Name)
-		if r.ECDS != nil {
-			_ = r.ECDS.Delete(name)
-		}
-		if r.EGExtension != nil {
-			r.EGExtension.Delete(waf.Namespace, waf.Name)
-		}
+		pipeline.DropLocal(waf.Namespace, waf.Name, r.publishers())
 		return ctrl.Result{}, nil
 	}
 
-	resolver := references2.NewRuleRefResolver(r.Client, r.Scheme)
-	objects, errs, err := resolver.Resolve(ctx, waf.Spec.RuleSetRefs, &waf)
+	// Same pipeline as the leader, but read-only refs and read-only challenge Secret.
+	// RequireRefsOK keeps the last good ECDS snapshot when RuleSets/SecLang are missing.
+	res, err := pipeline.BuildAndPublish(ctx, r.Client, &waf, r.publishers(), pipeline.Options{
+		BuildOpts:             r.BuildOpts,
+		Scheme:                r.Scheme,
+		EnsureChallengeSecret: false,
+		LockRefs:              false,
+		RequireRefsOK:         true,
+	})
 	if err != nil {
+		// Secret may not exist yet on non-leader; requeue until leader creates it.
+		// Do not DropLocal — unresolved refs must not wipe a last-good snapshot.
 		return ctrl.Result{}, err
-	}
-	if len(errs) > 0 {
-		logger.V(1).Info("reference errors during dataplane sync", "errs", errs)
-		// Still attempt with whatever resolved; leader status will reflect failures.
-	}
-
-	rules, err := references2.GetSecRule(objects)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	buildOpts := r.BuildOpts
-	if wafctrl.ChallengeEnabled(waf.Spec.Challenge) {
-		hmac, err := wafctrl.ResolveChallengeHMAC(ctx, r.Client, r.Scheme, &waf)
-		if err != nil {
-			// Secret may not exist yet on non-leader; requeue until leader creates it.
-			return ctrl.Result{}, fmt.Errorf("challenge hmac: %w", err)
-		}
-		buildOpts.ChallengeHMAC = hmac.Value
-	}
-
-	portable, err := config.BuildFromWAF(&waf, rules, buildOpts)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("build portable config: %w", err)
-	}
-
-	if r.ECDS != nil {
-		if err := r.ECDS.Upsert(portable); err != nil {
-			return ctrl.Result{}, fmt.Errorf("ecds upsert: %w", err)
-		}
-	}
-	if r.EGExtension != nil {
-		// Index for EG hooks; no-op for Istio provider inside Upsert.
-		r.EGExtension.Upsert(portable)
 	}
 
 	logger.V(1).Info("dataplane cache updated",
-		"extension", portable.ExtensionName,
-		"provider", portable.Provider,
-		"rules", len(rules),
+		"extension", res.Portable.ExtensionName,
+		"provider", res.Portable.Provider,
+		"objects", res.ResolvedObjectN,
 	)
 	return ctrl.Result{}, nil
 }
@@ -138,67 +104,31 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 // SetupWithManager registers a non-leader-elected controller so every replica
 // serves current ECDS configs.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
-	mapAllWAFs := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-		var list wafv1beta1.WAFList
-		if err := r.List(ctx, &list); err != nil {
-			return nil
-		}
-		reqs := make([]reconcile.Request, 0, len(list.Items))
-		for i := range list.Items {
-			reqs = append(reqs, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      list.Items[i].Name,
-					Namespace: list.Items[i].Namespace,
-				},
-			})
-		}
-		return reqs
-	})
+	// Field indexes may already be registered by the leader WAF controller; ignore duplicate errors.
+	_ = mgr.GetFieldIndexer().IndexField(context.Background(), &wafv1beta1.WAF{}, dpindex.WAFRuleRefField, dpindex.IndexWAFRuleRefs)
+	_ = mgr.GetFieldIndexer().IndexField(context.Background(), &wafv1beta1.RuleSet{}, dpindex.RuleSetRuleRefField, dpindex.IndexRuleSetRuleRefs)
 
-	// Reconcile when a managed challenge HMAC Secret changes (all replicas re-read).
-	mapChallengeSecret := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-		sec, ok := obj.(*corev1.Secret)
-		if !ok {
-			return nil
-		}
-		wafName := ""
-		if sec.Labels != nil {
-			if sec.Labels["kubewaf.io/component"] == "challenge-hmac" {
-				wafName = sec.Labels["kubewaf.io/waf"]
-			}
-		}
-		if wafName == "" {
-			wafName = trimChallengeSecretSuffix(sec.Name)
-		}
-		if wafName == "" {
-			return nil
-		}
-		return []reconcile.Request{{
-			NamespacedName: types.NamespacedName{Namespace: sec.Namespace, Name: wafName},
-		}}
+	mapRuleSet := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		return dpindex.MapRuleSetToWAFs(ctx, r.Client, obj)
+	})
+	mapSecLang := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		return dpindex.MapSecLangToWAFs(ctx, r.Client, obj)
+	})
+	mapPhraseList := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		return dpindex.MapPhraseListToWAFs(ctx, r.Client, obj)
+	})
+	mapIPList := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		return dpindex.MapIPListToWAFs(ctx, r.Client, obj)
 	})
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&wafv1beta1.WAF{}).
-		Watches(&wafv1beta1.RuleSet{}, mapAllWAFs).
-		Watches(&seclangv1beta1.SecRule{}, mapAllWAFs).
-		Watches(&corev1.Secret{}, mapChallengeSecret).
+		Watches(&wafv1beta1.RuleSet{}, mapRuleSet).
+		Watches(&seclangv1beta1.SecRule{}, mapSecLang).
+		Watches(&seclangv1beta1.SecAction{}, mapSecLang).
+		Watches(&seclangv1beta1.PhraseList{}, mapPhraseList).
+		Watches(&seclangv1beta1.IPList{}, mapIPList).
+		WithOptions(controller.Options{NeedLeaderElection: ptr.To(false)}).
 		Named("waf-dataplane-sync").
-		WithOptions(controller.Options{
-			// Critical for multi-replica: run on every pod, not only the leader.
-			NeedLeaderElection: ptr.To(false),
-		}).
 		Complete(r)
-}
-
-const challengeSecretSuffix = "-challenge-hmac"
-
-func trimChallengeSecretSuffix(name string) string {
-	if len(name) <= len(challengeSecretSuffix) {
-		return ""
-	}
-	if name[len(name)-len(challengeSecretSuffix):] != challengeSecretSuffix {
-		return ""
-	}
-	return name[:len(name)-len(challengeSecretSuffix)]
 }

@@ -1,9 +1,13 @@
 apiVersion: v2
 name: kubewaf
-description: WAF implemented as a Kubernetes Operator
+description: Kubernetes-native WAF operator (beta) — SecRule/RuleSet CRDs, ECDS, Envoy Gateway/Istio/Cilium
 type: application
-version: 0.0.0
-appVersion: "0.0.0"
+version: 0.1.0-beta.1
+appVersion: "0.1.0-beta.1"
+annotations:
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: security
 home: https://github.com/kubewaf-io/kubewaf
 icon: https://avatars.githubusercontent.com/u/269678461?s=200&v=4
 keywords:

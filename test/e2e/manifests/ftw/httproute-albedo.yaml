@@ -1,0 +1,24 @@
+# Point demo.local HTTPRoute at albedo for go-ftw (keeps Gateway attachment).
+# Applied only during FTW tests; original httpbin route is restored afterward.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httpbin
+  namespace: demo
+  labels:
+    e2e: "true"
+    ftw: "true"
+spec:
+  parentRefs:
+    - name: demo-gateway
+  hostnames:
+    - "demo.local"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: albedo
+          port: 80

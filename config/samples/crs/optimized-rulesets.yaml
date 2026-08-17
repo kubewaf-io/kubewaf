@@ -1,0 +1,347 @@
+# Optimized CRS RuleSets by application profile (CRS v4.27.0 samples).
+#
+# Each profile composes:
+#   - crs-core  — always-on protocol / init / scoring / correlation
+#   - stack layer — only attack classes relevant to that workload
+#
+# Attach to a WAF:
+#   ruleRefs:
+#   - kind: RuleSet
+#     name: ruleset-api   # or ruleset-php, ruleset-java, ...
+#     group: waf.kubewaf.io
+#     version: v1beta1
+#
+# Requires the converted SecRules from this directory (labels
+# coreruleset/version + coreruleset/file). Apply CRS samples first.
+#
+# Approximate rule counts (Path B samples, one CR per rule):
+#   core ≈ 222 | php ≈ 520 | java ≈ 530 | golang ≈ 470
+#   dotnet ≈ 480 | frontend ≈ 320 | backend ≈ 500 | api ≈ 430
+---
+# ---------------------------------------------------------------------------
+# Always-on foundation: init, exceptions, methods, scanners, protocol,
+# anomaly blocking, correlation. No language-specific attack packs.
+# ---------------------------------------------------------------------------
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: crs-core
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    waf.kubewaf.io/profile: core
+    waf.kubewaf.io/optimized: "true"
+spec:
+  ruleRefs:
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: "4.27.0"
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-901-INITIALIZATION.conf
+              - REQUEST-905-COMMON-EXCEPTIONS.conf
+              - REQUEST-911-METHOD-ENFORCEMENT.conf
+              - REQUEST-913-SCANNER-DETECTION.conf
+              - REQUEST-920-PROTOCOL-ENFORCEMENT.conf
+              - REQUEST-921-PROTOCOL-ATTACK.conf
+              - REQUEST-949-BLOCKING-EVALUATION.conf
+              - RESPONSE-959-BLOCKING-EVALUATION.conf
+              - RESPONSE-980-CORRELATION.conf
+---
+# ---------------------------------------------------------------------------
+# PHP — classic LAMP/WordPress/Laravel/Symfony
+# Includes PHP injection pack + web shells + PHP/SQL leakages.
+# ---------------------------------------------------------------------------
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-php
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    waf.kubewaf.io/profile: php
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: php
+spec:
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: "4.27.0"
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-933-APPLICATION-ATTACK-PHP.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+              - RESPONSE-953-DATA-LEAKAGES-PHP.conf
+              - RESPONSE-955-WEB-SHELLS.conf
+---
+# ---------------------------------------------------------------------------
+# Java — Spring / Tomcat / Jakarta EE
+# Includes Java attack pack + Java data leakages.
+# ---------------------------------------------------------------------------
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-java
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    waf.kubewaf.io/profile: java
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: java
+spec:
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: "4.27.0"
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - REQUEST-944-APPLICATION-ATTACK-JAVA.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+              - RESPONSE-952-DATA-LEAKAGES-JAVA.conf
+              - RESPONSE-955-WEB-SHELLS.conf
+---
+# ---------------------------------------------------------------------------
+# Go (golang) — net/http, Gin, Echo, chi, Fiber APIs and services
+# No PHP/Java/IIS/Ruby language packs. Keeps LFI/RCE/SQLi/XSS + generic.
+# ---------------------------------------------------------------------------
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-golang
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    waf.kubewaf.io/profile: golang
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: golang
+spec:
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: "4.27.0"
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+---
+# ---------------------------------------------------------------------------
+# .NET — ASP.NET Core / IIS / Framework
+# Includes IIS leakages + web shells; skips PHP/Java/Ruby packs.
+# ---------------------------------------------------------------------------
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-dotnet
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    waf.kubewaf.io/profile: dotnet
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: dotnet
+spec:
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: "4.27.0"
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+              - RESPONSE-954-DATA-LEAKAGES-IIS.conf
+              - RESPONSE-955-WEB-SHELLS.conf
+---
+# ---------------------------------------------------------------------------
+# Frontend — SPA / static sites / BFF with HTML forms (React, Vue, Next.js UI)
+# Prioritizes XSS + protocol; keeps light SQLi for forms. Drops language packs
+# and heavy RCE/LFI/RFI packs used for OS-level backend exploitation.
+# ---------------------------------------------------------------------------
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-frontend
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    waf.kubewaf.io/profile: frontend
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: frontend
+spec:
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: "4.27.0"
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+---
+# ---------------------------------------------------------------------------
+# Backend — language-agnostic services (workers, internal apps, multi-stack)
+# Full generic attack surface without PHP/Java/IIS/Ruby-specific packs.
+# ---------------------------------------------------------------------------
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-backend
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    waf.kubewaf.io/profile: backend
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: backend
+spec:
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: "4.27.0"
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+              - RESPONSE-955-WEB-SHELLS.conf
+---
+# ---------------------------------------------------------------------------
+# API — JSON/gRPC-gateway / REST microservices (no HTML UI)
+# Protocol + injection (SQLi/LFI/RCE/generic). Skips XSS pack and language
+# packs for lower latency / fewer false positives on pure APIs.
+# Keep multipart if you accept file uploads (included).
+# ---------------------------------------------------------------------------
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-api
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    waf.kubewaf.io/profile: api
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: api
+spec:
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: "4.27.0"
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf

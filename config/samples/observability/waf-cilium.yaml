@@ -1,0 +1,26 @@
+# Operator: same plugin JSON via ECDS. CEC is config_discovery → kubewaf_ecds
+# and may attach the OTel access log. Cluster kubewaf_otel + stats sink are
+# bootstrap-static on cilium-envoy (HTTP/2 ClusterIP) — not CEC.
+# See config/samples/cilium and the merge script --otel-service.
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: shop-waf
+  namespace: shop
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: shop-gw
+  # GatewayClass.controllerName contains cilium → Cilium
+  # Or set: provider: { type: Cilium }
+  ruleRefs:
+    - kind: RuleSet
+      name: shop-rules
+      namespace: shop
+  telemetry:
+    mode: Managed
+    traces:
+      enabled: true
+      redact: true
+      includeMatchData: false

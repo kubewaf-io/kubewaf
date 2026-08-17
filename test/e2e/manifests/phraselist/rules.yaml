@@ -1,0 +1,90 @@
+# PhraseList e2e: custom @pmFromFile list blocks a unique User-Agent token.
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: PhraseList
+metadata:
+  name: e2e-scanners
+  namespace: demo
+  labels:
+    e2e: "true"
+    seclang.kubewaf.io/phrase-list: "true"
+spec:
+  fileName: e2e-scanners.data
+  content: |
+    # e2e custom scanner token (must not appear in stock CRS)
+    kubewaf-e2e-phrase-scanner
+    evil-e2e-bot-xyz
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: block-e2e-phrase-scanners
+  namespace: demo
+  labels:
+    app: e2e-phraselist
+    e2e: "true"
+spec:
+  match:
+    - collections:
+        - name: REQUEST_HEADERS
+          arguments: [User-Agent]
+      operator:
+        name: pmFromFile
+        value: e2e-scanners.data
+  metadata:
+    id: 100901
+    phase: "1"
+    message: "e2e PhraseList scanner UA"
+    severity: "ERROR"
+    tags:
+      - "e2e"
+      - "phraselist"
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "403"
+    non-disruptive:
+      - nonDisruptiveActionType: log
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: e2e-phraselist-rules
+  namespace: demo
+  labels:
+    e2e: "true"
+spec:
+  ruleRefs:
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app: e2e-phraselist
+  phraseListRefs:
+    - name: e2e-scanners
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: demo-waf-phraselist
+  namespace: demo
+  labels:
+    e2e: "true"
+    provider: envoy-gateway
+spec:
+  phraseListPolicy: FailClosed
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: demo-gateway
+  ruleRefs:
+    - kind: RuleSet
+      name: e2e-phraselist-rules
+      namespace: demo
+      group: waf.kubewaf.io
+      version: v1beta1
+  crsEnable: false
+  logLevel: 3

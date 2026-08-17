@@ -37,7 +37,9 @@ type SecRuleActions struct {
 	// Only one disruptive action is allowed per rule/chain (the last one specified wins).
 	//
 	// +kubebuilder:validation:Optional
-	DisruptiveAction *DisruptiveAction `json:"disruptive" yaml:"disruptive" mapstructure:"disruptive"`
+	// omitempty: chain children must omit this field entirely. Emitting
+	// `disruptive: null` fails OpenAPI validation (type object, not nullable).
+	DisruptiveAction *DisruptiveAction `json:"disruptive,omitempty" yaml:"disruptive,omitempty" mapstructure:"disruptive,omitempty"`
 
 	// FlowActionTypes control how rule evaluation proceeds within the current processing phase.
 	//

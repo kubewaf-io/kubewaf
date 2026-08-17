@@ -20,8 +20,8 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -50,6 +50,8 @@ import (
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/sync"
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/wasmserve"
 	"github.com/kubewaf-io/kubewaf/internal/metrics"
+	kubewafwebhook "github.com/kubewaf-io/kubewaf/internal/webhook"
+	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -64,6 +66,8 @@ func init() {
 	utilruntime.Must(seclangv1beta1.AddToScheme(scheme))
 	utilruntime.Must(wafv1beta1.AddToScheme(scheme))
 	utilruntime.Must(envoygatewayv1alpha1.AddToScheme(scheme))
+	// Gateway API types for provider auto-discovery (Gateway / GatewayClass / HTTPRoute).
+	utilruntime.Must(gwapiv1.Install(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -80,13 +84,16 @@ func main() {
 	var extensionServerBindAddr string
 	var ecdsServiceHost string
 	var ecdsServicePort uint
-	var wasmHTTPURL string
 	var wasmServeBindAddr string
 	var wasmServePort uint
-	var wasmFile string
-	var wasmSourceURL string
-	var modsecWasmFile, modsecWasmURL string
-	var challengeWasmFile, challengeWasmURL string
+	var enableWebhooks bool
+	var otelServiceHost string
+	var otelServicePort uint
+	var telemetryProfile string
+	var telemetrySampleNonDisruptive string
+	var telemetrySampleDisruptive string
+	var telemetryRedact bool
+	var telemetryIncludeMatchData bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -120,36 +127,34 @@ func main() {
 		"DNS name Envoy uses to reach the ECDS gRPC service (cluster endpoint address)")
 	flag.UintVar(&ecdsServicePort, "ecds-service-port", 18001,
 		"Port Envoy uses to reach the ECDS gRPC service")
-	flag.StringVar(&wasmHTTPURL, "wasm-http-url", "",
-		"Default HTTP(S) URL for the Coraza engine (compat). Prefer operator multi-module serve.")
 	flag.StringVar(&wasmServeBindAddr, "wasm-serve-bind-address", ":18002",
-		"HTTP bind address for multi-module wasm serve (Coraza, ModSecurity, Challenge)")
+		"HTTP bind address for wasm serve (ModSecurity + Challenge)")
 	flag.UintVar(&wasmServePort, "wasm-serve-port", 18002,
 		"Port advertised in operator-hosted wasm URLs")
-	flag.StringVar(&wasmFile, "wasm-file", "/wasm/coraza-proxy-wasm.wasm",
-		"Local path for Coraza wasm (engine=Coraza)")
-	flag.StringVar(&wasmSourceURL, "wasm-source-url", "",
-		"HTTP(S) URL to download Coraza wasm when --wasm-file is missing")
-	flag.StringVar(&modsecWasmFile, "modsecurity-wasm-file", "/wasm/modsecurity-proxy-wasm.wasm",
-		"Local path for modsecurity-proxy-wasm (engine=ModSecurity)")
-	flag.StringVar(&modsecWasmURL, "modsecurity-wasm-source-url", "",
-		"HTTP(S) URL to download modsecurity-proxy-wasm when file is missing")
-	flag.StringVar(&challengeWasmFile, "challenge-wasm-file", "/wasm/challenge-proxy-wasm.wasm",
-		"Local path for challenge/pow-proxy-wasm")
-	flag.StringVar(&challengeWasmURL, "challenge-wasm-source-url", "",
-		"HTTP(S) URL to download challenge-proxy-wasm when file is missing")
+	flag.BoolVar(&enableWebhooks, "enable-webhooks", true,
+		"Register validating admission webhooks (requires TLS certs via "+
+			"--webhook-cert-path and a ValidatingWebhookConfiguration)")
+	flag.StringVar(&otelServiceHost, "otel-service-host", "",
+		"DNS name Envoy uses for cluster kubewaf_otel (empty = do not CDS-inject)")
+	flag.UintVar(&otelServicePort, "otel-service-port", 4317,
+		"Port for cluster kubewaf_otel (OTLP/gRPC)")
+	flag.StringVar(&telemetryProfile, "telemetry-profile", "lite",
+		"Managed telemetry profile (lite|full) used when WAF traces.enabled is unset")
+	flag.StringVar(&telemetrySampleNonDisruptive, "telemetry-sample-non-disruptive", "0.25",
+		"Default sample rate for non-disruptive WAF matches")
+	flag.StringVar(&telemetrySampleDisruptive, "telemetry-sample-disruptive", "1.0",
+		"Default sample rate for disruptive WAF interrupts")
+	flag.BoolVar(&telemetryRedact, "telemetry-redact", true,
+		"Default redact (omit client.address) for managed traces")
+	flag.BoolVar(&telemetryIncludeMatchData, "telemetry-include-match-data", false,
+		"Default includeMatchData for managed traces")
+	// Production logger by default. Pass --zap-devel for development-style logs.
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	go func() {
-		setupLog.Info("pprof server listening on :6060")
-		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
-			setupLog.Error(err, "pprof server failed")
-		}
-	}()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -202,14 +207,8 @@ func main() {
 		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
 
-	// If the certificate is not specified, controller-runtime will automatically
-	// generate self-signed certificates for the metrics server. While convenient for development and testing,
-	// this setup is not recommended for production.
-	//
-	// TODO(user): If you enable certManager, uncomment the following lines:
-	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
-	// managed by cert-manager for the metrics server.
-	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
+	// If metricsCertPath is empty, controller-runtime may use self-signed certs (dev only).
+	// For production, mount cert-manager (or other) TLS material and set --metrics-cert-path.
 	if len(metricsCertPath) > 0 {
 		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
 			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
@@ -226,19 +225,9 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "fb102d45.kubewaf.io",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
 	}
 
+	// Only bind pprof when explicitly requested (never start a side listener by default).
 	if enablePprof {
 		ctrlOpts.PprofBindAddress = ":8082"
 	}
@@ -256,6 +245,27 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "SecRule")
 		os.Exit(1)
 	}
+	if err := (&seclangcontroller.SecActionReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SecAction")
+		os.Exit(1)
+	}
+	if err := (&seclangcontroller.PhraseListReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "PhraseList")
+		os.Exit(1)
+	}
+	if err := (&seclangcontroller.IPListReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "IPList")
+		os.Exit(1)
+	}
 	if err := (&wafcontroller.RuleSetReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -264,19 +274,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&wafcontroller.WAFInstanceReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "WAFInstance")
-		os.Exit(1)
+	if enableWebhooks {
+		if err := kubewafwebhook.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhooks")
+			os.Exit(1)
+		}
+		setupLog.Info("validating admission webhooks registered",
+			"webhook-cert-path", webhookCertPath)
+	} else {
+		setupLog.Info("validating admission webhooks disabled (--enable-webhooks=false)")
 	}
+
 	// Shared dataplane services: ECDS (config push) + wasm HTTP + EG Extension Server.
 	// These run on every replica; SnapshotCache is local, so leader election should
 	// still be enabled for the reconciler. Envoy will reconnect if a pod restarts.
 	runCtx := ctrl.SetupSignalHandler()
 
-	// Multi-module wasm HTTP server (Coraza, ModSecurity, Challenge/PoW).
+	// Wasm HTTP server (ModSecurity + optional Challenge/PoW).
+	// Binaries load from the operator image / mount paths under /wasm.
 	var wasmServer *wasmserve.Server
 	wasmPort := uint32(wasmServePort)
 	if wasmPort == 0 {
@@ -287,11 +302,17 @@ func main() {
 
 	if wasmServeBindAddr != "" {
 		wasmServer = wasmserve.New(setupLog)
+		modsecPath := resolveWasmFile(engine.DefaultModSecurityFile)
+		challengePath := resolveWasmFile(engine.DefaultChallengeFile)
+		setupLog.Info("wasm local paths",
+			"modsecurity", modsecPath,
+			"challenge", challengePath,
+			"ko_data_path", os.Getenv("KO_DATA_PATH"),
+		)
 		loadOpts := wasmserve.Options{
 			Modules: []wasmserve.ModuleSource{
-				{ID: engine.ModuleCoraza, File: wasmFile, SourceURL: wasmSourceURL},
-				{ID: engine.ModuleModSecurity, File: modsecWasmFile, SourceURL: modsecWasmURL},
-				{ID: engine.ModuleChallenge, File: challengeWasmFile, SourceURL: challengeWasmURL},
+				{ID: engine.ModuleModSecurity, File: modsecPath},
+				{ID: engine.ModuleChallenge, File: challengePath},
 			},
 		}
 		if err := wasmServer.Load(runCtx, loadOpts); err != nil {
@@ -301,23 +322,23 @@ func main() {
 			setupLog.Error(err, "unable to add wasm HTTP server")
 			os.Exit(1)
 		}
-		// Default URLs point at the operator Service for every integrated module.
+		// Only advertise HTTP URL + SHA for modules that actually loaded.
+		// Envoy rejects remote Wasm code with empty sha256; advertising a URL
+		// for a missing module produces 503 fetches and invalid ECDS configs.
 		for _, m := range engine.AllModules() {
-			moduleHTTP[m.ID] = wasmserve.PublicURLFor(ecdsServiceHost, wasmPort, m.ID)
-			if wasmServer.Has(m.ID) {
-				moduleSHA[m.ID] = wasmServer.SHA256(m.ID)
+			if !wasmServer.Has(m.ID) {
+				setupLog.Info("wasm module not loaded (skipping ECDS defaults)", "id", m.ID)
+				continue
 			}
+			moduleHTTP[m.ID] = wasmserve.PublicURLFor(ecdsServiceHost, wasmPort, m.ID)
+			moduleSHA[m.ID] = wasmServer.SHA256(m.ID)
 		}
 		setupLog.Info("operator-hosted wasm modules",
-			"coraza", moduleHTTP[engine.ModuleCoraza],
 			"modsecurity", moduleHTTP[engine.ModuleModSecurity],
 			"challenge", moduleHTTP[engine.ModuleChallenge],
+			"modsecurity_sha", moduleSHA[engine.ModuleModSecurity],
+			"challenge_sha", moduleSHA[engine.ModuleChallenge],
 		)
-	}
-
-	// Compat: single --wasm-http-url overrides Coraza only.
-	if wasmHTTPURL != "" {
-		moduleHTTP[engine.ModuleCoraza] = wasmHTTPURL
 	}
 
 	ecdsServer := ecds.New(runCtx, setupLog)
@@ -331,8 +352,17 @@ func main() {
 		DefaultECDSPort:     uint32(ecdsServicePort),
 		DefaultModuleHTTP:   moduleHTTP,
 		DefaultModuleSHA256: moduleSHA,
-		DefaultWasmHTTPURL:  moduleHTTP[engine.ModuleCoraza],
-		DefaultWasmSHA256:   moduleSHA[engine.ModuleCoraza],
+		DefaultWasmHTTPURL:  moduleHTTP[engine.ModuleModSecurity],
+		DefaultWasmSHA256:   moduleSHA[engine.ModuleModSecurity],
+		DefaultOTelHost:     otelServiceHost,
+		DefaultOTelPort:     uint32(otelServicePort),
+		TelemetryDefaults: config.TelemetryDefaults{
+			Profile:             telemetryProfile,
+			SampleNonDisruptive: telemetrySampleNonDisruptive,
+			SampleDisruptive:    telemetrySampleDisruptive,
+			Redact:              telemetryRedact,
+			IncludeMatchData:    telemetryIncludeMatchData,
+		},
 	}
 
 	egExtServer := extensionserver.New(setupLog, mgr.GetClient(), buildOpts)
@@ -347,6 +377,8 @@ func main() {
 		ECDS:        ecdsServer,
 		EGExtension: egExtServer,
 		BuildOpts:   buildOpts,
+		//nolint:staticcheck // SA1019: controller still uses record.EventRecorder
+		Recorder: mgr.GetEventRecorderFor("waf-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "WAF")
 		os.Exit(1)
@@ -386,11 +418,38 @@ func main() {
 		"ecds", ecdsBindAddr,
 		"extensionServer", extensionServerBindAddr,
 		"wasmServe", wasmServeBindAddr,
-		"wasmURL", wasmHTTPURL,
 		"ecdsService", fmt.Sprintf("%s:%d", ecdsServiceHost, ecdsServicePort),
 	)
 	if err := mgr.Start(runCtx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// resolveWasmFile picks the on-disk wasm path for a module default path.
+//
+// Order:
+//  1. path if it exists (absolute or relative)
+//  2. $KO_DATA_PATH/wasm/<basename> (ko embeds cmd/kodata into the image)
+//  3. $KO_DATA_PATH/<basename>
+//  4. original path unchanged (Load reports missing modules)
+func resolveWasmFile(configured string) string {
+	if configured == "" {
+		return ""
+	}
+	if _, err := os.Stat(configured); err == nil {
+		return configured
+	}
+	base := filepath.Base(configured)
+	if kodata := os.Getenv("KO_DATA_PATH"); kodata != "" {
+		for _, cand := range []string{
+			filepath.Join(kodata, "wasm", base),
+			filepath.Join(kodata, base),
+		} {
+			if _, err := os.Stat(cand); err == nil {
+				return cand
+			}
+		}
+	}
+	return configured
 }

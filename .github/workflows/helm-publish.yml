@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Publishes every chart under charts/ to GHCR OCI:
+#   oci://ghcr.io/<org>/charts/kubewaf:<tag>
+#   oci://ghcr.io/<org>/charts/kubewaf-crs:<tag>
 jobs:
   publish-helm-oci:
     runs-on: ubuntu-24.04
@@ -17,41 +20,110 @@ jobs:
       contents: write
       id-token: write
       packages: write
-    outputs:
-      chart-digest: ${{ steps.helm_publish.outputs.digest }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Operator chart: appVersion tracks the release tag.
+          - name: kubewaf
+            path: charts/kubewaf
+            app-version-from-tag: "true"
+          # CRS content chart: keep Chart.yaml appVersion (CRS sample version).
+          - name: kubewaf-crs
+            path: charts/kubewaf-crs
+            app-version-from-tag: "false"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-      - name: "Extract Version"
+      - name: Extract version from tag
         id: extract_version
         run: |
           GIT_TAG=${GITHUB_REF##*/}
-          VERSION=${GIT_TAG}
-          echo "version=$(echo $VERSION)" >> $GITHUB_OUTPUT
-      - name: Helm | Publish
+          echo "version=${GIT_TAG}" >> "$GITHUB_OUTPUT"
+      - name: Resolve app-version
+        id: appver
+        run: |
+          if [ "${{ matrix.app-version-from-tag }}" = "true" ]; then
+            echo "app_version=${{ steps.extract_version.outputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            # Empty → helm-oci-chart omits --app-version (uses Chart.yaml appVersion).
+            echo "app_version=" >> "$GITHUB_OUTPUT"
+          fi
+      - name: "Helm | Publish ${{ matrix.name }}"
         id: helm_publish
         uses: peak-scale/github-actions/helm-oci-chart@a441cca016861c546ab7e065277e40ce41a3eb84 # v0.2.0
         with:
           registry: ghcr.io
           repository: ${{ github.repository_owner }}/charts
-          name: "kubewaf"
+          name: ${{ matrix.name }}
+          path: ${{ matrix.path }}
           version: ${{ steps.extract_version.outputs.version }}
-          app-version: ${{ steps.extract_version.outputs.version }}
+          app-version: ${{ steps.appver.outputs.app_version }}
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
-          update-dependencies: "true" # Defaults to false
+          update-dependencies: "true"
           sign-image: "true"
-          signature-repository: ghcr.io/${{ github.repository_owner }}/charts/kubewaf
-  helm-provenance:
+          signature-repository: ghcr.io/${{ github.repository_owner }}/charts/${{ matrix.name }}
+      - name: Persist chart digest
+        run: |
+          mkdir -p digests
+          echo -n "${{ steps.helm_publish.outputs.digest }}" > "digests/${{ matrix.name }}.digest"
+          echo "Published oci://ghcr.io/${{ github.repository_owner }}/charts/${{ matrix.name }}:${{ steps.extract_version.outputs.version }}"
+          echo "digest=$(cat digests/${{ matrix.name }}.digest)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chart-digest-${{ matrix.name }}
+          path: digests/${{ matrix.name }}.digest
+          if-no-files-found: error
+
+  collect-digests:
     needs: publish-helm-oci
+    runs-on: ubuntu-24.04
+    outputs:
+      kubewaf: ${{ steps.read.outputs.kubewaf }}
+      kubewaf-crs: ${{ steps.read.outputs.kubewaf-crs }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chart-digest-*
+          merge-multiple: true
+          path: digests
+      - id: read
+        run: |
+          set -euo pipefail
+          for name in kubewaf kubewaf-crs; do
+            f="digests/${name}.digest"
+            test -f "$f"
+            d=$(tr -d '[:space:]' < "$f")
+            test -n "$d"
+            echo "${name}=${d}" >> "$GITHUB_OUTPUT"
+            echo "${name} digest=${d}"
+          done
+
+  helm-provenance-kubewaf:
+    needs: collect-digests
     permissions:
-      id-token: write # To sign the provenance.
-      packages: write # To upload assets to release.
-      actions: read # To read the workflow path.
+      id-token: write
+      packages: write
+      actions: read
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
     with:
       image: ghcr.io/${{ github.repository_owner }}/charts/kubewaf
-      digest: "${{ needs.publish-helm-oci.outputs.chart-digest }}"
+      digest: ${{ needs.collect-digests.outputs.kubewaf }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  helm-provenance-kubewaf-crs:
+    needs: collect-digests
+    permissions:
+      id-token: write
+      packages: write
+      actions: read
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ghcr.io/${{ github.repository_owner }}/charts/kubewaf-crs
+      digest: ${{ needs.collect-digests.outputs.kubewaf-crs }}
       registry-username: ${{ github.actor }}
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

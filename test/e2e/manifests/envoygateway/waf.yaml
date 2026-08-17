@@ -7,9 +7,6 @@ metadata:
     e2e: "true"
     provider: envoy-gateway
 spec:
-  engine: ModSecurity
-  provider:
-    type: EnvoyGateway
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
@@ -20,9 +17,10 @@ spec:
     namespace: demo
     group: waf.kubewaf.io
     version: v1beta1
-  # Full OWASP CRS, max-strict tuning (PL4 + low anomaly thresholds).
-  # Expect more false positives on real apps; loosen thresholds or drop rules as needed.
-  crsEnable: true
+  # Default e2e / operator embed uses path-b wasm (no embedded CRS rule confs).
+  # crsEnable:true needs the second-class full-catalog image (*-full) for
+  # Include @owasp_crs. CRS regression is Path B (structured SecRules + path-b wasm).
+  crsEnable: false
   crs:
     paranoiaLevel: 4
     inboundAnomalyThreshold: 1

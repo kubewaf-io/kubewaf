@@ -38,6 +38,17 @@ func MakeECDSCluster(p *config.PortableConfig) (*cluster.Cluster, error) {
 	return strictDNSCluster(p.ECDSCluster, p.ECDSHost, p.ECDSPort, true)
 }
 
+// MakeOTelCluster builds the HTTP/2 STRICT_DNS cluster Envoy OTLP exporters use.
+func MakeOTelCluster(host string, port uint32) (*cluster.Cluster, error) {
+	if host == "" {
+		return nil, nil
+	}
+	if port == 0 {
+		port = config.DefaultOTelPort
+	}
+	return strictDNSCluster(config.DefaultOTelCluster, host, port, true)
+}
+
 // MakeWasmCodeCluster builds the cluster Envoy uses to HTTP-fetch .wasm binaries.
 // httpURL may be any module URL; host/port are derived from it. One shared
 // cluster is used when all modules share the operator Service host.

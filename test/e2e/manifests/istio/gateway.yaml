@@ -1,4 +1,9 @@
 # Istio Gateway API resources for e2e
+#
+# ECDS Wasm filters need kubewaf_ecds as a *bootstrap static* cluster. Apply
+# ecds-bootstrap.yaml first, then this Gateway (annotation points at that CM).
+# Without bootstrapOverride, Envoy rejects LDS: "ApiConfigSource must have a
+# statically defined non-EDS cluster: 'kubewaf_ecds'".
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -14,6 +19,13 @@ metadata:
   namespace: demo
   labels:
     istio: ingressgateway
+  annotations:
+    # Deep-merge ecds-bootstrap ConfigMap into Envoy bootstrap (same ns as pods).
+    sidecar.istio.io/bootstrapOverride: kubewaf-ecds-bootstrap
+    # Kind has no LoadBalancer controller. Default LB Service leaves EXTERNAL-IP
+    # <pending> and Gateway Programmed stays AddressNotAssigned. ClusterIP is
+    # enough for in-cluster e2e curls (see assertGatewayBlocksScannerUA).
+    networking.istio.io/service-type: ClusterIP
 spec:
   gatewayClassName: istio
   listeners:

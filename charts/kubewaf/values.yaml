@@ -83,6 +83,13 @@ args:
   # -- A list of extra arguments to add
   extraArgs: []
 
+# Validating admission webhooks (SecRule, SecAction, RuleSet, WAF)
+webhooks:
+  # -- Install ValidatingWebhookConfiguration + TLS secret and enable --enable-webhooks
+  enabled: true
+  # -- Fail or Ignore when the webhook is unreachable
+  failurePolicy: Fail
+
 # Data-plane integration (ECDS + Envoy Gateway Extension Server + operator-hosted Wasm)
 dataplane:
   ecds:
@@ -96,21 +103,14 @@ dataplane:
   wasmServe:
     # -- Container / Service port for multi-module wasm HTTP
     port: 18002
-  # -- Mount path for shared wasm volume (all modules)
+  # -- Mount path for shared wasm volume
   wasmMountPath: /wasm
-  # Product WAF engine (engine=ModSecurity) — monorepo: modsecurity-proxy-wasm
-  modsecurityWasmFile: "/wasm/modsecurity-proxy-wasm.wasm"
-  modsecurityWasmSourceURL: ""
-  # Challenge / PoW filter (spec.challenge) — monorepo: pow-proxy-wasm
-  challengeWasmFile: "/wasm/challenge-proxy-wasm.wasm"
-  challengeWasmSourceURL: ""
-  # Optional alternate engine binary path (compat; not used in product docs)
-  wasmFile: "/wasm/modsecurity-proxy-wasm.wasm"
-  wasmSourceURL: ""
-  # -- Optional volume mounting all wasm binaries under wasmMountPath
+  # Wasm binaries are loaded from:
+  #   /wasm/modsecurity-proxy-wasm.wasm
+  #   /wasm/challenge-proxy-wasm.wasm
+  # (also resolved under KO_DATA_PATH/wasm in ko images).
+  # -- Optional volume mounting wasm binaries under wasmMountPath
   wasmVolume: null
-  # -- Override WAF fetch URL only (compat)
-  wasmHTTPURL: ""
 
 # -- Amount of replicas (use >=2 with leader election for HA)
 replicaCount: 2
@@ -281,3 +281,175 @@ monitoring:
       metricRelabelings: []
       # -- Set relabelings for the endpoint of the serviceMonitor
       relabelings: []
+
+# ---------------------------------------------------------------------------
+# Subresource API Server (aggregated subresources.kubewaf.io) + probe Test Server
+# Disabled by default. Probes still require probeTestServer; directives/query do not.
+# ---------------------------------------------------------------------------
+subresourceApi:
+  # -- Deploy the Subresource API Server + APIService
+  enabled: false
+  probes:
+    # -- Register /probes (requires probeTestServer.enabled)
+    enabled: true
+  directives:
+    # -- Register GET …/wafs/{name}/directives (no Test Server)
+    enabled: false
+  query:
+    # -- Register GET …/metrics, /traces, /clustermetrics (operator-side VM/VT proxy)
+    enabled: true
+  # -- Replica count
+  replicaCount: 1
+  image:
+    # -- Image registry (empty inherits image.registry)
+    registry: ""
+    # -- Image repository for cmd/subresource-api
+    repository: kubewaf-io/kubewaf-subresource-api
+    # -- Image tag (empty inherits image.tag / Chart.AppVersion)
+    tag: ""
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  # -- Resources for Subresource API pods
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  concurrency:
+    # -- Max in-flight probes per namespace
+    perNamespace: 4
+    # -- Process-wide max concurrent probes
+    globalMaxInFlight: 32
+  service:
+    # -- Service port exposed to apiserver (APIService)
+    port: 443
+  # -- Optional pod annotations
+  podAnnotations: {}
+  # -- Optional pod labels
+  podLabels: {}
+  # -- Create NetworkPolicy (defense-in-depth; kind often permissive)
+  networkPolicy:
+    enabled: true
+  testServer:
+    # -- URL of Test HTTP Server (cluster DNS)
+    # leave empty to use http://{{ fullname }}-probe-test-server:port
+    url: ""
+    # -- Shared bearer Secret name (empty = {{ fullname }}-probe-eval-token)
+    tokenSecretName: ""
+    connectTimeoutSeconds: 2
+
+# Managed observability (Envoy OTLP → cluster kubewaf_otel). Off by default.
+# Product path is the Envoy stats sink + OTel access logger, not scrape and not Wasm httpCall.
+observability:
+  managed:
+    # -- Enable the managed OTLP plane (Collector + metrics backend)
+    enabled: false
+    # -- lite = metrics only; full = metrics + security traces
+    profile: lite
+    otlp:
+      # -- Empty = in-cluster {{ fullname }}-otel-collector:4317
+      endpoint: ""
+      # -- Envoy sink / access logger protocol
+      protocol: grpc
+    collector:
+      enabled: true
+      image:
+        registry: docker.io
+        repository: otel/opentelemetry-collector-contrib
+        tag: "0.128.0"
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    victoriaMetrics:
+      # -- In-cluster single-node VM (required for lite/full unless endpoint or remote_write is set)
+      enabled: true
+      # -- External VM / vmagent OTLP metrics ingest. Empty uses in-cluster VM when enabled.
+      endpoint: ""
+      image:
+        registry: docker.io
+        repository: victoriametrics/victoria-metrics
+        tag: "v1.117.1"
+        pullPolicy: IfNotPresent
+      retentionPeriod: "14d"
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+    prometheusRemoteWrite:
+      # -- Prometheus remote_write (not OTLP). Use victoriaMetrics.endpoint for OTLP ingest.
+      enabled: false
+      endpoint: ""
+    victoriaTraces:
+      enabled: false
+      endpoint: ""
+      image:
+        registry: docker.io
+        repository: victoriametrics/victoria-traces
+        tag: "v0.4.0"
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+    grafana:
+      enabled: false
+    # -- Set true after applying the Envoy/Istio bootstrap fragment (cluster + sink + tags).
+    injectConfigured: false
+    traces:
+      sampleDisruptive: "1.0"
+      sampleNonDisruptive: "0.25"
+      redact: true
+      includeMatchDataDefault: false
+    networkPolicy:
+      enabled: true
+    # Query ingress is collector + subresource-api / operator pods only.
+    # kube-system / CIDR peers are not used (Headlamp queries via subresources).
+    ciliumNetworkPolicy:
+      enabled: false
+      nodeCIDRs: []
+    alerts:
+      enabled: true
+
+probeTestServer:
+  # -- Deploy go-coraza Test HTTP Server (required only when subresourceApi.probes.enabled)
+  enabled: false
+  # -- Replica count (compile cache is per-pod if enabled later)
+  replicaCount: 1
+  image:
+    registry: ""
+    repository: kubewaf-io/kubewaf-probe-test-server
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  concurrency:
+    globalMaxInFlight: 16
+    maxConcurrentCompiles: 4
+  service:
+    port: 8080
+  auth:
+    # -- Shared bearer Secret name (empty = {{ fullname }}-probe-eval-token)
+    tokenSecretName: ""
+  # -- Create NetworkPolicy allowing only Subresource API pods
+  networkPolicy:
+    enabled: true
+  podAnnotations: {}
+  podLabels: {}

@@ -1,0 +1,53 @@
+# Albedo backend for CRS go-ftw (https://github.com/coreruleset/albedo).
+# Prefer this over httpbin for FTW: CRS regression tests expect albedo's
+# status/reflection behavior.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: albedo
+  namespace: demo
+  labels:
+    app: albedo
+    e2e: "true"
+    ftw: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: albedo
+  template:
+    metadata:
+      labels:
+        app: albedo
+    spec:
+      containers:
+        - name: albedo
+          image: ghcr.io/coreruleset/albedo:0.2.0
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: albedo
+  namespace: demo
+  labels:
+    app: albedo
+    e2e: "true"
+    ftw: "true"
+spec:
+  selector:
+    app: albedo
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP

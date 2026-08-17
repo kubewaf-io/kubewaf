@@ -1,0 +1,62 @@
+{{- /*
+STATIC kubewaf_ecds fragment for cilium-envoy bootstrap.
+Not a complete bootstrap — merge into Cilium's generated file (see NOTES.txt
+and hack/scripts/merge-cilium-envoy-ecds-bootstrap.sh).
+*/ -}}
+{{- $ip := "" -}}
+{{- $svcName := printf "%s-ecds" (include "helm.fullname" .) -}}
+{{- $svc := lookup "v1" "Service" .Release.Namespace $svcName -}}
+{{- if and $svc $svc.spec $svc.spec.clusterIP -}}
+{{- $ip = $svc.spec.clusterIP -}}
+{{- end -}}
+{{- if not $ip -}}
+{{- $ip = "REPLACE_WITH_KUBEWAF_ECDS_CLUSTERIP" -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "helm.fullname" . }}-cilium-envoy-ecds-fragment
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cilium-envoy-ecds
+data:
+  README: |
+    Merge kubewaf_ecds-cluster.json into cilium-envoy bootstrap (keep xds-grpc-cilium).
+    ClusterIP must be this chart's ECDS Service ({{ $svcName }}.{{ .Release.Namespace }}, port {{ .Values.dataplane.ecds.port | default 18001 }}).
+    Fail if ClusterIP is empty/None. cilium-envoy is hostNetwork — do not use DNS.
+    Do not set Cilium envoy.bootstrapConfigMap to this ConfigMap — fragment only.
+    Helm-upgrade Cilium with --version <installed chart> --set-string envoy.bootstrapConfigMap=...
+    then rollout ds/cilium-envoy (never restart ds/cilium).
+    STATIC pin: Service delete can free the ClusterIP; re-merge or revert on uninstall.
+    See chart NOTES.txt.
+  kubewaf_ecds-cluster.json: |
+    {
+      "name": "kubewaf_ecds",
+      "type": "STATIC",
+      "connect_timeout": "2s",
+      "lb_policy": "ROUND_ROBIN",
+      "typed_extension_protocol_options": {
+        "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+          "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+          "explicit_http_config": {
+            "http2_protocol_options": {}
+          }
+        }
+      },
+      "load_assignment": {
+        "cluster_name": "kubewaf_ecds",
+        "endpoints": [{
+          "lb_endpoints": [{
+            "endpoint": {
+              "address": {
+                "socket_address": {
+                  "address": {{ $ip | quote }},
+                  "port_value": {{ .Values.dataplane.ecds.port | default 18001 }}
+                }
+              }
+            }
+          }]
+        }]
+      }
+    }

@@ -1,0 +1,340 @@
+{{- /*
+Optimized RuleSet profiles that select CRS SecRules by coreruleset/* labels.
+Attach to a Path B WAF via ruleRefs (crsEnable: false).
+*/ -}}
+{{- $crsVersion := (.Values.crs.version | default "4.27.0") }}
+{{- $labels := include "kubewaf-crs.labels" . }}
+{{- $profiles := .Values.profiles | default dict }}
+
+{{- if and $profiles.core $profiles.core.enabled }}
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: crs-core
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/profile: core
+    waf.kubewaf.io/optimized: "true"
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: {{ $crsVersion | quote }}
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-901-INITIALIZATION.conf
+              - REQUEST-905-COMMON-EXCEPTIONS.conf
+              - REQUEST-911-METHOD-ENFORCEMENT.conf
+              - REQUEST-913-SCANNER-DETECTION.conf
+              - REQUEST-920-PROTOCOL-ENFORCEMENT.conf
+              - REQUEST-921-PROTOCOL-ATTACK.conf
+              - REQUEST-949-BLOCKING-EVALUATION.conf
+              - RESPONSE-959-BLOCKING-EVALUATION.conf
+              - RESPONSE-980-CORRELATION.conf
+{{- end }}
+
+{{- if and $profiles.api $profiles.api.enabled }}
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/profile: api
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: api
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: {{ $crsVersion | quote }}
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+{{- end }}
+
+{{- if and $profiles.backend $profiles.backend.enabled }}
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/profile: backend
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: backend
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: {{ $crsVersion | quote }}
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+              - RESPONSE-955-WEB-SHELLS.conf
+{{- end }}
+
+{{- if and $profiles.frontend $profiles.frontend.enabled }}
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/profile: frontend
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: frontend
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: {{ $crsVersion | quote }}
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+{{- end }}
+
+{{- if and $profiles.golang $profiles.golang.enabled }}
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-golang
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/profile: golang
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: golang
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: {{ $crsVersion | quote }}
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+{{- end }}
+
+{{- if and $profiles.php $profiles.php.enabled }}
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-php
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/profile: php
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: php
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: {{ $crsVersion | quote }}
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-933-APPLICATION-ATTACK-PHP.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+              - RESPONSE-953-DATA-LEAKAGES-PHP.conf
+              - RESPONSE-955-WEB-SHELLS.conf
+{{- end }}
+
+{{- if and $profiles.java $profiles.java.enabled }}
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-java
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/profile: java
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: java
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: {{ $crsVersion | quote }}
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - REQUEST-944-APPLICATION-ATTACK-JAVA.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+              - RESPONSE-952-DATA-LEAKAGES-JAVA.conf
+              - RESPONSE-955-WEB-SHELLS.conf
+{{- end }}
+
+{{- if and $profiles.dotnet $profiles.dotnet.enabled }}
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ruleset-dotnet
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+    waf.kubewaf.io/profile: dotnet
+    waf.kubewaf.io/optimized: "true"
+    waf.kubewaf.io/stack: dotnet
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: RuleSet
+      name: crs-core
+      group: waf.kubewaf.io
+      version: v1beta1
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          coreruleset/version: {{ $crsVersion | quote }}
+        matchExpressions:
+          - key: coreruleset/file
+            operator: In
+            values:
+              - REQUEST-922-MULTIPART-ATTACK.conf
+              - REQUEST-930-APPLICATION-ATTACK-LFI.conf
+              - REQUEST-931-APPLICATION-ATTACK-RFI.conf
+              - REQUEST-932-APPLICATION-ATTACK-RCE.conf
+              - REQUEST-934-APPLICATION-ATTACK-GENERIC.conf
+              - REQUEST-941-APPLICATION-ATTACK-XSS.conf
+              - REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+              - REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+              - RESPONSE-950-DATA-LEAKAGES.conf
+              - RESPONSE-951-DATA-LEAKAGES-SQL.conf
+              - RESPONSE-954-DATA-LEAKAGES-IIS.conf
+              - RESPONSE-955-WEB-SHELLS.conf
+{{- end }}

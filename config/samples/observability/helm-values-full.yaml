@@ -1,0 +1,32 @@
+# Cluster-scoped managed plane (once per cluster).
+# helm upgrade --install kubewaf charts/kubewaf -n kubewaf-system --create-namespace \
+#   -f config/samples/observability/helm-values-full.yaml
+#
+# Envoy OTel stats sink + access logger → cluster kubewaf_otel → Collector :4317
+# → VictoriaMetrics + VictoriaTraces (Collector converts access-log records to waf.eval).
+# No Wasm httpCall, no otel-bridge, no filelog, no allowlist, no admin scrape.
+# Chart fails if managed is on and neither victoriaMetrics nor prometheusRemoteWrite
+# has a backend (in-cluster VM, victoriaMetrics.endpoint, or remote_write.endpoint).
+observability:
+  managed:
+    enabled: true
+    profile: full
+    otlp:
+      endpoint: ""          # empty = in-cluster {{ fullname }}-otel-collector:4317
+      protocol: grpc        # Envoy sink / access logger
+    collector:
+      enabled: true
+    victoriaTraces:
+      enabled: true
+    victoriaMetrics:
+      enabled: true
+      # vmagent OTLP ingest (metrics only). Empty uses in-cluster VM when the subchart is on.
+      endpoint: http://vmagent.monitoring.svc:8429/opentelemetry/v1/metrics
+    tracesBackend: victoriaTraces
+    grafana:
+      enabled: false
+    traces:
+      sampleDisruptive: "1.0"
+      sampleNonDisruptive: "0.25"
+      redact: true
+      includeMatchDataDefault: false

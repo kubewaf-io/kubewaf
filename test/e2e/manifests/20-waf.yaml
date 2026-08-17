@@ -65,9 +65,9 @@ spec:
     group: waf.kubewaf.io
     version: v1beta1
 
-  # Full OWASP CRS on top of custom rules — max-strict (PL4 + low anomaly thresholds).
-  # Expect more false positives; raise thresholds or use crs.removeById / updateTargetById to tune.
-  crsEnable: true
+  # path-b wasm (default operator embed): custom SecRules only.
+  # crsEnable:true requires the second-class full-catalog wasm (*-full).
+  crsEnable: false
   crs:
     paranoiaLevel: 4
     inboundAnomalyThreshold: 1

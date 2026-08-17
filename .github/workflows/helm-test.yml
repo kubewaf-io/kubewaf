@@ -36,7 +36,9 @@ jobs:
       - uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5
 
       - name: Linting Chart
-        run: helm lint ./charts/kubewaf
+        run: |
+          helm lint ./charts/kubewaf
+          helm lint ./charts/kubewaf-crs
 
       - name: Run chart-testing (lint)
         run: make helm-lint

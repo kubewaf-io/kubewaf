@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package wasmserve hosts one or more Proxy-Wasm binaries over HTTP so Envoy
-// can fetch them for ECDS filters (Coraza, ModSecurity, Challenge/PoW).
+// can fetch them for ECDS filters (ModSecurity, Challenge/PoW).
 package wasmserve
 
 import (
@@ -195,9 +195,9 @@ func (s *Server) SHA256(id engine.ModuleID) string {
 	return ""
 }
 
-// PublicURL is a convenience wrapper around engine.PublicURL for Coraza (compat).
+// PublicURL is a convenience wrapper around engine.PublicURL for the WAF module.
 func PublicURL(serviceHost string, port uint32) string {
-	return engine.PublicURL(serviceHost, port, engine.ModuleCoraza)
+	return engine.PublicURL(serviceHost, port, engine.ModuleModSecurity)
 }
 
 // PublicURLFor builds the URL for any module.
@@ -227,9 +227,6 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 	// Aliases
-	mux.HandleFunc("/wasm/main.wasm", func(w http.ResponseWriter, r *http.Request) {
-		s.serveModule(w, r, engine.ModuleCoraza)
-	})
 	mux.HandleFunc("/wasm/modsec.wasm", func(w http.ResponseWriter, r *http.Request) {
 		s.serveModule(w, r, engine.ModuleModSecurity)
 	})

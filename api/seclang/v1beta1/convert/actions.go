@@ -179,12 +179,12 @@ func SecActionToCSR(source v1beta1.SecRuleActions) (types.SeclangActions, error)
 		if err != nil {
 			return target, err
 		}
-	} else {
-		// Default to 'pass' for rules without explicit disruptive action (common in CRS setup rules).
-		// This prevents nil pointer in crslang's sortActions/ToSeclang.
-		defaultAction, _ := types.NewActionOnly(types.Pass)
-		target.DisruptiveAction = defaultAction
 	}
+	// Do NOT default to pass when DisruptiveAction is nil.
+	// Chain children intentionally omit disruptive actions; injecting pass makes
+	// Coraza reject the rule ("disruptive actions can only be specified in the
+	// chain starter") and produces non-CRS SecLang. Callers that need a default
+	// disruptive must set it explicitly on the parent rule.
 
 	if len(source.Flow) > 0 {
 		for _, flow := range source.Flow {

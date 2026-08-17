@@ -36,8 +36,12 @@ type SecRuleMetadata struct {
 	OnlyPhaseMetadata `json:",inline" yaml:",inline"`
 
 	// Id is the unique numeric identifier of the rule.
-	// Required in almost all production rules. Used for rule updates,
-	// removal, and referencing (SecRuleRemoveById, SecRuleUpdateActionById).
+	// Used for rule updates, removal, and referencing (SecRuleRemoveById, …).
+	//
+	// Optional: when omitted (or 0), the SecRule controller allocates a cluster-unique
+	// id from the SecRuleIDPool singleton (default range 100000–999999) and records it
+	// on status.ruleId / status.assignedIds. Prefer explicit ids for CRS/shared rules;
+	// omit for custom rules and let the pool assign.
 	//
 	// Example: id:900100
 	Id int `json:"id,omitempty" yaml:"id,omitempty" mapstructure:"id,omitempty"`
@@ -70,6 +74,9 @@ type SecRuleMetadata struct {
 	// Tags categorise the rule (multiple allowed). Used for filtering,
 	// grouping, and removal (SecRuleRemoveByTag).
 	// Common CRS tags: WEB_ATTACK/XSS, OWASP_CRS, paranoia-level/1, etc.
+	//
+	// The SecRule controller also mirrors each tag onto the CR's Kubernetes
+	// labels as seclang.kubewaf.io/tag.<sanitized>=true for RuleSet selectors.
 	//
 	// Example: tag:'WEB_ATTACK/SQL_INJECTION', tag:'paranoia-level/1'
 	Tags []string `json:"tags,omitempty" yaml:"tags,omitempty" mapstructure:"tags,omitempty" copier:"Tags"`

@@ -28,62 +28,57 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	seclangv1beta1 "github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
-	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1/convert"
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	"github.com/kubewaf-io/kubewaf/internal/controller"
-	"github.com/kubewaf-io/kubewaf/internal/coraza"
+	"github.com/kubewaf-io/kubewaf/internal/dataplane/config"
+	internalseclang "github.com/kubewaf-io/kubewaf/internal/seclang"
 )
 
-// SecRuleReconciler reconciles a SecRule object
+// SecRuleReconciler reconciles a SecRule object: id allocation, label mirrors, SecLang validation.
 type SecRuleReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=seclan.kubewaf.io,resources=secrules,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=seclan.kubewaf.io,resources=secrules/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=seclan.kubewaf.io,resources=secrules/finalizers,verbs=update
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secrules,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secrules/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secrules/finalizers,verbs=update
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secruleidpools,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secruleidpools/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=phraselists,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the SecRule object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
+// Reconcile allocates rule ids (cluster-scoped pool), mirrors tags to labels, and validates SecLang.
 func (r *SecRuleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := logf.FromContext(ctx)
-	var (
-		secRule = &seclangv1beta1.SecRule{}
-		updated bool
-	)
+	secRule := &seclangv1beta1.SecRule{}
 
 	updated, err := controller.InitHandler(ctx, req, secRule, r.Client)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// delete
+	// Deletion: drop finalizers after RuleSet refs are gone.
 	if !secRule.DeletionTimestamp.IsZero() {
 		for _, ruleSetRef := range secRule.Status.RuleSetRefs {
 			var ruleSet wafv1beta1.RuleSet
-			if err := r.Get(ctx, types.NamespacedName{Name: ruleSetRef.Name, Namespace: ruleSetRef.Namespace}, &ruleSet); !errors.IsNotFound(err) {
+			if err := r.Get(ctx, types.NamespacedName{Name: ruleSetRef.Name, Namespace: ruleSetRef.Namespace}, &ruleSet); !errors.IsNotFound(err) && err != nil {
 				return ctrl.Result{}, err
 			}
 		}
-
-		updated := controllerutil.RemoveFinalizer(secRule, controller.RuleSetRefFinalizer)
-		updated2 := controllerutil.RemoveFinalizer(secRule, controller.Finalizer)
-		if updated || updated2 {
-			if err := r.Delete(ctx, secRule); err != nil {
+		updatedF := controllerutil.RemoveFinalizer(secRule, controller.RuleSetRefFinalizer)
+		updatedF2 := controllerutil.RemoveFinalizer(secRule, controller.Finalizer)
+		if updatedF || updatedF2 {
+			if err := r.Update(ctx, secRule); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
+		return ctrl.Result{}, nil
 	}
 
 	if updated {
@@ -91,76 +86,197 @@ func (r *SecRuleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			return ctrl.Result{}, err
 		}
 		l.Info("Added finalizer to SecRule")
-	}
-
-	crslangSecRule, err := convert.ConvertSecRule(*secRule)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// validate Rule
-	_, validateErr := coraza.LoadAndValidateSeclangDirectives(crslangSecRule)
-	var conditionChanged bool
-	if validateErr == nil {
-		conditionChanged = meta.SetStatusCondition(&secRule.Status.Conditions, metav1.Condition{
-			Type:               controller.ConditionTypeReady,
-			Status:             metav1.ConditionTrue,
-			Reason:             "CouldLoadRulesToCoraza",
-			ObservedGeneration: secRule.Generation,
-		})
-		if conditionChanged {
-			l.Info("Updated Ready condition to True")
-		}
-	} else {
-		conditionChanged = meta.SetStatusCondition(&secRule.Status.Conditions, metav1.Condition{
-			Type:               controller.ConditionTypeReady,
-			Status:             metav1.ConditionFalse,
-			Reason:             "CouldNotLoadRulesToCoraza",
-			Message:            fmt.Sprintf("Could load Rules to Coraza: %v", validateErr),
-			ObservedGeneration: secRule.Generation,
-		})
-		if conditionChanged {
-			l.Info("Updated Ready condition to False")
-		}
-	}
-
-	if conditionChanged {
-		l.Info("Updated SecRule status with generated SecLang string")
-		if err := r.Client.Status().Update(ctx, secRule); err != nil {
+		// Re-fetch after update.
+		if err := r.Get(ctx, req.NamespacedName, secRule); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
+	// --- Cluster-scoped id allocation ---
+	used, err := collectUsedIDs(ctx, r.Client)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("list secrules for id pool: %w", err)
+	}
+	// Free our own previous assignments so we can reuse them.
+	for _, id := range secRule.Status.AssignedIDs {
+		delete(used, id)
+	}
+	if secRule.Status.RuleID > 0 {
+		delete(used, secRule.Status.RuleID)
+	}
+
+	assigned, primary, idSource, err := allocateIDs(ctx, r.Client, secRule, used)
+	if err != nil {
+		meta.SetStatusCondition(&secRule.Status.Conditions, metav1.Condition{
+			Type:               controller.ConditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "IDAllocationFailed",
+			Message:            err.Error(),
+			ObservedGeneration: secRule.Generation,
+		})
+		_ = r.Status().Update(ctx, secRule)
+		return ctrl.Result{}, err
+	}
+
+	// --- Labels: id, phase, tags ---
+	if syncSecRuleLabels(secRule, primary, idSource) {
+		if err := r.Update(ctx, secRule); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.Get(ctx, req.NamespacedName, secRule); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Shared render+validate path (same convert used by dataplane assembly).
+	// Convert errors (e.g. empty/unknown t: transforms that would emit t:unknown
+	// and trap ModSecurity wasm) must keep Ready=False and clear any prior
+	// SecRuleString so poison never stays advertised in status.
+	// PhraseList/IPList bodies in this namespace are merged into the Coraza root FS so
+	// custom @pmFromFile / @ipMatchFromFile basenames can validate (CRS is go:embed).
+	overrides, ovErr := r.dataFileOverrides(ctx, secRule)
+	if ovErr != nil {
+		meta.SetStatusCondition(&secRule.Status.Conditions, metav1.Condition{
+			Type:               controller.ConditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "DataFileLookupFailed",
+			Message:            ovErr.Error(),
+			ObservedGeneration: secRule.Generation,
+		})
+		secRule.Status.RuleID = primary
+		secRule.Status.IDSource = idSource
+		secRule.Status.AssignedIDs = assigned
+		_ = r.Status().Update(ctx, secRule)
+		return ctrl.Result{}, ovErr
+	}
+	rendered, err := internalseclang.RenderAndValidateWithOverrides(secRule, assigned, overrides)
+	if err != nil {
+		meta.SetStatusCondition(&secRule.Status.Conditions, metav1.Condition{
+			Type:               controller.ConditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ConvertFailed",
+			Message:            err.Error(),
+			ObservedGeneration: secRule.Generation,
+		})
+		secRule.Status.RuleID = primary
+		secRule.Status.IDSource = idSource
+		secRule.Status.AssignedIDs = assigned
+		secRule.Status.SecRuleString = ""
+		_ = r.Status().Update(ctx, secRule)
+		// Do not return err: condition is durable; avoid hot-loop requeue on
+		// permanent Spec convert failures (unknown transform, etc.).
+		return ctrl.Result{}, nil
+	}
+	if rendered.ValidateErr == nil {
+		meta.SetStatusCondition(&secRule.Status.Conditions, metav1.Condition{
+			Type:               controller.ConditionTypeReady,
+			Status:             metav1.ConditionTrue,
+			Reason:             "CouldLoadRulesToCoraza",
+			Message:            fmt.Sprintf("ruleId=%d idSource=%s", primary, idSource),
+			ObservedGeneration: secRule.Generation,
+		})
+	} else {
+		reason := "CouldNotLoadRulesToCoraza"
+		msg := fmt.Sprintf("Could not load rules to Coraza: %v", rendered.ValidateErr)
+		// Surface missing custom phrase lists more clearly when Coraza fails open on FS.
+		if internalseclang.LooksLikeMissingDataFile(rendered.ValidateErr) {
+			reason = "MissingPhraseList"
+		}
+		meta.SetStatusCondition(&secRule.Status.Conditions, metav1.Condition{
+			Type:               controller.ConditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             reason,
+			Message:            msg,
+			ObservedGeneration: secRule.Generation,
+		})
+	}
+
+	secRule.Status.RuleID = primary
+	secRule.Status.IDSource = idSource
+	secRule.Status.AssignedIDs = assigned
+	secRule.Status.SecRuleString = rendered.SecLang
+
+	if err := r.Status().Update(ctx, secRule); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{}, nil
 }
 
+// dataFileOverrides builds basename→body for Ready PhraseLists and IPLists in the SecRule namespace.
+func (r *SecRuleReconciler) dataFileOverrides(ctx context.Context, sr *seclangv1beta1.SecRule) (map[string][]byte, error) {
+	out := map[string][]byte{}
+	var list seclangv1beta1.PhraseListList
+	if err := r.List(ctx, &list, client.InNamespace(sr.Namespace)); err != nil {
+		// PhraseList CRD may not be installed yet — treat as no overrides.
+		if !meta.IsNoMatchError(err) {
+			return nil, err
+		}
+	} else {
+		for i := range list.Items {
+			pl := &list.Items[i]
+			if !meta.IsStatusConditionTrue(pl.Status.Conditions, controller.ConditionTypeReady) {
+				continue
+			}
+			body, err := config.ResolvePhraseListBody(ctx, r.Client, pl)
+			if err != nil {
+				// Skip unreadable; Coraza will fail if SecRule needs it.
+				continue
+			}
+			if pl.Spec.FileName != "" {
+				out[pl.Spec.FileName] = body
+			}
+		}
+	}
+	var ipList seclangv1beta1.IPListList
+	if err := r.List(ctx, &ipList, client.InNamespace(sr.Namespace)); err != nil {
+		if !meta.IsNoMatchError(err) {
+			return nil, err
+		}
+	} else {
+		for i := range ipList.Items {
+			ipl := &ipList.Items[i]
+			if !meta.IsStatusConditionTrue(ipl.Status.Conditions, controller.ConditionTypeReady) {
+				continue
+			}
+			body, err := config.ResolveIPListBody(ctx, r.Client, ipl)
+			if err != nil {
+				continue
+			}
+			if ipl.Spec.FileName != "" {
+				out[ipl.Spec.FileName] = body
+			}
+		}
+	}
+	return out, nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
+// Leader election is inherited from the manager (id allocation must be single-writer).
 func (r *SecRuleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&seclangv1beta1.SecRule{}).
+		Watches(&seclangv1beta1.PhraseList{}, handler.EnqueueRequestsFromMapFunc(r.mapDataFileToSecRules)).
+		Watches(&seclangv1beta1.IPList{}, handler.EnqueueRequestsFromMapFunc(r.mapDataFileToSecRules)).
 		Named("secrule").
 		Complete(r)
 }
 
-// func secRuleSpecToSecRule(secRuleSpec seclangv1beta1.SecRuleSpec) (crslang_types.SecRule, error) {
-// 	data, err := json.Marshal(secRuleSpec)
-// 	if err != nil {
-// 		return crslang_types.SecRule{}, err
-// 	}
-// 	fmt.Println(fmt.Println(string(data)))
-// 	var rule crslang_types.SecRule
-// 	if err := json.Unmarshal(data, &rule); err != nil {
-// 		return crslang_types.SecRule{}, fmt.Errorf("Could not Unmarshal Object into crs Object=%s", err.Error())
-// 	}
-// 	ruleData, err := json.Marshal(rule)
-// 	if err != nil {
-// 		return crslang_types.SecRule{}, err
-// 	}
-// 	fmt.Println(string(ruleData))
-
-// 	return rule, nil
-// }
-
-//	func copySecRuleSpecToCRS(secRule *seclangv1beta1.SecRule) crslang_types.SecRule {
-//		return crslang_types.SecRule{}
-//	}
+func (r *SecRuleReconciler) mapDataFileToSecRules(ctx context.Context, obj client.Object) []reconcile.Request {
+	if obj == nil {
+		return nil
+	}
+	// Revalidate all SecRules in the namespace (v1; refine later by basename scan).
+	var list seclangv1beta1.SecRuleList
+	if err := r.List(ctx, &list, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		sr := &list.Items[i]
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
+			Namespace: sr.Namespace,
+			Name:      sr.Name,
+		}})
+	}
+	return reqs
+}

@@ -1,0 +1,23 @@
+# Cilium chart values: point cilium-envoy at a merged bootstrap ConfigMap.
+# Do not apply this as a standalone object. Merge into `helm upgrade cilium`.
+#
+# 1. Resolve the kubeWAF ECDS Service ClusterIP (cilium-envoy is hostNetwork):
+#      kubectl -n kubewaf-system get svc kubewaf-ecds \
+#        -o jsonpath='{.spec.clusterIP}{"\n"}'
+# 2. Merge config/samples/cilium/kubewaf-ecds-cluster.json into Cilium's generated
+#    bootstrap (keep xds-grpc-cilium). Easiest:
+#      hack/scripts/merge-cilium-envoy-ecds-bootstrap.sh --apply --helm-upgrade \
+#        --ecds-namespace kubewaf-system --ecds-service kubewaf-ecds
+# 3. If you merge by hand, apply the ConfigMap in kube-system then:
+#
+# helm upgrade cilium cilium/cilium -n kube-system --reuse-values \
+#   --version "$(helm get metadata cilium -n kube-system | awk -F': *' '/^VERSION:/{print $2; exit}')" \
+#   --set-string envoy.bootstrapConfigMap=cilium-envoy-bootstrap-kubewaf
+# kubectl -n kube-system rollout restart ds/cilium-envoy
+#
+# Revert: same helm command with envoy.bootstrapConfigMap="" then delete the CM.
+#
+# ClusterIP in the STATIC cluster MUST be the kubeWAF ECDS Service (port 18001).
+# DNS names such as *.svc.cluster.local usually fail from hostNetwork Envoy.
+envoy:
+  bootstrapConfigMap: cilium-envoy-bootstrap-kubewaf

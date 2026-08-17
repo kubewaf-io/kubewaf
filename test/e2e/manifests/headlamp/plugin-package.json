@@ -1,0 +1,10 @@
+{
+  "name": "@kubewaf-io/headlamp-plugin",
+  "version": "0.1.0",
+  "description": "kubeWAF Headlamp plugin (e2e)",
+  "isHeadlampPlugin": true,
+  "main": "main.js",
+  "devDependencies": {
+    "@kinvolk/headlamp-plugin": "^0.14.0"
+  }
+}

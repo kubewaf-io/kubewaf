@@ -8,6 +8,7 @@ import (
 	"github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	"github.com/kubewaf-io/kubewaf/internal/controller"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -59,7 +60,11 @@ func (r *RuleRefResolver) reconcileRefs(
 			err   error
 		)
 
-		if uList, err = r.lookupRef(ctx, ref); err != nil {
+		ownerNS := ""
+		if source != nil {
+			ownerNS = source.GetNamespace()
+		}
+		if uList, err = r.lookupRef(ctx, applyRuleRefDefaults(ref, ownerNS)); err != nil {
 			refError = append(refError, ReferenceError{Index: 0, Ref: ref, Err: fmt.Errorf("lookupRef=%s", err)})
 			continue
 		}
@@ -71,8 +76,13 @@ func (r *RuleRefResolver) reconcileRefs(
 
 			if lock {
 				if err := r.lockObject(ctx, &refObject, source); err != nil {
-					refError = append(refError, ReferenceError{Index: 2, Ref: ref, Err: fmt.Errorf("lockObject=%s", err)})
-					continue
+					// Conflict is expected under high churn (SecRule status/label updates while
+					// locking hundreds of CRS CRs). Do not fail the whole resolve — the object
+					// is still usable for SecLang assembly; finalizers are best-effort.
+					if !apierrors.IsConflict(err) {
+						refError = append(refError, ReferenceError{Index: 2, Ref: ref, Err: fmt.Errorf("lockObject=%s", err)})
+						continue
+					}
 				}
 			}
 
@@ -97,6 +107,35 @@ func (r *RuleRefResolver) reconcileRefs(
 
 	return refObjects, refError, nil
 }
+
+// applyRuleRefDefaults fills omitted namespace / GVK (RuleRef docs: namespace
+// defaults to the referencing object; kinds map to product groups).
+func applyRuleRefDefaults(ref wafv1beta1.RuleRef, ownerNS string) wafv1beta1.RuleRef {
+	if ref.Namespace == "" {
+		ref.Namespace = ownerNS
+	}
+	switch ref.Kind {
+	case "SecRule", "SecAction":
+		if ref.Group == "" {
+			ref.Group = "seclang.kubewaf.io"
+		}
+		if ref.Version == "" {
+			ref.Version = "v1beta1"
+		}
+	case "RuleSet", "":
+		if ref.Kind == "" {
+			ref.Kind = "RuleSet"
+		}
+		if ref.Group == "" {
+			ref.Group = "waf.kubewaf.io"
+		}
+		if ref.Version == "" {
+			ref.Version = "v1beta1"
+		}
+	}
+	return ref
+}
+
 func (r *RuleRefResolver) lookupRef(ctx context.Context, ref wafv1beta1.RuleRef) (*unstructured.UnstructuredList, error) {
 	groupVersionKind := schema.GroupVersionKind{Kind: ref.Kind, Group: ref.Group, Version: ref.Version}
 	if ref.Selector != nil {
@@ -160,10 +199,39 @@ func (r *RuleRefResolver) lockObject(ctx context.Context, refObject client.Objec
 	switch v := refObject.(type) {
 	case v1beta1.SecLang:
 		updatedSecond = v.AddRuleSetRef(source)
+	case *unstructured.Unstructured:
+		// Dynamic resolve path uses unstructured; convert for SecLang back-refs.
+		switch v.GetKind() {
+		case "SecRule":
+			var sr v1beta1.SecRule
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(v.Object, &sr); err == nil {
+				if sr.AddRuleSetRef(source) {
+					if m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&sr); err == nil {
+						v.Object = m
+						updatedSecond = true
+					}
+				}
+			}
+		case "SecAction":
+			var sa v1beta1.SecAction
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(v.Object, &sa); err == nil {
+				if sa.AddRuleSetRef(source) {
+					if m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&sa); err == nil {
+						v.Object = m
+						updatedSecond = true
+					}
+				}
+			}
+		}
 	}
 
 	if updatedFirst || updatedSecond {
 		if err := r.Update(ctx, refObject); err != nil {
+			// Conflict: another controller (e.g. SecRuleReconciler) updated the object.
+			// Caller should still use the resolved object for assembly.
+			if apierrors.IsConflict(err) {
+				return err // surface to reconcileRefs which treats conflict as non-fatal
+			}
 			return err
 		}
 	}
@@ -171,44 +239,72 @@ func (r *RuleRefResolver) lockObject(ctx context.Context, refObject client.Objec
 	return nil
 }
 
+// allowedObject enforces cross-namespace policy when the owner declares one.
+//
+// RuleSet.spec.allowedRules controls which namespaces may contribute rules to
+// that RuleSet (Gateway API–style From=Same|All|Selector). The policy lives on
+// the *owner* (source), not the target — targets are often unstructured SecRules
+// that never implement CrossNamespaceObject.
+//
+// Owners without a policy (e.g. WAF attaching RuleSets) allow cross-namespace
+// references so platform RuleSets can live in a shared namespace.
 func (r *RuleRefResolver) allowedObject(ctx context.Context, refObject client.Object, source client.Object) error {
-	// in same ns always allowed
 	if source.GetNamespace() == refObject.GetNamespace() {
 		return nil
 	}
-	switch v := refObject.(type) {
-	case wafv1beta1.CrossNamespaceObject:
-		policy := v.GetRuleNamespaces()
-		// default to Same
-		from := "Same"
-		if policy.From != nil {
-			from = string(*policy.From)
-		}
-		switch from {
-		case "All":
-			return nil
-		case "Same":
-			if source.GetNamespace() == refObject.GetNamespace() {
-				return nil
-			}
-			return fmt.Errorf("CrossNamespace Reference not allowed")
-		case "Selector":
-			if policy.Selector == nil {
-				return fmt.Errorf("selector required when From=Selector")
-			}
 
-			ns := &corev1.Namespace{}
-			if err := r.Get(ctx, types.NamespacedName{Name: refObject.GetNamespace()}, ns); err != nil {
-				return fmt.Errorf("failed to get namespace %s: %w", refObject.GetNamespace(), err)
-			}
-			selector, err := metav1.LabelSelectorAsSelector(policy.Selector)
-			if err != nil {
-				return fmt.Errorf("invalid selector: %w", err)
-			}
-			if !selector.Matches(labels.Set(ns.Labels)) {
-				return fmt.Errorf("namespace %s does not match the allowed selector", refObject.GetNamespace())
-			}
-		}
+	policy, ok := namespacesPolicy(source)
+	if !ok {
+		return nil
 	}
-	return nil
+
+	from := "Same"
+	if policy.From != nil {
+		from = string(*policy.From)
+	}
+	switch from {
+	case "All":
+		return nil
+	case "Same", "":
+		return fmt.Errorf("cross-namespace reference from %s/%s to %s/%s not allowed (allowedRules.from=Same)",
+			source.GetNamespace(), source.GetName(), refObject.GetNamespace(), refObject.GetName())
+	case "Selector":
+		if policy.Selector == nil {
+			return fmt.Errorf("allowedRules.selector required when from=Selector")
+		}
+		ns := &corev1.Namespace{}
+		if err := r.Get(ctx, types.NamespacedName{Name: refObject.GetNamespace()}, ns); err != nil {
+			return fmt.Errorf("failed to get namespace %s: %w", refObject.GetNamespace(), err)
+		}
+		selector, err := metav1.LabelSelectorAsSelector(policy.Selector)
+		if err != nil {
+			return fmt.Errorf("invalid allowedRules.selector: %w", err)
+		}
+		if !selector.Matches(labels.Set(ns.Labels)) {
+			return fmt.Errorf("namespace %s does not match allowedRules.selector", refObject.GetNamespace())
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown allowedRules.from %q", from)
+	}
+}
+
+// namespacesPolicy returns AllowedRules when source is a RuleSet (typed or unstructured).
+func namespacesPolicy(source client.Object) (wafv1beta1.RuleNamespaces, bool) {
+	switch v := source.(type) {
+	case wafv1beta1.CrossNamespaceObject:
+		// RuleSet implements CrossNamespaceObject; keep interface case first.
+		return v.GetRuleNamespaces(), true
+	case *unstructured.Unstructured:
+		if v.GetKind() != "RuleSet" {
+			return wafv1beta1.RuleNamespaces{}, false
+		}
+		var rs wafv1beta1.RuleSet
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(v.Object, &rs); err != nil {
+			return wafv1beta1.RuleNamespaces{}, false
+		}
+		return rs.Spec.AllowedRules, true
+	default:
+		return wafv1beta1.RuleNamespaces{}, false
+	}
 }

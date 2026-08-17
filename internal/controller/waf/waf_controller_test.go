@@ -38,11 +38,8 @@ var _ = Describe("WAF Controller", func() {
 						Namespace: metav1.NamespaceDefault,
 					},
 					Spec: wafv1beta1.WAFSpec{
-						CRSEnable:             true,
-						LogLevel:              2,
-						CorazaProxyWasmImage:  "ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0",
-						CorazaProxyWasmHTTP:   "https://example.com/coraza-proxy-wasm.wasm",
-						CorazaProxyWasmSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+						CRSEnable: true,
+						LogLevel:  2,
 						Provider: &wafv1beta1.WAFProvider{
 							Type: wafv1beta1.ProviderEnvoyGateway,
 						},
@@ -57,6 +54,20 @@ var _ = Describe("WAF Controller", func() {
 			if err == nil {
 				By("Cleanup the specific resource instance WAF")
 				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+				// Drive finalizer removal so the next It sees a clean slate
+				// (envtest has no Istio/Cilium CRDs — delete must tolerate that).
+				rec := &WAFReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					ECDS:   ecds.New(ctx, GinkgoLogr),
+					BuildOpts: config.BuildOptions{
+						DefaultECDSHost:    "kubewaf-ecds.kubewaf-system.svc.cluster.local",
+						DefaultECDSPort:    18001,
+						DefaultWasmHTTPURL: "https://example.com/coraza-proxy-wasm.wasm",
+						DefaultWasmSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					},
+				}
+				_, _ = rec.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			}
 		})
 		It("should reconcile via ECDS without EnvoyExtensionPolicy", func() {
@@ -70,6 +81,7 @@ var _ = Describe("WAF Controller", func() {
 					DefaultECDSHost:    "kubewaf-ecds.kubewaf-system.svc.cluster.local",
 					DefaultECDSPort:    18001,
 					DefaultWasmHTTPURL: "https://example.com/coraza-proxy-wasm.wasm",
+					DefaultWasmSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				},
 			}
 
@@ -80,7 +92,7 @@ var _ = Describe("WAF Controller", func() {
 			// Second reconcile performs ECDS upsert.
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			if err != nil {
-				fmt.Fprintf(GinkgoWriter, "Reconcile error was: %v\n", err)
+				_, _ = fmt.Fprintf(GinkgoWriter, "Reconcile error was: %v\n", err)
 			}
 			Expect(err).NotTo(HaveOccurred())
 
@@ -96,6 +108,156 @@ var _ = Describe("WAF Controller", func() {
 			Expect(updated.Status.Provider).To(Equal(wafv1beta1.ProviderEnvoyGateway))
 			Expect(updated.Status.SlotKind).To(Equal("ExtensionServer"))
 		})
+
+		It("should mark NotReady when ECDS is nil", func() {
+			key := types.NamespacedName{Name: "test-waf-no-ecds", Namespace: metav1.NamespaceDefault}
+			Expect(k8sClient.Create(ctx, &wafv1beta1.WAF{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec: wafv1beta1.WAFSpec{
+					LogLevel: 2,
+					Provider: &wafv1beta1.WAFProvider{Type: wafv1beta1.ProviderEnvoyGateway},
+				},
+			})).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, &wafv1beta1.WAF{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}})
+				rec := &WAFReconciler{
+					Client: k8sClient, Scheme: k8sClient.Scheme(),
+					ECDS: ecds.New(ctx, GinkgoLogr),
+					BuildOpts: config.BuildOptions{
+						DefaultECDSHost: "kubewaf-ecds.kubewaf-system.svc.cluster.local", DefaultECDSPort: 18001,
+						DefaultWasmHTTPURL: "https://example.com/x.wasm",
+						DefaultWasmSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					},
+				}
+				_, _ = rec.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			})
+
+			rec := &WAFReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				ECDS:   nil, // missing ECDS
+				BuildOpts: config.BuildOptions{
+					DefaultECDSHost:    "kubewaf-ecds.kubewaf-system.svc.cluster.local",
+					DefaultECDSPort:    18001,
+					DefaultWasmHTTPURL: "https://example.com/coraza-proxy-wasm.wasm",
+					DefaultWasmSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				},
+			}
+			// Finalizer add
+			_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			// Second pass should fail-closed as not ready
+			_, err = rec.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("ECDSNotConfigured"))
+
+			updated := &wafv1beta1.WAF{}
+			Expect(k8sClient.Get(ctx, key, updated)).To(Succeed())
+			cond := meta.FindStatusCondition(updated.Status.Conditions, controller.ConditionTypeReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("ECDSNotConfigured"))
+		})
+
+		It("should populate rulesLoaded and renderedDirectives on Ready", func() {
+			updated := &wafv1beta1.WAF{}
+			// Re-use shared test-resource after reconcile from sibling (ensure Ready path).
+			// Create dedicated WAF and reconcile twice.
+			key := types.NamespacedName{Name: "test-waf-status", Namespace: metav1.NamespaceDefault}
+			Expect(k8sClient.Create(ctx, &wafv1beta1.WAF{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec: wafv1beta1.WAFSpec{
+					Mode:     wafv1beta1.WAFModeDetectionOnly,
+					LogLevel: 2,
+					Provider: &wafv1beta1.WAFProvider{Type: wafv1beta1.ProviderEnvoyGateway},
+				},
+			})).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, &wafv1beta1.WAF{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}})
+				rec := &WAFReconciler{
+					Client: k8sClient, Scheme: k8sClient.Scheme(),
+					ECDS: ecds.New(ctx, GinkgoLogr),
+					BuildOpts: config.BuildOptions{
+						DefaultECDSHost: "kubewaf-ecds.kubewaf-system.svc.cluster.local", DefaultECDSPort: 18001,
+						DefaultWasmHTTPURL: "https://example.com/x.wasm",
+						DefaultWasmSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					},
+				}
+				_, _ = rec.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			})
+
+			ecdsSrv := ecds.New(ctx, GinkgoLogr)
+			rec := &WAFReconciler{
+				Client: k8sClient, Scheme: k8sClient.Scheme(), ECDS: ecdsSrv,
+				BuildOpts: config.BuildOptions{
+					DefaultECDSHost: "kubewaf-ecds.kubewaf-system.svc.cluster.local", DefaultECDSPort: 18001,
+					DefaultWasmHTTPURL: "https://example.com/coraza-proxy-wasm.wasm",
+					DefaultWasmSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				},
+			}
+			_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = rec.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, key, updated)).To(Succeed())
+			Expect(updated.Status.Mode).To(Equal(wafv1beta1.WAFModeDetectionOnly))
+			Expect(updated.Status.DirectivesCount).To(BeNumerically(">", 0))
+			Expect(updated.Status.RenderedDirectives).To(ContainSubstring("SecRuleEngine DetectionOnly"))
+			Expect(updated.Status.RulesLoaded).To(Equal(int32(0))) // no RuleSets attached
+		})
+
+		It("should finish deletion without Istio/Cilium CRDs and drop both finalizers", func() {
+			// Use a dedicated name so we are not affected by a sibling It that
+			// left the shared resource with a deletionTimestamp.
+			key := types.NamespacedName{Name: "test-waf-delete", Namespace: metav1.NamespaceDefault}
+			Expect(k8sClient.Create(ctx, &wafv1beta1.WAF{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec: wafv1beta1.WAFSpec{
+					CRSEnable: true,
+					LogLevel:  2,
+					Provider: &wafv1beta1.WAFProvider{
+						Type: wafv1beta1.ProviderEnvoyGateway,
+					},
+				},
+			})).To(Succeed())
+
+			ecdsSrv := ecds.New(ctx, GinkgoLogr)
+			controllerReconciler := &WAFReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				ECDS:   ecdsSrv,
+				BuildOpts: config.BuildOptions{
+					DefaultECDSHost:    "kubewaf-ecds.kubewaf-system.svc.cluster.local",
+					DefaultECDSPort:    18001,
+					DefaultWasmHTTPURL: "https://example.com/coraza-proxy-wasm.wasm",
+					DefaultWasmSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				},
+			}
+
+			// Ensure finalizers + ECDS are in place.
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			resource := &wafv1beta1.WAF{}
+			Expect(k8sClient.Get(ctx, key, resource)).To(Succeed())
+			Expect(resource.Finalizers).To(ContainElement("waf.kubewaf.io/ecds"))
+			Expect(resource.Finalizers).To(ContainElement(controller.Finalizer))
+
+			By("Deleting the WAF")
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			By("Delete reconcile should succeed even when EnvoyFilter/CEC CRDs are absent")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Object should be gone once both finalizers are removed.
+			err = k8sClient.Get(ctx, key, &wafv1beta1.WAF{})
+			Expect(errors.IsNotFound(err)).To(BeTrue())
+			Expect(ecdsSrv.Has(config.ExtensionName(key.Namespace, key.Name))).To(BeFalse())
+		})
 	})
 })
 
@@ -106,16 +268,25 @@ func TestCRSTuningDirectives(t *testing.T) {
 
 	intPtr := func(i int) *int { return &i }
 
-	t.Run("crsSetupActions produces nothing for nil or empty tuning", func(t *testing.T) {
+	t.Run("crsSetupActions produces nothing for nil", func(t *testing.T) {
 		if got := config.CRSSetupActions(nil); got != nil {
 			t.Errorf("expected nil for nil input, got %v", got)
 		}
-		if got := config.CRSSetupActions(&wafv1beta1.CRSTuning{}); got != nil {
-			t.Errorf("expected nil for zero-value tuning, got %v", got)
+	})
+
+	t.Run("crsSetupActions stamps crs_setup_version even for empty tuning", func(t *testing.T) {
+		// Empty CRSTuning still needs tx.crs_setup_version so Path B + REQUEST-901
+		// rule 901001 does not deny with HTTP 500.
+		got := config.CRSSetupActions(&wafv1beta1.CRSTuning{})
+		if len(got) != 1 {
+			t.Fatalf("expected one setup action, got %d: %#v", len(got), got)
+		}
+		if !strings.Contains(got[0], "crs_setup_version=427") || !strings.Contains(got[0], "id:900990") {
+			t.Errorf("want crs_setup_version stamp id:900990, got %s", got[0])
 		}
 	})
 
-	t.Run("crsSetupActions emits single id:900000 SecAction with requested setvars", func(t *testing.T) {
+	t.Run("crsSetupActions emits single id:900990 SecAction with requested setvars", func(t *testing.T) {
 		got := config.CRSSetupActions(&wafv1beta1.CRSTuning{
 			ParanoiaLevel:            intPtr(2),
 			InboundAnomalyThreshold:  intPtr(10),
@@ -125,9 +296,10 @@ func TestCRSTuningDirectives(t *testing.T) {
 			t.Fatalf("expected exactly one directive, got %d: %#v", len(got), got)
 		}
 		d := got[0]
-		if !strings.Contains(d, "id:900000") ||
+		if !strings.Contains(d, "id:900990") ||
 			!strings.Contains(d, "phase:1") ||
-			!strings.Contains(d, "nolog,pass") {
+			!strings.Contains(d, "nolog,pass") ||
+			!strings.Contains(d, "crs_setup_version=427") {
 			t.Errorf("missing required action attributes in %s", d)
 		}
 		if !strings.Contains(d, "detection_paranoia_level=2") ||
@@ -168,7 +340,7 @@ func TestCRSTuningDirectives(t *testing.T) {
 		}
 	})
 
-	t.Run("composition enforces the exact ordering required by CRS", func(t *testing.T) {
+	t.Run("composition enforces the exact ordering required by CRS Path A", func(t *testing.T) {
 		waf := &wafv1beta1.WAF{
 			Spec: wafv1beta1.WAFSpec{
 				CRSEnable: true,
@@ -188,7 +360,7 @@ func TestCRSTuningDirectives(t *testing.T) {
 		})
 
 		iSetupInc := find(defaultCfg, func(s string) bool { return s == "Include @crs-setup-conf" })
-		iSetupAct := find(defaultCfg, func(s string) bool { return strings.Contains(s, "id:900000") })
+		iSetupAct := find(defaultCfg, func(s string) bool { return strings.Contains(s, "id:900990") })
 		iOwaspInc := find(defaultCfg, func(s string) bool { return s == "Include @owasp_crs/*.conf" })
 		iRemoveID := find(defaultCfg, func(s string) bool { return s == "SecRuleRemoveById 942100" })
 		iUpdate := find(defaultCfg, func(s string) bool { return strings.Contains(s, "SecRuleUpdateTargetById 920273") })
@@ -198,12 +370,47 @@ func TestCRSTuningDirectives(t *testing.T) {
 			t.Fatalf("missing expected directives in composed list: %v", defaultCfg)
 		}
 
-		if !(iSetupInc < iSetupAct &&
-			iSetupAct < iOwaspInc &&
-			iOwaspInc < iRemoveID &&
-			iRemoveID < iUpdate &&
-			iUpdate < iUserRule) {
-			t.Errorf("CRS tuning directive ordering contract violated:\n%v", defaultCfg)
+		if iSetupInc >= iSetupAct ||
+			iSetupAct >= iOwaspInc ||
+			iOwaspInc >= iRemoveID ||
+			iRemoveID >= iUpdate ||
+			iUpdate >= iUserRule {
+			t.Errorf("CRS Path A tuning directive ordering contract violated:\n%v", defaultCfg)
+		}
+	})
+
+	t.Run("Path B crs tuning works without crsEnable", func(t *testing.T) {
+		waf := &wafv1beta1.WAF{
+			Spec: wafv1beta1.WAFSpec{
+				CRSEnable: false,
+				LogLevel:  3,
+				CRS: &wafv1beta1.CRSTuning{
+					ParanoiaLevel:           intPtr(1),
+					InboundAnomalyThreshold: intPtr(5),
+					RemoveByID:              []int{942100},
+				},
+			},
+		}
+		cfg := config.BuildDirectives(waf, []string{
+			`SecRule REQUEST_URI "@rx ^/evil" "id:100001,phase:2,deny"`,
+		})
+		for _, ban := range []string{"Include @crs-setup-conf", "Include @owasp_crs"} {
+			for _, d := range cfg {
+				if d == ban || strings.HasPrefix(d, ban) {
+					t.Fatalf("Path B must not emit %q: %v", ban, cfg)
+				}
+			}
+		}
+		iSetup := find(cfg, func(s string) bool {
+			return strings.Contains(s, "id:900990") && strings.Contains(s, "crs_setup_version=427")
+		})
+		iUser := find(cfg, func(s string) bool { return strings.Contains(s, "id:100001") })
+		iRemove := find(cfg, func(s string) bool { return s == "SecRuleRemoveById 942100" })
+		if iSetup < 0 || iUser < 0 || iRemove < 0 {
+			t.Fatalf("missing directives: %v", cfg)
+		}
+		if iSetup >= iUser || iUser >= iRemove {
+			t.Errorf("Path B order want setup < rules < exclusions:\n%v", cfg)
 		}
 	})
 }

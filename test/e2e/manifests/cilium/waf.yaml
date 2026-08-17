@@ -7,12 +7,6 @@ metadata:
     e2e: "true"
     provider: cilium
 spec:
-  provider:
-    type: Cilium
-    cilium:
-      # Attach CEC to the httpbin Service (Cilium L7 selection).
-      serviceName: httpbin
-      serviceNamespace: demo
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
@@ -23,8 +17,8 @@ spec:
     namespace: demo
     group: waf.kubewaf.io
     version: v1beta1
-  # Full OWASP CRS, max-strict tuning (PL4 + low anomaly thresholds).
-  crsEnable: true
+  # path-b wasm default: custom SecRules only. crsEnable:true needs *-full wasm.
+  crsEnable: false
   crs:
     paranoiaLevel: 4
     inboundAnomalyThreshold: 1

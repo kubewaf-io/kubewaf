@@ -1,90 +1,42 @@
-# kubeWAF TODOs Before Publishing as WIP on GitHub
+# kubeWAF — Living roadmap
 
-This document lists tasks to complete before publishing the repository publicly as a Work-in-Progress (WIP) project.
+**Branch:** `feat/beta-prep-ship`  
+**Last cleaned:** 2026-07-30
 
-## Critical Pre-Publish Cleanup
+## Done (recent)
 
-- **Git State**:
-  - Stage untracked files: `git add LICENSE cmd/crs-converter/ config/samples/crs/ internal/translator/`
-  - Handle modified files and deletions: `git add -u` (this will stage deletes and mods)
-  - Commit changes: `git commit -m "chore: prepare for WIP release"`
-  - Consider creating a new branch or cleaning history if needed (currently ahead by 4 commits)
-  - Remove old cruft from .git if history is too noisy (optional)
+- Safety defaults (pprof gate, prod zap, logLevel 1, `WAF.spec.mode`)
+- `allowedRules` + `CleanupBackReferences`
+- Validating webhooks (SecRule / SecAction / RuleSet / WAF)
+- Helm `0.1.0-beta.1` + webhook certs
+- Status / printer columns / events / accurate `rules_loaded`
+- Engines as git submodules; `website2/` **not** tracked (separate website repo)
+- CI: PR EG smoke + full matrix; main EG only; release full e2e before GoReleaser
+- Scaffold cleanup (wafv2 → kubewaf labels, dead WasmRegistry, e2e fossils)
 
-- **Regenerate Generated Code**:
-  - Run `make manifests generate fmt vet` to update CRDs, deepcopies, etc. (many api/ files are modified)
-  - Commit the regenerated files
-  - Run `make lint` and fix any issues
+## Next (Beta ship)
 
-- **Module and Import Paths**:
-  - Decide on final GitHub location: currently `github.com/kubewaf-io/kubewaf`, README suggests `github.com/kubewaf-io/kubewaf`
-  - If changing, update go.mod, all imports, PROJECT file, and references
+1. **Push `feat/beta-prep-ship` + open PR** (needs git credentials in env)
+2. **CI green** on full PR e2e matrix
+3. **Verify helm/docker publish** against real registry
+4. **Wasm install story** documented (kodata / SHA256 / upgrade) — on website repo
+5. **Tag `v0.1.0-beta.1`** (runs full e2e then GoReleaser)
 
-## Code Implementation TODOs
+## After Beta (Prod)
 
-- **Controllers**:
-  - Implement full reconciliation logic in all controllers (beyond just status.SecRuleString generation)
-  - Improve RuleSet reference resolution and finalizers
-  - Add proper error handling, conditions, and events
+| Item | Notes |
+|------|--------|
+| cert-manager webhook cert rotation | Helm self-signed is fine for beta |
+| API field deprecations | `parentRefs` vs `targetRef`, Coraza* vs wasm* |
+| Coverage gates | controllers + references + build |
+| `lockObject` conflict/retry | CRS-scale churn |
+| Grafana dashboard metric names | Align with live series |
+| Cilium real traffic path | Slot smoke only today |
+| Multi-tenant isolation review | ECDS identity, challenge secrets, RBAC |
 
-- **Translator and Parser**:
-  - Complete `internal/translator/translator.go`: Replace string-hacking parser with full ANTLR context traversal
-  - Support full chained rules, complex CRS rules, transformations, etc.
-  - Improve `api/seclang/v1beta1/convert/` package for better crslang compatibility
-  - Add more comprehensive tests for FromSecLangString/ToSecLangString
+## Explicit non-goals for Beta
 
-- **API Types**:
-  - Complete `api/waf/v1beta1/ruleset_types.go` (AllowedRules TODO)
-  - Add validation tags, better OpenAPI descriptions
-  - Consider adding webhook validation for rules
-
-## Testing and Quality
-
-- **Tests**:
-  - Replace all boilerplate TODOs in *_test.go files with actual test logic and assertions
-  - Expand unit tests for translator and convert packages
-  - Implement meaningful e2e tests in test/e2e/ (currently skeleton)
-  - Run full `make test test-e2e`
-
-- **Linting and Formatting**:
-  - Ensure `make lint-fix` passes cleanly
-  - Fix any remaining golangci-lint issues
-
-## Documentation and UX
-
-- **README.md**:
-  - Update Getting Started section (references to deleted test.yaml, old paths)
-  - Add architecture diagram (text or link)
-  - Clarify current limitations (config gen only, no proxy deployment yet)
-  - Add installation badges, quickstart kubectl commands, links to website
-  - Update copyright year if needed
-
-- **Other Docs**:
-  - Add CONTRIBUTING.md, CODE_OF_CONDUCT.md, CHANGELOG.md
-  - Document CRS converter usage with current cmd/crs-converter
-  - Add examples for full RuleSet usage
-  - Update config samples if needed
-  - Fill in all Kubebuilder TODO comments in code and YAMLs
-
-## Features for Future (Post-WIP)
-
-- Implement WAF proxy deployment (WAFInstance, sidecar, Envoy Gateway integration)
-- Full OWASP CRS support with chaining and phases
-- Helm chart
-- Validation webhooks
-- Integration with modsecurity-proxy-wasm (and optional alternate engines)
-- Metrics, observability
-- Proper CRD versioning (v1beta1 -> v1?)
-
-## GitHub Repo Setup
-
-- Repo is now at https://github.com/kubewaf-io/kubewaf
-- Topics: kubernetes, operator, waf, modsecurity, owasp-crs, security
-- Enable issues, discussions, projects (if not already)
-- GitHub Actions and workflows are present
-- Consider adding release workflow with goreleaser later
-- Update any website links once live
-
-The project demonstrates a solid foundation for Kubernetes-native WAF rules management using structured CRDs.
-
-Last updated: 2025-03-24
+- Stable v1 API
+- Full CRS false-positive UX
+- Headlamp UI as operator dependency (plugin ships from a dedicated repo)
+- Equal support for every mesh
