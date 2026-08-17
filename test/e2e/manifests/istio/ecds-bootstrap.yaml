@@ -1,0 +1,440 @@
+# Envoy requires ApiConfigSource (ECDS) clusters to be bootstrap *static* (non-EDS).
+# EnvoyFilter CLUSTER ADD is rejected with:
+#   ApiConfigSource must have a statically defined non-EDS cluster: 'kubewaf_ecds'
+#
+# Usage with Istio Gateway API:
+#   1. Apply this ConfigMap in the Gateway namespace (demo).
+#   2. Annotate Gateway with sidecar.istio.io/bootstrapOverride (see gateway.yaml).
+#   3. Patch the managed Deployment to mount this CM and set
+#      ISTIO_BOOTSTRAP_OVERRIDE=/etc/istio/custom-bootstrap/custom_bootstrap.json
+#      (Gateway API pods are inject=false — the annotation alone is a no-op;
+#      only the sidecar injector would add the volume automatically.)
+#   e2e: ensureIstioGatewayBootstrapMount() performs step 3.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubewaf-ecds-bootstrap
+  namespace: demo
+  labels:
+    e2e: 'true'
+data:
+  custom_bootstrap.json: |
+    {
+      "static_resources": {
+        "clusters": [
+          {
+            "name": "kubewaf_ecds",
+            "type": "STRICT_DNS",
+            "connect_timeout": "2s",
+            "lb_policy": "ROUND_ROBIN",
+            "typed_extension_protocol_options": {
+              "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+                "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+                "explicit_http_config": {
+                  "http2_protocol_options": {}
+                }
+              }
+            },
+            "load_assignment": {
+              "cluster_name": "kubewaf_ecds",
+              "endpoints": [
+                {
+                  "lb_endpoints": [
+                    {
+                      "endpoint": {
+                        "address": {
+                          "socket_address": {
+                            "address": "kubewaf-ecds.kubewaf-system.svc.cluster.local",
+                            "port_value": 18001
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "name": "kubewaf_wasm_code",
+            "type": "STRICT_DNS",
+            "connect_timeout": "2s",
+            "lb_policy": "ROUND_ROBIN",
+            "load_assignment": {
+              "cluster_name": "kubewaf_wasm_code",
+              "endpoints": [
+                {
+                  "lb_endpoints": [
+                    {
+                      "endpoint": {
+                        "address": {
+                          "socket_address": {
+                            "address": "kubewaf-ecds.kubewaf-system.svc.cluster.local",
+                            "port_value": 18002
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "name": "kubewaf_otel",
+            "type": "STRICT_DNS",
+            "connect_timeout": "2s",
+            "lb_policy": "ROUND_ROBIN",
+            "typed_extension_protocol_options": {
+              "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+                "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+                "explicit_http_config": {
+                  "http2_protocol_options": {}
+                }
+              }
+            },
+            "load_assignment": {
+              "cluster_name": "kubewaf_otel",
+              "endpoints": [
+                {
+                  "lb_endpoints": [
+                    {
+                      "endpoint": {
+                        "address": {
+                          "socket_address": {
+                            "address": "kubewaf-otel-collector.kubewaf-system.svc.cluster.local",
+                            "port_value": 4317
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "stats_sinks": [
+        {
+          "name": "envoy.stat_sinks.open_telemetry",
+          "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig",
+            "grpc_service": {
+              "envoy_grpc": {
+                "cluster_name": "kubewaf_otel"
+              }
+            },
+            "emit_tags_as_attributes": true,
+            "use_tag_extracted_name": true,
+            "prefix": "",
+            "custom_metric_conversions": {
+              "matcher_list": {
+                "matchers": [
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.tx.total"
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.tx.total"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.tx.allowed"
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.tx.allowed"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.tx.interruptions_ruleid="
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.tx.interruptions_by_rule"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.tx.interruptions"
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.tx.interruptions"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.rule.matches_disruptive"
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.rule.matches_disruptive"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.rule.matches_ruleid="
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.rule.matches_by_rule"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.rule.matches_tag="
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.rule.matches_by_tag"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.rule.matches_phase="
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.rule.matches_by_phase"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.rule.matches"
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.rule.matches"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "kubewaf_waf.memory.wasm_heap_bytes"
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "convert",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction",
+                          "metric_name": "kubewaf.waf.memory.wasm_heap_bytes"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "predicate": {
+                      "single_predicate": {
+                        "input": {
+                          "name": "envoy.matching.inputs.stat_full_name",
+                          "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput"
+                          }
+                        },
+                        "value_match": {
+                          "contains": "modsecurity_proxy_wasm"
+                        }
+                      }
+                    },
+                    "on_match": {
+                      "action": {
+                        "name": "drop",
+                        "typed_config": {
+                          "@type": "type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.DropAction"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "stats_config": {
+        "stats_tags": [
+          {
+            "tag_name": "tag",
+            "regex": "(_tag=([0-9a-zA-Z.-]+))"
+          },
+          {
+            "tag_name": "phase",
+            "regex": "(_phase=(http_request_headers|http_request_body|http_response_headers|http_response_body|http_logging|unknown))"
+          },
+          {
+            "tag_name": "rule_id",
+            "regex": "(_ruleid=([0-9]+))"
+          },
+          {
+            "tag_name": "severity",
+            "regex": "(_severity=([0-9]+))"
+          },
+          {
+            "tag_name": "waf_namespace",
+            "regex": "(_waf_namespace=([0-9A-Za-z.-]+))"
+          },
+          {
+            "tag_name": "waf_name",
+            "regex": "(_waf_name=([0-9A-Za-z.-]+))"
+          },
+          {
+            "tag_name": "engine",
+            "regex": "(_engine=([0-9A-Za-z.-]+))"
+          },
+          {
+            "tag_name": "owner",
+            "regex": "(_owner=([0-9a-z.:_-]+?))(?:_|$)"
+          }
+        ]
+      }
+    }

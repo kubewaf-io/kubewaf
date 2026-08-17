@@ -21,7 +21,8 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -29,8 +30,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/config"
 	"github.com/kubewaf-io/kubewaf/internal/dataplane/ecds"
+	"github.com/kubewaf-io/kubewaf/internal/dataplane/xdsutil"
 )
 
 var envoyFilterGVK = schema.GroupVersionKind{
@@ -42,6 +45,11 @@ var envoyFilterGVK = schema.GroupVersionKind{
 // ResourceName returns the EnvoyFilter name for a WAF.
 func ResourceName(wafName string) string {
 	return "kubewaf-" + wafName
+}
+
+// AccessLogResourceName is the singleton HCM OTel access-log EnvoyFilter (one per namespace).
+func AccessLogResourceName() string {
+	return "kubewaf-otel-access-log"
 }
 
 // EnsureEnvoyFilter creates or updates an EnvoyFilter that:
@@ -81,28 +89,108 @@ func EnsureEnvoyFilter(ctx context.Context, c client.Client, owner client.Object
 		labels["kubewaf.io/waf"] = p.Name
 		ef.SetLabels(labels)
 
-		spec, err := buildSpec(p)
-		if err != nil {
-			return err
+		return unstructured.SetNestedMap(ef.Object, buildSpec(p), "spec")
+	})
+	if err != nil {
+		return err
+	}
+	if p.TelemetryManaged {
+		return EnsureOTelAccessLogEnvoyFilter(ctx, c, p)
+	}
+	return MaybeDeleteOTelAccessLogEnvoyFilter(ctx, c, p.Namespace, p.Name)
+}
+
+// EnsureOTelAccessLogEnvoyFilter writes one MERGE access logger per namespace.
+// The singleton omits workloadSelector and match.context so a later WAF cannot
+// retarget it; the metadata filter is fail-closed.
+func EnsureOTelAccessLogEnvoyFilter(ctx context.Context, c client.Client, p *config.PortableConfig) error {
+	if p == nil || !p.TelemetryManaged {
+		return nil
+	}
+	ef := &unstructured.Unstructured{}
+	ef.SetGroupVersionKind(envoyFilterGVK)
+	ef.SetNamespace(p.Namespace)
+	ef.SetName(AccessLogResourceName())
+	_, err := controllerutil.CreateOrUpdate(ctx, c, ef, func() error {
+		labels := ef.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
 		}
-		return unstructured.SetNestedMap(ef.Object, spec, "spec")
+		labels["app.kubernetes.io/managed-by"] = "kubewaf"
+		labels["kubewaf.io/component"] = "otel-access-log"
+		ef.SetLabels(labels)
+		unstructured.RemoveNestedField(ef.Object, "spec", "workloadSelector")
+		return unstructured.SetNestedMap(ef.Object, buildAccessLogSpec(), "spec")
 	})
 	return err
 }
 
 func boolPtr(b bool) *bool { return &b }
 
-// DeleteEnvoyFilter removes the EnvoyFilter for a WAF if present.
+// DeleteEnvoyFilter removes the per-WAF EnvoyFilter. The namespace singleton
+// is removed only when no other Istio-capable Managed WAF remains.
 func DeleteEnvoyFilter(ctx context.Context, c client.Client, namespace, wafName string) error {
 	ef := &unstructured.Unstructured{}
 	ef.SetGroupVersionKind(envoyFilterGVK)
 	ef.SetNamespace(namespace)
 	ef.SetName(ResourceName(wafName))
 	err := c.Delete(ctx, ef)
-	if errors.IsNotFound(err) {
+	if err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+		return err
+	}
+	return MaybeDeleteOTelAccessLogEnvoyFilter(ctx, c, namespace, wafName)
+}
+
+// MaybeDeleteOTelAccessLogEnvoyFilter deletes kubewaf-otel-access-log when
+// exceptWAF is the last Managed Istio/Auto WAF in the namespace.
+func MaybeDeleteOTelAccessLogEnvoyFilter(ctx context.Context, c client.Client, namespace, exceptWAF string) error {
+	list := &wafv1beta1.WAFList{}
+	if err := c.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		if meta.IsNoMatchError(err) {
+			return deleteAccessLogEnvoyFilter(ctx, c, namespace)
+		}
+		return err
+	}
+	for i := range list.Items {
+		w := &list.Items[i]
+		if w.Name == exceptWAF {
+			continue
+		}
+		if wafNeedsIstioAccessLog(w) {
+			return nil
+		}
+	}
+	return deleteAccessLogEnvoyFilter(ctx, c, namespace)
+}
+
+func deleteAccessLogEnvoyFilter(ctx context.Context, c client.Client, namespace string) error {
+	ef := &unstructured.Unstructured{}
+	ef.SetGroupVersionKind(envoyFilterGVK)
+	ef.SetNamespace(namespace)
+	ef.SetName(AccessLogResourceName())
+	err := c.Delete(ctx, ef)
+	if err == nil || apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 		return nil
 	}
 	return err
+}
+
+func wafNeedsIstioAccessLog(w *wafv1beta1.WAF) bool {
+	if w == nil || !w.DeletionTimestamp.IsZero() {
+		return false
+	}
+	if w.Spec.Telemetry == nil || w.Spec.Telemetry.Mode != wafv1beta1.TelemetryModeManaged {
+		return false
+	}
+	if w.Spec.Provider == nil {
+		return true
+	}
+	switch w.Spec.Provider.Type {
+	case "", wafv1beta1.ProviderAuto, wafv1beta1.ProviderIstio:
+		return true
+	default:
+		return false
+	}
 }
 
 // GetNamespacedName returns the EnvoyFilter key for status reporting.
@@ -110,7 +198,7 @@ func GetNamespacedName(namespace, wafName string) types.NamespacedName {
 	return types.NamespacedName{Namespace: namespace, Name: ResourceName(wafName)}
 }
 
-func buildSpec(p *config.PortableConfig) (map[string]any, error) {
+func buildSpec(p *config.PortableConfig) map[string]any {
 	selector := p.IstioWorkloadSelector
 	if len(selector) == 0 {
 		selector = map[string]string{"istio": "ingressgateway"}
@@ -139,12 +227,24 @@ func buildSpec(p *config.PortableConfig) (map[string]any, error) {
 			},
 		},
 	}
+	if p.OTelHost != "" {
+		patches = append(patches, map[string]any{
+			"applyTo": "CLUSTER",
+			"match": map[string]any{
+				"context": ctxName,
+			},
+			"patch": map[string]any{
+				"operation": "ADD",
+				"value":     xdsutil.OTelClusterMap(p.OTelHost, p.OTelPort),
+			},
+		})
+	}
 
 	// HTTP filters: challenge then WAF (INSERT_BEFORE router; later patches sit closer to router).
 	// Insert WAF first, then challenge, so final order is challenge → WAF → router.
 	filterNames := []string{p.ExtensionName}
 	if len(p.Filters) > 0 {
-		filterNames = nil
+		filterNames = make([]string, 0, len(p.Filters))
 		for _, f := range p.Filters {
 			filterNames = append(filterNames, f.ExtensionName)
 		}
@@ -205,7 +305,39 @@ func buildSpec(p *config.PortableConfig) (map[string]any, error) {
 		"configPatches": patches,
 		// Priority so kubeWAF filters apply in a predictable order when multiple EnvoyFilters exist.
 		"priority": int64(10),
-	}, nil
+	}
+}
+
+func buildAccessLogSpec() map[string]any {
+	return map[string]any{
+		"priority": int64(10),
+		"configPatches": []any{
+			map[string]any{
+				"applyTo": "NETWORK_FILTER",
+				"match": map[string]any{
+					"listener": map[string]any{
+						"filterChain": map[string]any{
+							"filter": map[string]any{
+								"name": "envoy.filters.network.http_connection_manager",
+							},
+						},
+					},
+				},
+				"patch": map[string]any{
+					"operation": "MERGE",
+					"value": map[string]any{
+						"name": "envoy.filters.network.http_connection_manager",
+						"typed_config": map[string]any{
+							"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+							"access_log": []any{
+								xdsutil.OTelAccessLogMap(config.DefaultOTelCluster),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 func ecdsClusterValue(p *config.PortableConfig) map[string]any {

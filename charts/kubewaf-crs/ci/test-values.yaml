@@ -1,0 +1,31 @@
+# Chart-testing / CI values: smaller install for kind.
+# Full CRS SecRules are large; CI can still lint with defaults.
+# Optional overrides when installing without applying all CRS files:
+# crs:
+#   includeFiles:
+#     - REQUEST-901-INITIALIZATION.conf
+#     - REQUEST-913-SCANNER-DETECTION.conf
+
+profiles:
+  core:
+    enabled: true
+  api:
+    enabled: true
+  backend:
+    enabled: false
+  frontend:
+    enabled: false
+  golang:
+    enabled: false
+  php:
+    enabled: false
+  java:
+    enabled: false
+  dotnet:
+    enabled: false
+
+extras:
+  enabled: true
+
+exampleWAF:
+  enabled: false

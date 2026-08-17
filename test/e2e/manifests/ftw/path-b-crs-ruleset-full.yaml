@@ -1,0 +1,20 @@
+# Path B full CRS RuleSet (all structured samples). Use for E2E_FTW_PATH_B_FULL=true.
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ftw-crs-path-b
+  namespace: demo
+  labels:
+    e2e: "true"
+    ftw: "true"
+    waf.kubewaf.io/path: "B"
+    waf.kubewaf.io/crs-scope: full
+spec:
+  ruleRefs:
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app.kubernetes.io/part-of: coreruleset
+          coreruleset/version: "4.27.0"

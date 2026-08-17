@@ -1,0 +1,96 @@
+# Default values for kubewaf-crs.
+# This chart deploys converted OWASP CRS SecRules and compose RuleSets for Path B
+# (WAF.spec.crsEnable=false + ruleRefs → RuleSet).
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Common labels applied to every resource created by this chart.
+commonLabels: {}
+
+# ---------------------------------------------------------------------------
+# CRS SecRules (structured one-CR-per-rule samples under files/crs/)
+# ---------------------------------------------------------------------------
+crs:
+  # -- Install SecRule CRs from files/crs/*.yaml
+  installSecRules: true
+  # -- Install stock CRS PhraseLists (@pmFromFile data pack) from files/phraselists/
+  # Path B inject uses basename discovery from SecRules (no phraseListRefs on CRS RuleSets).
+  installPhraseLists: true
+  # -- Label value coreruleset/version on packaged rules (must match RuleSet selectors)
+  version: "4.27.0"
+  # -- Only install SecRules whose coreruleset/file is listed. Empty = all files.
+  # Example: [REQUEST-901-INITIALIZATION.conf, REQUEST-913-SCANNER-DETECTION.conf]
+  includeFiles: []
+  # -- Extra labels on every CRS SecRule (merged onto existing labels)
+  labels: {}
+
+# ---------------------------------------------------------------------------
+# Optimized RuleSet profiles (compose label selectors over CRS SecRules)
+# ---------------------------------------------------------------------------
+profiles:
+  # Always-on foundation (init, protocol, scanners, blocking, correlation)
+  core:
+    enabled: true
+  # JSON/REST APIs — injection + protocol, no XSS pack
+  api:
+    enabled: true
+  # Language-agnostic backends
+  backend:
+    enabled: true
+  # SPA / BFF / HTML UI
+  frontend:
+    enabled: false
+  # Go services
+  golang:
+    enabled: false
+  # PHP / WordPress / Laravel
+  php:
+    enabled: false
+  # Java / Spring
+  java:
+    enabled: false
+  # .NET / IIS
+  dotnet:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Additional baseline RuleSets (kubeWAF extras inspired by CRS practices)
+# High ID range (1_000_000+) to avoid colliding with CRS 9xxxxx rules.
+# ---------------------------------------------------------------------------
+extras:
+  # -- Master switch for all extras
+  enabled: true
+  # Sensitive path / dotfile probes (.env, .git, backups) — deny
+  sensitivePaths:
+    enabled: true
+  # Block HTTP TRACE / TRACK
+  methodBlock:
+    enabled: true
+  # Log4Shell-style JNDI tokens (quick virtual patch; CRS RCE covers more)
+  log4shell:
+    enabled: true
+  # Common CMS/admin scanners paths (wp-admin xmlrpc, phpmyadmin) — anomaly score
+  cmsNoise:
+    enabled: true
+  # Aggregate RuleSet name that includes all enabled extras
+  rulesetName: ruleset-extras-baseline
+
+# Optional example WAF is disabled by default (needs a real Gateway/HTTPRoute).
+exampleWAF:
+  enabled: false
+  name: waf-crs-api-example
+  # Path B: do not use engine Include @owasp_crs
+  crsEnable: false
+  # Which RuleSet profile to attach (must be enabled under profiles.*)
+  profile: api
+  # Also attach extras baseline RuleSet when extras.enabled
+  attachExtras: true
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: api
+  crs:
+    paranoiaLevel: 1
+    inboundAnomalyThreshold: 5
+    outboundAnomalyThreshold: 4

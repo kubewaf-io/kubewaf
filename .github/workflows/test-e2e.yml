@@ -1,13 +1,26 @@
-name: E2E Tests
+name: E2E Envoy Gateway
+
+# Fast gate: Envoy Gateway smoke (WAF Ready + traffic).
+# - PR + push to main: this workflow only
+# - Full provider/FTW matrix: test-e2e-release.yml on PRs and before release (not on main)
+
+permissions:
+  contents: read
 
 on:
   push:
+    branches: [main, master]
   pull_request:
 
+concurrency:
+  group: e2e-eg-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test-e2e:
-    name: Run on Ubuntu
+  e2e-envoy-gateway:
+    name: Envoy Gateway e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Clone the code
         uses: actions/checkout@v6
@@ -17,24 +30,47 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install the latest version of kind
+      - name: Install kind
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-$(go env GOARCH)"
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
-
-      - name: Verify kind installation
-        run: kind version
+          kind version
 
       - name: Install Helm
         uses: azure/setup-helm@v4
         with:
           version: v3.15.3
 
-      - name: Verify helm installation
-        run: helm version
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
 
-      - name: Running Test e2e
+      - name: Unit tests (quick sanity before e2e)
         run: |
           go mod tidy
-          make test-e2e
+          go test ./internal/webhook/ ./internal/dataplane/config/ -count=1
+
+      - name: Envoy Gateway e2e
+        env:
+          E2E_PROVIDER: envoy-gateway
+          # No full CRS go-ftw on PR gate (too slow); smoke only.
+          E2E_FTW: "false"
+          E2E_FTW_PATH_B: "false"
+        run: |
+          go mod tidy
+          make test-e2e-envoy-gateway
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          set +e
+          echo "=== pods ==="
+          kubectl get pods -A
+          echo "=== waf ==="
+          kubectl get waf -A -o wide 2>/dev/null
+          echo "=== operator logs ==="
+          kubectl logs -n kubewaf-system -l app.kubernetes.io/instance=kubewaf --tail=200 2>/dev/null
+          echo "=== validating webhooks ==="
+          kubectl get validatingwebhookconfiguration 2>/dev/null

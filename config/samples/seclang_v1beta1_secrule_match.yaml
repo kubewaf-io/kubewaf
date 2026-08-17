@@ -1,0 +1,52 @@
+# Canonical one-rule-per-CR form: metadata + match[] + actions + order/markerAfter.
+# Chain: match[0] AND match[1] (converter injects flow chain on parent).
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: custom-sqli-chain
+  namespace: default
+  labels:
+    app: demo
+spec:
+  order: 110000
+  # Emitted after this rule — usable as skipAfter target from earlier rules.
+  markerAfter: END-CUSTOM-SQLI
+  metadata:
+    # Optional: omit id to auto-allocate from SecRuleIDPool/cluster
+    id: 110000
+    phase: "2"
+    message: "Custom SQLi chain (detect + confirm)"
+    severity: CRITICAL
+    tags:
+      - attack-sqli
+      - custom
+  match:
+    # Parent link
+    - collections:
+        - name: ARGS
+        - name: ARGS_NAMES
+      operator:
+        name: rx
+        value: (?i)(?:union\s+select|select\s+.+\s+from)
+      transformations:
+        - urlDecodeUni
+        - lowercase
+      actions:
+        non-disruptive:
+          - nonDisruptiveActionType: capture
+    # Chain continuation (AND)
+    - collections:
+        - name: TX
+          arguments:
+            - "0"
+      operator:
+        name: rx
+        value: .+
+  actions:
+    disruptive:
+      disruptiveActionType: pass
+    non-disruptive:
+      - nonDisruptiveActionType: setvar
+        value: TX.anomaly_score_pl1=+5
+      - nonDisruptiveActionType: log
+      - nonDisruptiveActionType: auditlog

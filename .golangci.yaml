@@ -22,6 +22,13 @@ linters:
     - unparam
     - unused
   settings:
+    goconst:
+      # JSON/Envoy map keys and kind strings are intentionally repeated.
+      min-len: 5
+      min-occurrences: 5
+      ignore-tests: true
+    gocyclo:
+      min-complexity: 30
     revive:
       rules:
         - name: comment-spacings
@@ -36,10 +43,32 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # Envoy/Cilium unstructured maps reuse JSON field keys by design.
+      - linters:
+          - goconst
+        path: internal/dataplane/slot/
+      # Kind/name strings in metrics and reference helpers are intentional.
+      - linters:
+          - goconst
+        path: internal/metrics/
+      - linters:
+          - goconst
+        path: internal/references2/
+      - linters:
+          - goconst
+        path: internal/dataplane/config/
+      # CRS tuning unit test is intentionally exhaustive.
+      - linters:
+          - gocyclo
+        path: _test\.go$
     paths:
       - third_party$
       - builtin$
       - examples$
+      - headlamp-plugin
+      - node_modules
+      - website2
+      - ^engines/
 formatters:
   enable:
     - gofmt
@@ -50,3 +79,7 @@ formatters:
       - third_party$
       - builtin$
       - examples$
+      - headlamp-plugin
+      - node_modules
+      - website2
+      - ^engines/

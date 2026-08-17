@@ -1,0 +1,68 @@
+# Path B RuleSet for go-ftw smoke (default E2E_FTW_INCLUDE=^913).
+# Loads init + scanner detection + blocking/correlation — not the full 626-rule CRS
+# (full suite: use path-b-crs-ruleset-full.yaml / E2E_FTW_PATH_B_FULL=true).
+#
+# SecRules must be applied from config/samples/crs/ with labels:
+#   app.kubernetes.io/part-of=coreruleset, coreruleset/version=4.27.0
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: ftw-crs-path-b
+  namespace: demo
+  labels:
+    e2e: "true"
+    ftw: "true"
+    waf.kubewaf.io/path: "B"
+spec:
+  ruleRefs:
+    # Initialization / thresholds / PL gating
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app.kubernetes.io/part-of: coreruleset
+          coreruleset/version: "4.27.0"
+          coreruleset/file: REQUEST-901-INITIALIZATION.conf
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app.kubernetes.io/part-of: coreruleset
+          coreruleset/version: "4.27.0"
+          coreruleset/file: REQUEST-905-COMMON-EXCEPTIONS.conf
+    # Scanner detection (FTW ^913)
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app.kubernetes.io/part-of: coreruleset
+          coreruleset/version: "4.27.0"
+          coreruleset/file: REQUEST-913-SCANNER-DETECTION.conf
+    # Anomaly blocking + correlation (needed for scoring mode)
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app.kubernetes.io/part-of: coreruleset
+          coreruleset/version: "4.27.0"
+          coreruleset/file: REQUEST-949-BLOCKING-EVALUATION.conf
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app.kubernetes.io/part-of: coreruleset
+          coreruleset/version: "4.27.0"
+          coreruleset/file: RESPONSE-959-BLOCKING-EVALUATION.conf
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app.kubernetes.io/part-of: coreruleset
+          coreruleset/version: "4.27.0"
+          coreruleset/file: RESPONSE-980-CORRELATION.conf

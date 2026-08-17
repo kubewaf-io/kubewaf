@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.2
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: secrules.seclang.kubewaf.io
 spec:
   group: seclang.kubewaf.io
@@ -23,12 +23,27 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
+    - jsonPath: .status.ruleId
+      name: RuleID
+      type: integer
+    - jsonPath: .status.idSource
+      name: IDSource
+      type: string
+    - jsonPath: .spec.order
+      name: Order
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1beta1
     schema:
       openAPIV3Schema:
         description: |-
           SecRule is the Schema for the secrules API.
-          SecRule represents a single ModSecurity/Coraza security rule in Kubernetes.
+          Prefer one logical ModSecurity SecRule per CR (spec.metadata + spec.match[]).
+
+          metadata.id may be omitted; the controller then allocates from SecRuleIDPool and
+          mirrors tags onto labels (seclang.kubewaf.io/tag.*).
         properties:
           apiVersion:
             description: |-
@@ -50,13 +65,629 @@ spec:
           spec:
             description: spec defines the desired state of SecRule.
             properties:
-              secLangRules:
-                description: SecRules contains the list of SecLang rules that define
-                  the WAF behavior.
+              actions:
+                description: Actions specify what to do when the rule (or final chain
+                  link) matches.
+                properties:
+                  data:
+                    description: |-
+                      DataActionTypes are not executed themselves; they provide parameters or values
+                      that other actions use.
+
+                      The only commonly seen one is status (e.g., status:403 or status:429),
+                      which specifies the HTTP response code for blocking/redirect actions.
+                    items:
+                      properties:
+                        dataActionType:
+                          description: |-
+                            DataActionType specifies actions that deal with data manipulation, response control,
+                            or namespace registration — typically used in very specific contexts.
+
+                            These are less common than disruptive or non-disruptive actions.
+
+                            ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
+                            Coraza:     https://coraza.io/docs/seclang/actions
+
+                            Allowed values:
+
+                              - status  : sets the HTTP response status code when a disruptive action is triggered
+                              - xlmns   : registers an XML namespace prefix for XPath expressions
+                          enum:
+                          - status
+                          - xmlns
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - dataActionType
+                      type: object
+                    type: array
+                  disruptive:
+                    description: |-
+                      DisruptiveAction specifies an action that interrupts, blocks, allows, or otherwise alters
+                      the normal flow of the HTTP transaction when a rule matches.
+
+                      These are the core "decision" actions in ModSecurity/Coraza rulesets.
+                      Only one disruptive action is allowed per rule/chain (the last one specified wins).
+
+                      omitempty: chain children must omit this field entirely. Emitting
+                      `disruptive: null` fails OpenAPI validation (type object, not nullable).
+                    properties:
+                      disruptiveActionType:
+                        description: |-
+                          DisruptiveActionType specifies an action that interrupts, blocks, allows, or otherwise alters
+                          the normal flow of the HTTP transaction when a rule matches.
+
+                          These are the core "decision" actions in ModSecurity/Coraza rulesets.
+                          Only one disruptive action is allowed per rule/chain (the last one specified wins).
+
+                          ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
+                          Coraza:     https://coraza.io/docs/seclang/actions
+
+                          Allowed values:
+
+                            - allow     : explicitly allows the transaction (whitelisting / bypass)
+                            - block     : applies the default blocking behavior (SecDefaultAction, usually deny/403)
+                            - deny      : blocks with an error response (e.g. 403)
+                            - drop      : silently drops the TCP connection (no response sent)
+                            - pass      : continues processing without blocking (match logged/scored but no interrupt)
+                            - pause     : delays processing for milliseconds (throttling/testing, rarely used)
+                            - proxy     : proxies/redirects request to another backend (limited support)
+                            - redirect  : issues an HTTP redirect to a new URL
+                        enum:
+                        - allow
+                        - block
+                        - deny
+                        - drop
+                        - pass
+                        - pause
+                        - proxy
+                        - redirect
+                        type: string
+                      value:
+                        type: string
+                    required:
+                    - disruptiveActionType
+                    type: object
+                  flow:
+                    description: |-
+                      FlowActionTypes control how rule evaluation proceeds within the current processing phase.
+
+                      The most frequently used is chain, which links multiple conditions together
+                      (creating AND logic across rules). In chained rules, only the first rule should
+                      contain a disruptive action.
+
+                      Other examples: skip (skip the next N rules), skipAfter (jump to a marker).
+                    items:
+                      properties:
+                        flowActionType:
+                          description: |-
+                            FlowActionType specifies a flow-control (rule chaining / skipping) action as defined in ModSecurity / Coraza.
+
+                            These actions influence rule evaluation order and chaining rather than directly blocking or logging.
+
+                            ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
+                            Coraza:     https://coraza.io/docs/seclang/actions
+
+                            Allowed values:
+
+                              - chain     : links this rule to the next one(s), creating AND logic (only first rule in chain can be disruptive)
+                              - skip      : skips the next N rules in the current phase on match
+                              - skipAfter : jumps forward to after a SecMarker with the given label on match
+                          enum:
+                          - chain
+                          - skip
+                          - skipAfter
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - flowActionType
+                      - value
+                      type: object
+                    type: array
+                  non-disruptive:
+                    description: |-
+                      NonDisruptiveActionTypes are side-effect actions that run whenever a rule matches,
+                      without ever changing the rule evaluation flow or transaction outcome.
+
+                      These actions always execute — including inside chained rules and in detection-only mode.
+                      They handle logging, scoring, tagging, variable updates, transformations, metadata,
+                      and other utility tasks.
+
+                      Most real-world rules contain many of these (often the majority of the action list).
+                      Common examples: msg, tag, severity, setvar, capture, log / nolog, t:*, ctl, initcol, exec.
+                    items:
+                      properties:
+                        nonDisruptiveActionType:
+                          description: |-
+                            NonDisruptiveActionType specifies a non-disruptive action as defined in ModSecurity / Coraza.
+
+                            ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
+                            Coraza:     https://coraza.io/docs/seclang/actions
+
+                            Allowed values:
+
+                              - append          : appends a value to a collection variable (TX, SESSION, IP, ...)
+                              - auditlog        : forces logging of the rule match to the audit log
+                              - capture         : stores regex capture groups into TX.0 … TX.9
+                              - ctl             : runtime control (ruleEngine, auditEngine, requestBodyAccess, …)
+                              - deprecatevar    : marks a persistent variable for removal at end of phase
+                              - exec            : executes an external script/binary
+                              - expirevar       : sets expiration time on a persistent collection variable
+                              - initcol         : initializes a persistent collection (IP, SESSION, …)
+                              - log             : enables normal (non-audit) logging
+                              - logdata         : adds custom data to the audit log entry
+                              - multimatch      : tests every occurrence of a variable (instead of stopping at first match)
+                              - noauditlog      : prevents this rule from being written to the audit log
+                              - nolog           : prevents normal logging of this rule
+                              - sanitiseArg / sanitiseMatched / sanitiseMatchedBytes / sanitiseRequestHeader / sanitiseResponseHeader : various sanitization actions
+                              - setenv          : sets an environment variable
+                              - setrsc          : sets the RESOURCE collection identifier
+                              - setsid          : sets the session identifier
+                              - setuid          : sets the user identifier
+                              - setvar          : creates, modifies, increments or deletes variables
+                          enum:
+                          - append
+                          - auditlog
+                          - capture
+                          - ctl
+                          - deprecatevar
+                          - exec
+                          - expirevar
+                          - initcol
+                          - log
+                          - logdata
+                          - multiMatch
+                          - noauditlog
+                          - nolog
+                          - sanitiseArg
+                          - sanitiseMatched
+                          - sanitiseMatchedBytes
+                          - sanitiseRequestHeader
+                          - sanitiseResponseHeader
+                          - setenv
+                          - setrsc
+                          - setsid
+                          - setuid
+                          - setvar
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - nonDisruptiveActionType
+                      type: object
+                    type: array
+                type: object
+              markerAfter:
+                description: |-
+                  MarkerAfter emits `SecMarker <name>` after this rule's SecLang output.
+                  Use as the target of skipAfter flow actions on earlier rules.
+                  Preferred over legacy secLangRules[].secMarker.
+                type: string
+              match:
+                description: |-
+                  Match is the condition chain for the rule.
+                    - length 1 → single SecRule
+                    - length N → ModSecurity chain (AND across N SecRule links)
+                  Each entry is one chain link (variables/collections + operator + transforms).
+                  Intermediate links may set Match[i].Actions; the final link falls back to
+                  Spec.Actions when its Actions field is empty.
                 items:
                   description: |-
-                    SecLangSecRule represents a single ModSecurity/Coraza SecRule in structured form.
-                    It consists of metadata, conditions (variables + operator), and actions.
+                    Match is one link in a SecRule condition chain (AND).
+                    Index 0 is the parent SecRule; further entries are chain continuations.
+                  properties:
+                    actions:
+                      description: |-
+                        Actions for this chain link only (optional).
+                        Parent/intermediate links often set capture/setvar here; the last link
+                        uses Spec.Actions when this is nil.
+                      properties:
+                        data:
+                          description: |-
+                            DataActionTypes are not executed themselves; they provide parameters or values
+                            that other actions use.
+
+                            The only commonly seen one is status (e.g., status:403 or status:429),
+                            which specifies the HTTP response code for blocking/redirect actions.
+                          items:
+                            properties:
+                              dataActionType:
+                                description: |-
+                                  DataActionType specifies actions that deal with data manipulation, response control,
+                                  or namespace registration — typically used in very specific contexts.
+
+                                  These are less common than disruptive or non-disruptive actions.
+
+                                  ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
+                                  Coraza:     https://coraza.io/docs/seclang/actions
+
+                                  Allowed values:
+
+                                    - status  : sets the HTTP response status code when a disruptive action is triggered
+                                    - xlmns   : registers an XML namespace prefix for XPath expressions
+                                enum:
+                                - status
+                                - xmlns
+                                type: string
+                              value:
+                                type: string
+                            required:
+                            - dataActionType
+                            type: object
+                          type: array
+                        disruptive:
+                          description: |-
+                            DisruptiveAction specifies an action that interrupts, blocks, allows, or otherwise alters
+                            the normal flow of the HTTP transaction when a rule matches.
+
+                            These are the core "decision" actions in ModSecurity/Coraza rulesets.
+                            Only one disruptive action is allowed per rule/chain (the last one specified wins).
+
+                            omitempty: chain children must omit this field entirely. Emitting
+                            `disruptive: null` fails OpenAPI validation (type object, not nullable).
+                          properties:
+                            disruptiveActionType:
+                              description: |-
+                                DisruptiveActionType specifies an action that interrupts, blocks, allows, or otherwise alters
+                                the normal flow of the HTTP transaction when a rule matches.
+
+                                These are the core "decision" actions in ModSecurity/Coraza rulesets.
+                                Only one disruptive action is allowed per rule/chain (the last one specified wins).
+
+                                ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
+                                Coraza:     https://coraza.io/docs/seclang/actions
+
+                                Allowed values:
+
+                                  - allow     : explicitly allows the transaction (whitelisting / bypass)
+                                  - block     : applies the default blocking behavior (SecDefaultAction, usually deny/403)
+                                  - deny      : blocks with an error response (e.g. 403)
+                                  - drop      : silently drops the TCP connection (no response sent)
+                                  - pass      : continues processing without blocking (match logged/scored but no interrupt)
+                                  - pause     : delays processing for milliseconds (throttling/testing, rarely used)
+                                  - proxy     : proxies/redirects request to another backend (limited support)
+                                  - redirect  : issues an HTTP redirect to a new URL
+                              enum:
+                              - allow
+                              - block
+                              - deny
+                              - drop
+                              - pass
+                              - pause
+                              - proxy
+                              - redirect
+                              type: string
+                            value:
+                              type: string
+                          required:
+                          - disruptiveActionType
+                          type: object
+                        flow:
+                          description: |-
+                            FlowActionTypes control how rule evaluation proceeds within the current processing phase.
+
+                            The most frequently used is chain, which links multiple conditions together
+                            (creating AND logic across rules). In chained rules, only the first rule should
+                            contain a disruptive action.
+
+                            Other examples: skip (skip the next N rules), skipAfter (jump to a marker).
+                          items:
+                            properties:
+                              flowActionType:
+                                description: |-
+                                  FlowActionType specifies a flow-control (rule chaining / skipping) action as defined in ModSecurity / Coraza.
+
+                                  These actions influence rule evaluation order and chaining rather than directly blocking or logging.
+
+                                  ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
+                                  Coraza:     https://coraza.io/docs/seclang/actions
+
+                                  Allowed values:
+
+                                    - chain     : links this rule to the next one(s), creating AND logic (only first rule in chain can be disruptive)
+                                    - skip      : skips the next N rules in the current phase on match
+                                    - skipAfter : jumps forward to after a SecMarker with the given label on match
+                                enum:
+                                - chain
+                                - skip
+                                - skipAfter
+                                type: string
+                              value:
+                                type: string
+                            required:
+                            - flowActionType
+                            - value
+                            type: object
+                          type: array
+                        non-disruptive:
+                          description: |-
+                            NonDisruptiveActionTypes are side-effect actions that run whenever a rule matches,
+                            without ever changing the rule evaluation flow or transaction outcome.
+
+                            These actions always execute — including inside chained rules and in detection-only mode.
+                            They handle logging, scoring, tagging, variable updates, transformations, metadata,
+                            and other utility tasks.
+
+                            Most real-world rules contain many of these (often the majority of the action list).
+                            Common examples: msg, tag, severity, setvar, capture, log / nolog, t:*, ctl, initcol, exec.
+                          items:
+                            properties:
+                              nonDisruptiveActionType:
+                                description: |-
+                                  NonDisruptiveActionType specifies a non-disruptive action as defined in ModSecurity / Coraza.
+
+                                  ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
+                                  Coraza:     https://coraza.io/docs/seclang/actions
+
+                                  Allowed values:
+
+                                    - append          : appends a value to a collection variable (TX, SESSION, IP, ...)
+                                    - auditlog        : forces logging of the rule match to the audit log
+                                    - capture         : stores regex capture groups into TX.0 … TX.9
+                                    - ctl             : runtime control (ruleEngine, auditEngine, requestBodyAccess, …)
+                                    - deprecatevar    : marks a persistent variable for removal at end of phase
+                                    - exec            : executes an external script/binary
+                                    - expirevar       : sets expiration time on a persistent collection variable
+                                    - initcol         : initializes a persistent collection (IP, SESSION, …)
+                                    - log             : enables normal (non-audit) logging
+                                    - logdata         : adds custom data to the audit log entry
+                                    - multimatch      : tests every occurrence of a variable (instead of stopping at first match)
+                                    - noauditlog      : prevents this rule from being written to the audit log
+                                    - nolog           : prevents normal logging of this rule
+                                    - sanitiseArg / sanitiseMatched / sanitiseMatchedBytes / sanitiseRequestHeader / sanitiseResponseHeader : various sanitization actions
+                                    - setenv          : sets an environment variable
+                                    - setrsc          : sets the RESOURCE collection identifier
+                                    - setsid          : sets the session identifier
+                                    - setuid          : sets the user identifier
+                                    - setvar          : creates, modifies, increments or deletes variables
+                                enum:
+                                - append
+                                - auditlog
+                                - capture
+                                - ctl
+                                - deprecatevar
+                                - exec
+                                - expirevar
+                                - initcol
+                                - log
+                                - logdata
+                                - multiMatch
+                                - noauditlog
+                                - nolog
+                                - sanitiseArg
+                                - sanitiseMatched
+                                - sanitiseMatchedBytes
+                                - sanitiseRequestHeader
+                                - sanitiseResponseHeader
+                                - setenv
+                                - setrsc
+                                - setsid
+                                - setuid
+                                - setvar
+                                type: string
+                              value:
+                                type: string
+                            required:
+                            - nonDisruptiveActionType
+                            type: object
+                          type: array
+                      type: object
+                    always-match:
+                      description: AlwaysMatch is used for SecAction-style unconditional
+                        rules.
+                      type: boolean
+                    collections:
+                      description: Collections to evaluate (specialized variable groups).
+                      items:
+                        description: |-
+                          Collection represents a reference to a ModSecurity/Coraza collection in a rule.
+                          Collections are named variable containers (transient or persistent) that store
+                          data such as request arguments, headers, IP tracking, session state, etc.
+                          They are accessed via %{COLLECTION:KEY} syntax or actions like initcol, setvar,
+                          setsid, setuid, setrsc.
+
+                          ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#collections
+                          Coraza:     https://coraza.io/docs/seclang/variables
+                        properties:
+                          arguments:
+                            description: |-
+                              Arguments are key=value pairs or selectors passed to the collection
+                              (e.g. initcol:IP=%{REMOTE_ADDR} or setvar:TX.score=+5).
+                            items:
+                              type: string
+                            type: array
+                          count:
+                            description: Count, when true, treats the collection as
+                              a count operator (&COLLECTION).
+                            type: boolean
+                          excludes:
+                            description: Excludes are keys to exclude from the collection
+                              (e.g. in ARGS or REQUEST_HEADERS).
+                            items:
+                              type: string
+                            type: array
+                          name:
+                            description: Name is the collection to target (e.g. IP,
+                              TX, ARGS, SESSION).
+                            enum:
+                            - UNKNOWN_COLLECTION
+                            - ARGS
+                            - ARGS_GET
+                            - ARGS_GET_NAMES
+                            - ARGS_NAMES
+                            - ARGS_POST_NAMES
+                            - ARGS_POST
+                            - ENV
+                            - FILES
+                            - GEO
+                            - GLOBAL
+                            - IP
+                            - MATCHED_VARS_NAMES
+                            - MATCHED_VARS
+                            - MULTIPART_PART_HEADERS
+                            - PERF_RULES
+                            - REQUEST_COOKIES_NAMES
+                            - REQUEST_COOKIES
+                            - REQUEST_HEADERS_NAMES
+                            - REQUEST_HEADERS
+                            - RESOURCE
+                            - RESPONSE_HEADERS_NAMES
+                            - RESPONSE_HEADERS
+                            - RULE
+                            - SESSION
+                            - TX
+                            - USER
+                            - XML
+                            type: string
+                        type: object
+                      type: array
+                    operator:
+                      description: Operator defines the comparison to perform on the
+                        variable value(s).
+                      properties:
+                        name:
+                          description: |-
+                            OperatorType is the type of comparison operator used in SecLang conditions.
+                            See https://coraza.io/docs/seclang/operators for full reference.
+                          type: string
+                        negate:
+                          type: boolean
+                        value:
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    script:
+                      description: Script is the path for Lua or other script-based
+                        conditions (advanced).
+                      type: string
+                    transformations:
+                      description: Transformations to apply before operator evaluation.
+                      items:
+                        description: |-
+                          Transformation represents a data transformation function applied to variables
+                          before the operator is evaluated. Transformations can be chained.
+                        type: string
+                      type: array
+                    variables:
+                      description: Variables to evaluate in this condition.
+                      items:
+                        description: |-
+                          Variable references a specific piece of data (variable or collection member)
+                          to be used in a rule's condition.
+                        properties:
+                          excluded:
+                            type: boolean
+                          name:
+                            description: VariableName identifies a built-in ModSecurity/Coraza
+                              variable or collection.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      type: array
+                  type: object
+                type: array
+              metadata:
+                description: |-
+                  Metadata identifies the single rule (id optional → SecRuleIDPool).
+                  Used with match[] (canonical one-rule-per-CR form).
+                properties:
+                  comment:
+                    description: |-
+                      Comment is an arbitrary human-readable note attached to the rule.
+                      Not sent to the engine; used only for documentation and tooling.
+
+                      Example: comment:'This rule protects against CVE-2023-1234'
+                    type: string
+                  id:
+                    description: |-
+                      Id is the unique numeric identifier of the rule.
+                      Used for rule updates, removal, and referencing (SecRuleRemoveById, …).
+
+                      Optional: when omitted (or 0), the SecRule controller allocates a cluster-unique
+                      id from the SecRuleIDPool singleton (default range 100000–999999) and records it
+                      on status.ruleId / status.assignedIds. Prefer explicit ids for CRS/shared rules;
+                      omit for custom rules and let the pool assign.
+
+                      Example: id:900100
+                    type: integer
+                  maturity:
+                    description: |-
+                      Maturity indicates the maturity level of the rule (CRS-specific).
+                      Range: 0–9 (9 = production-ready, extensively tested).
+                      Used by OWASP Core Rule Set to manage rule stability and false-positive risk.
+
+                      Example: maturity:9
+                    type: string
+                  message:
+                    description: |-
+                      Msg is the human-readable message describing what the rule detects.
+                      Appears in audit logs and alerts when the rule matches.
+
+                      Example: msg:'SQL Injection Attempt'
+                    type: string
+                  phase:
+                    description: |-
+                      Phase defines in which processing phase the rule executes.
+                      Valid values: 1 (Request Headers), 2 (Request Body),
+                      3 (Response Headers), 4 (Response Body), 5 (Logging).
+
+                      Example: phase:2
+                    type: string
+                  revision:
+                    description: |-
+                      Rev is the revision of this specific rule (CRS-specific).
+                      Allows the same id to be updated over time while tracking changes.
+
+                      Example: rev:'2.1.3'
+                    type: string
+                  severity:
+                    description: |-
+                      Severity defines how serious a match is (used for alert prioritization).
+                      Can be numeric (0–7) or text (CRITICAL, ERROR, WARNING, NOTICE, INFO).
+
+                      Example: severity:CRITICAL or severity:2
+                    type: string
+                  tags:
+                    description: |-
+                      Tags categorise the rule (multiple allowed). Used for filtering,
+                      grouping, and removal (SecRuleRemoveByTag).
+                      Common CRS tags: WEB_ATTACK/XSS, OWASP_CRS, paranoia-level/1, etc.
+
+                      The SecRule controller also mirrors each tag onto the CR's Kubernetes
+                      labels as seclang.kubewaf.io/tag.<sanitized>=true for RuleSet selectors.
+
+                      Example: tag:'WEB_ATTACK/SQL_INJECTION', tag:'paranoia-level/1'
+                    items:
+                      type: string
+                    type: array
+                  version:
+                    description: |-
+                      Ver is the version of the rule set this rule belongs to (CRS-specific).
+
+                      Example: ver:'CRS/4.0.0'
+                    type: string
+                type: object
+              order:
+                description: |-
+                  Order is a relative sort key when a RuleSet expands many SecRules
+                  (e.g. label selector). Lower values run earlier. Zero means unset
+                  (fallback to status.ruleId / object name at assembly time).
+                format: int32
+                type: integer
+              secLangRules:
+                description: |-
+                  SecRules is the legacy multi-rule bag (one CR, many SecLang rules).
+                  Prefer one CR per logical rule using metadata + match[] above.
+                  When Match or top-level Metadata is set, SecRules is ignored by the converter.
+                items:
+                  description: |-
+                    SecLangSecRule represents a single ModSecurity/Coraza SecRule in structured form
+                    inside the legacy secLangRules[] bag.
+                    Prefer Spec.Metadata + Spec.Match for new rules.
                   properties:
                     actions:
                       description: Actions specify what to do when the rule matches.
@@ -101,6 +732,9 @@ spec:
 
                             These are the core "decision" actions in ModSecurity/Coraza rulesets.
                             Only one disruptive action is allowed per rule/chain (the last one specified wins).
+
+                            omitempty: chain children must omit this field entirely. Emitting
+                            `disruptive: null` fails OpenAPI validation (type object, not nullable).
                           properties:
                             disruptiveActionType:
                               description: |-
@@ -249,8 +883,9 @@ spec:
                           type: array
                       type: object
                     chainedRule:
-                      description: ChainedRule indicates if this is part of a chained
-                        rule set.
+                      description: |-
+                        ChainedRule indicates if this is part of a chained rule set (legacy hint).
+                        Prefer flow chain action or the match[] form.
                       type: boolean
                     conditions:
                       description: Conditions define when the rule should trigger
@@ -393,8 +1028,12 @@ spec:
                         id:
                           description: |-
                             Id is the unique numeric identifier of the rule.
-                            Required in almost all production rules. Used for rule updates,
-                            removal, and referencing (SecRuleRemoveById, SecRuleUpdateActionById).
+                            Used for rule updates, removal, and referencing (SecRuleRemoveById, …).
+
+                            Optional: when omitted (or 0), the SecRule controller allocates a cluster-unique
+                            id from the SecRuleIDPool singleton (default range 100000–999999) and records it
+                            on status.ruleId / status.assignedIds. Prefer explicit ids for CRS/shared rules;
+                            omit for custom rules and let the pool assign.
 
                             Example: id:900100
                           type: integer
@@ -441,6 +1080,9 @@ spec:
                             grouping, and removal (SecRuleRemoveByTag).
                             Common CRS tags: WEB_ATTACK/XSS, OWASP_CRS, paranoia-level/1, etc.
 
+                            The SecRule controller also mirrors each tag onto the CR's Kubernetes
+                            labels as seclang.kubewaf.io/tag.<sanitized>=true for RuleSet selectors.
+
                             Example: tag:'WEB_ATTACK/SQL_INJECTION', tag:'paranoia-level/1'
                           items:
                             type: string
@@ -455,7 +1097,7 @@ spec:
                     secMarker:
                       description: |-
                         SecMarker is a label that can be used with skipAfter actions.
-                        It will be emitted after this rule.
+                        Emitted after this rule. Prefer Spec.MarkerAfter on the single-rule form.
                       type: string
                   type: object
                 type: array
@@ -463,6 +1105,13 @@ spec:
           status:
             description: status defines the observed state of SecRule.
             properties:
+              assignedIds:
+                description: |-
+                  AssignedIDs is the effective id for each logical rule entry after reconcile.
+                  Single-rule form: length 1. Legacy multi-rule: one id per secLangRules[i].
+                items:
+                  type: integer
+                type: array
               conditions:
                 description: Conditions represent the current state of the SecRule
                   resource.
@@ -524,6 +1173,15 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              idSource:
+                description: 'IDSource is how the primary RuleID was chosen: Spec,
+                  Auto, or Mixed.'
+                type: string
+              ruleId:
+                description: |-
+                  RuleID is the primary effective rule id for this CR.
+                  Used for labels and tooling; multi-rule CRs also populate AssignedIDs.
+                type: integer
               ruleSetRefs:
                 description: RuleSetRefs tracks which RuleSets reference this SecRule.
                 items:

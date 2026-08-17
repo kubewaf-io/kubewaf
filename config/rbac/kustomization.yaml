@@ -20,14 +20,11 @@ resources:
 - metrics_reader_role.yaml
 # For each CRD, "Admin", "Editor" and "Viewer" roles are scaffolded by
 # default, aiding admins in cluster management. Those roles are
-# not used by the wafv2 itself. You can comment the following lines
+# not used by the kubewaf itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
 - waf_waf_admin_role.yaml
 - waf_waf_editor_role.yaml
 - waf_waf_viewer_role.yaml
-- waf_wafinstance_admin_role.yaml
-- waf_wafinstance_editor_role.yaml
-- waf_wafinstance_viewer_role.yaml
 - seclang_secaction_admin_role.yaml
 - seclang_secaction_editor_role.yaml
 - seclang_secaction_viewer_role.yaml

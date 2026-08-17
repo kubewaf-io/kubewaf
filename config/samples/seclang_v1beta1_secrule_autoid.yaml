@@ -1,0 +1,37 @@
+# One-rule form without metadata.id — controller allocates from SecRuleIDPool/cluster.
+# After reconcile you will see:
+#   status.ruleId / status.assignedIds
+#   status.idSource: Auto
+#   labels: seclang.kubewaf.io/id, seclang.kubewaf.io/tag.*
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: custom-block-probe
+  namespace: default
+  labels:
+    app: demo
+spec:
+  order: 100000
+  metadata:
+    # id omitted → auto from SecRuleIDPool (100000–999999 by default)
+    phase: "1"
+    message: "Block obvious scanner probe path"
+    severity: "WARNING"
+    tags:
+      - "attack-generic"
+      - "custom"
+  match:
+    - variables:
+        - name: REQUEST_URI
+      operator:
+        name: contains
+        value: "/.git/config"
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "403"
+    non-disruptive:
+      - nonDisruptiveActionType: log
+      - nonDisruptiveActionType: auditlog

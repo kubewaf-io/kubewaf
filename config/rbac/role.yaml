@@ -7,9 +7,22 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
   - secrets
-  - services
   verbs:
   - create
   - delete
@@ -19,35 +32,21 @@ rules:
   - update
   - watch
 - apiGroups:
-  - apps
+  - ""
   resources:
-  - daemonsets
-  - deployments
-  - statefulsets
+  - configmaps
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
-  - autoscaling
-  resources:
-  - horizontalpodautoscalers
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - seclan.kubewaf.io
+  - seclang.kubewaf.io
   resources:
   - secrules
+  - secactions
+  - secruleidpools
+  - phraselists
+  - iplists
   verbs:
   - create
   - delete
@@ -57,42 +56,31 @@ rules:
   - update
   - watch
 - apiGroups:
-  - seclan.kubewaf.io
+  - seclang.kubewaf.io
   resources:
   - secrules/finalizers
+  - secactions/finalizers
+  - secruleidpools/finalizers
+  - phraselists/finalizers
+  - iplists/finalizers
   verbs:
   - update
 - apiGroups:
-  - seclan.kubewaf.io
+  - seclang.kubewaf.io
   resources:
   - secrules/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - seclang.kubewaf.io
-  resources:
-  - rulesets
-  - secactions
-  - secrules
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - seclang.kubewaf.io
-  resources:
   - secactions/status
-  - secrules/status
+  - secruleidpools/status
+  - phraselists/status
+  - iplists/status
   verbs:
+  - get
   - patch
   - update
 - apiGroups:
   - waf.kubewaf.io
   resources:
   - rulesets
-  - wafinstances
   verbs:
   - create
   - delete
@@ -105,14 +93,12 @@ rules:
   - waf.kubewaf.io
   resources:
   - rulesets/finalizers
-  - wafinstances/finalizers
   verbs:
   - update
 - apiGroups:
   - waf.kubewaf.io
   resources:
   - rulesets/status
-  - wafinstances/status
   - wafs/status
   verbs:
   - get

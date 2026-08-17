@@ -1,0 +1,40 @@
+# Example: IPList + SecRule using @ipMatchFromFile (Path B / ModSecurity).
+# data_files injection is always enabled for ModSecurity.
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: IPList
+metadata:
+  name: edge-ip-blocklist
+  labels:
+    seclang.kubewaf.io/ip-list: "true"
+spec:
+  fileName: edge-ip-blocklist.data
+  content: |
+    # blocked clients (one IP or CIDR per line)
+    203.0.113.0/24
+    198.51.100.50
+    192.0.2.1
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: block-edge-ip-list
+spec:
+  match:
+    - collections:
+        - name: REMOTE_ADDR
+      operator:
+        name: ipMatchFromFile
+        value: edge-ip-blocklist.data
+  metadata:
+    id: 100002
+    phase: "1"
+    message: Edge IP blocklist
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "403"
+    non-disruptive:
+      - nonDisruptiveActionType: log

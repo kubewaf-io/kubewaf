@@ -1,0 +1,12 @@
+{
+  "name": "kubewaf-headlamp-e2e",
+  "private": true,
+  "description": "Playwright screenshots of in-cluster Headlamp with Path B CRS",
+  "scripts": {
+    "test": "playwright test",
+    "install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}

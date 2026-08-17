@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package engine catalogs Proxy-Wasm modules integrated with kubeWAF:
-// coraza-proxy-wasm, modsecurity-proxy-wasm, and challenge/pow-proxy-wasm.
+// modsecurity-proxy-wasm (WAF) and challenge/pow-proxy-wasm.
 package engine
 
 import (
@@ -30,12 +30,15 @@ import (
 type ModuleID string
 
 const (
-	// ModuleCoraza is the default Coraza WAF engine.
-	ModuleCoraza ModuleID = "coraza"
-	// ModuleModSecurity is the in-tree ModSecurity WAF engine.
+	// ModuleModSecurity is the ModSecurity WAF engine.
 	ModuleModSecurity ModuleID = "modsecurity"
 	// ModuleChallenge is the Proof-of-Work browser challenge filter.
 	ModuleChallenge ModuleID = "challenge"
+
+	// DefaultModSecurityFile is the on-disk path for the WAF wasm binary.
+	DefaultModSecurityFile = "/wasm/modsecurity-proxy-wasm.wasm"
+	// DefaultChallengeFile is the on-disk path for the challenge wasm binary.
+	DefaultChallengeFile = "/wasm/challenge-proxy-wasm.wasm"
 )
 
 // Module describes a wasm artifact and its default serve path.
@@ -44,7 +47,7 @@ type Module struct {
 	DisplayName string
 	// HTTPPath is the path on the operator wasm HTTP server.
 	HTTPPath string
-	// DefaultFile is a conventional on-disk path (monorepo / container layout).
+	// DefaultFile is the on-disk path (image / mount layout).
 	DefaultFile string
 	// DefaultImage is an optional OCI reference for docs.
 	DefaultImage string
@@ -54,50 +57,32 @@ type Module struct {
 
 // Catalog is the set of engines kubeWAF knows how to serve and configure.
 var Catalog = map[ModuleID]Module{
-	ModuleCoraza: {
-		ID:              ModuleCoraza,
-		DisplayName:     "Coraza",
-		HTTPPath:        "/wasm/coraza-proxy-wasm.wasm",
-		DefaultFile:     "/wasm/coraza-proxy-wasm.wasm",
-		DefaultImage:    "ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0",
-		DefaultWasmName: "kubewaf.coraza",
-	},
 	ModuleModSecurity: {
 		ID:              ModuleModSecurity,
 		DisplayName:     "ModSecurity",
 		HTTPPath:        "/wasm/modsecurity-proxy-wasm.wasm",
-		DefaultFile:     "/wasm/modsecurity-proxy-wasm.wasm",
-		DefaultImage:    "ghcr.io/kubewaf-io/modsecurity-proxy-wasm:latest",
+		DefaultFile:     DefaultModSecurityFile,
+		DefaultImage:    "ghcr.io/kubewaf-io/modsecurity-proxy-wasm:0.1.0-alpha15",
 		DefaultWasmName: "kubewaf.modsecurity",
 	},
 	ModuleChallenge: {
 		ID:              ModuleChallenge,
 		DisplayName:     "Challenge (PoW)",
 		HTTPPath:        "/wasm/challenge-proxy-wasm.wasm",
-		DefaultFile:     "/wasm/challenge-proxy-wasm.wasm",
-		DefaultImage:    "ghcr.io/kubewaf-io/challenge-proxy-wasm:latest",
+		DefaultFile:     DefaultChallengeFile,
+		DefaultImage:    "ghcr.io/kubewaf-io/modsecurity-proxy-wasm:0.1.0-alpha15",
 		DefaultWasmName: "kubewaf.challenge",
 	},
 }
 
-// ModuleForEngine maps a WAF engine enum to a catalog module.
-func ModuleForEngine(e wafv1beta1.EngineType) Module {
-	switch e {
-	case wafv1beta1.EngineModSecurity:
-		return Catalog[ModuleModSecurity]
-	case wafv1beta1.EngineCoraza, "":
-		return Catalog[ModuleCoraza]
-	default:
-		return Catalog[ModuleCoraza]
-	}
+// ProductEngine returns the WAF engine type used by kubeWAF.
+func ProductEngine() wafv1beta1.EngineType {
+	return wafv1beta1.EngineModSecurity
 }
 
-// NormalizeEngine returns Coraza when empty.
-func NormalizeEngine(e wafv1beta1.EngineType) wafv1beta1.EngineType {
-	if e == "" {
-		return wafv1beta1.EngineCoraza
-	}
-	return e
+// ProductModule returns the catalog entry for the WAF engine.
+func ProductModule() Module {
+	return Catalog[ModuleModSecurity]
 }
 
 // PublicURL builds the operator-hosted HTTP URL for a module.
@@ -132,8 +117,6 @@ func ParseModuleFromPath(p string) (ModuleID, bool) {
 	}
 	// Aliases
 	switch p {
-	case "/wasm/main.wasm":
-		return ModuleCoraza, true
 	case "/wasm/modsec.wasm":
 		return ModuleModSecurity, true
 	case "/wasm/pow-proxy-wasm.wasm", "/wasm/challenge.wasm":
@@ -145,7 +128,6 @@ func ParseModuleFromPath(p string) (ModuleID, bool) {
 // AllModules returns catalog modules in stable order.
 func AllModules() []Module {
 	return []Module{
-		Catalog[ModuleCoraza],
 		Catalog[ModuleModSecurity],
 		Catalog[ModuleChallenge],
 	}

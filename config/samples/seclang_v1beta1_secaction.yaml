@@ -1,0 +1,44 @@
+# SecAction — unconditional setup (always-match). Loaded by the dataplane when
+# referenced from a RuleSet (same path as SecRule).
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecAction
+metadata:
+  name: custom-setup-paranoia
+  namespace: default
+  labels:
+    app: demo
+    waf.kubewaf.io/role: setup
+spec:
+  metadata:
+    id: 100001
+    phase: "1"
+    message: "Custom paranoia init"
+  disruptive:
+    disruptiveActionType: pass
+  non-disruptive:
+    - nonDisruptiveActionType: nolog
+    - nonDisruptiveActionType: setvar
+      value: tx.detection_paranoia_level=2
+    - nonDisruptiveActionType: setvar
+      value: tx.blocking_paranoia_level=2
+---
+# Example RuleSet selecting SecActions + SecRules by label
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: demo-with-secaction
+  namespace: default
+spec:
+  ruleRefs:
+    - kind: SecAction
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          waf.kubewaf.io/role: setup
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app: demo

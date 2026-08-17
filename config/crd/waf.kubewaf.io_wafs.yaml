@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.2
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: wafs.waf.kubewaf.io
 spec:
   group: waf.kubewaf.io
@@ -20,7 +20,32 @@ spec:
     singular: waf
   scope: Namespaced
   versions:
-  - name: v1beta1
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.provider
+      name: Provider
+      type: string
+    - jsonPath: .status.engine
+      name: Engine
+      type: string
+    - jsonPath: .status.mode
+      name: Mode
+      type: string
+    - jsonPath: .status.rulesLoaded
+      name: Rules
+      type: integer
+    - jsonPath: .spec.crsEnable
+      name: CRS
+      type: boolean
+    - jsonPath: .spec.telemetry.mode
+      name: Telemetry
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
     schema:
       openAPIV3Schema:
         description: WAF is the Schema for the wafs API
@@ -48,30 +73,110 @@ spec:
               See WAFSpec for details on policy attachment, RuleSet
               resolution (with CRS support), and logging configuration.
             properties:
-              corazaProxyWasmHTTP:
+              block:
                 description: |-
-                  CorazaProxyWasmHTTP is the HTTP(S) URL where Envoy fetches the
-                  coraza-proxy-wasm .wasm binary (required for ECDS). When empty, the
-                  operator default (--wasm-http-url) is used.
-                type: string
-              corazaProxyWasmImage:
-                default: ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0
+                  Block configures client-visible deny local-replies (ModSecurity engine).
+                  Defaults are product-neutral: message "Forbidden", marker header "x-blocked".
+                  Enable addRequestIDHeader to echo the request id on deny responses.
+                properties:
+                  addBlockedHeader:
+                    default: true
+                    description: |-
+                      AddBlockedHeader controls whether deny responses include a blocked marker header.
+                      Default: true
+                    type: boolean
+                  addRequestIDHeader:
+                    default: false
+                    description: |-
+                      AddRequestIDHeader controls whether deny responses include the correlated request id.
+                      Default: false
+                    type: boolean
+                  blockedHeader:
+                    default: x-blocked
+                    description: |-
+                      BlockedHeader is the name of the blocked marker header on deny responses.
+                      Default: "x-blocked". Only applied when AddBlockedHeader is true.
+                      Set AddBlockedHeader to false to omit the header entirely.
+                    maxLength: 256
+                    pattern: ^[A-Za-z0-9!#$%&'*+.^_|~-]+$
+                    type: string
+                  message:
+                    default: Forbidden
+                    description: |-
+                      Message is the local-reply details string shown to clients on deny.
+                      Default: "Forbidden"
+                    type: string
+                  requestIDHeader:
+                    default: x-request-id
+                    description: |-
+                      RequestIDHeader is the response header name for the request id on deny responses.
+                      Default: "x-request-id". Only applied when AddRequestIDHeader is true.
+                    maxLength: 256
+                    pattern: ^[A-Za-z0-9!#$%&'*+.^_|~-]+$
+                    type: string
+                type: object
+              challenge:
                 description: |-
-                  CorazaProxyWasmImage is the OCI image reference for documentation /
-                  future OCI fetchers. ECDS mode loads the binary via CorazaProxyWasmHTTP.
-                type: string
-              corazaProxyWasmSHA256:
-                description: |-
-                  CorazaProxyWasmSHA256 is the expected SHA-256 of the remote .wasm binary.
-                  Strongly recommended in production.
-                type: string
+                  Challenge optionally installs a Proof-of-Work browser challenge filter
+                  (pow-proxy-wasm / challenge-proxy-wasm) *before* the WAF filter in the chain.
+                properties:
+                  baseDifficulty:
+                    default: 18
+                    description: BaseDifficulty is the default PoW difficulty (leading
+                      zero bits). Default 18.
+                    maximum: 32
+                    minimum: 1
+                    type: integer
+                  enabled:
+                    default: true
+                    description: Enabled installs the challenge filter when true.
+                    type: boolean
+                  header:
+                    description: Header is an optional response header name to inject
+                      after pass.
+                    type: string
+                  headerValue:
+                    description: HeaderValue is the value for Header.
+                    type: string
+                  maxDifficulty:
+                    description: MaxDifficulty upper bound for adaptive difficulty.
+                    maximum: 32
+                    minimum: 1
+                    type: integer
+                  minDifficulty:
+                    description: MinDifficulty lower bound for adaptive difficulty.
+                    maximum: 32
+                    minimum: 1
+                    type: integer
+                  secret:
+                    description: |-
+                      Secret is an optional plaintext HMAC override (dev / break-glass).
+                      When empty, the operator uses SecretRef or auto-generates a managed Secret.
+                    type: string
+                  secretRef:
+                    description: |-
+                      SecretRef optionally references a user-managed Secret key for the HMAC.
+                      When set (and Secret is empty), that key is used instead of the
+                      operator-managed Secret.
+                    properties:
+                      key:
+                        description: Key within the Secret data map.
+                        type: string
+                      name:
+                        description: Name of the Secret.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
               crs:
                 description: |-
-                  CRS contains declarative tuning knobs for the OWASP Core Rule Set.
-                  Only has effect when CRSEnable is true.
-                  The operator emits the resulting directives (paranoia, thresholds, exclusions)
-                  in the order required by CRS (setup actions before the rule includes,
-                  removal/update directives after the includes).
+                  CRS contains declarative tuning knobs for the OWASP Core Rule Set
+                  (paranoia levels, anomaly thresholds, remove-by-id/tag, update-target).
+                  Applies with either Path A (crsEnable) or Path B (structured RuleSets only).
+                  Setup setvars are emitted before CRS/user rules; exclusions after the
+                  engine include (Path A) or after RuleSet SecLang (Path B).
                 properties:
                   inboundAnomalyThreshold:
                     description: |-
@@ -137,61 +242,76 @@ spec:
               crsEnable:
                 default: false
                 description: |-
-                  CRSEnable enables the OWASP Core Rule Set (v4.x recommended).
-                  When true, CRS rules are merged with those from RuleSetRefs.
+                  CRSEnable enables Path A: load OWASP CRS from the engine via virtual includes
+                  (Include @crs-setup-conf + Include @owasp_crs/*.conf).
+                  Prefer Path B for kube-native CRS: leave false and attach a RuleSet of
+                  structured SecRules (config/samples/crs/, optimized-rulesets). Use spec.crs
+                  for paranoia / thresholds / exclusions with either path.
                 type: boolean
               logLevel:
-                default: 7
+                default: 1
                 description: |-
                   LogLevel controls verbosity of the Envoy WAF filter logs.
                   Common values: 0=off, 1=error, 2=warn, 3=info, 4=debug (up to 7).
+                  Default is 1 (error) so production clusters are not flooded; set higher for debug.
                 maximum: 7
                 minimum: 0
                 type: integer
               metrics:
-                description: |-
-                  Metrics configures observability for the Coraza WASM filter.
-                  Allows controlling metric names, extra labels on interruption metrics,
-                  and whether to include high-cardinality rule_id labels.
+                description: Metrics configures observability labels for the WAF WASM
+                  filter.
                 properties:
                   enableStats:
                     default: true
                     description: |-
-                      EnableStats enables the core WAF metrics (tx total + interruptions).
-                      Default: true
+                      EnableStats enables the core WAF ABI metrics (tx total, allowed, interruptions,
+                      rule matches). Default: true.
+                      When false the managed catalog has no series for this WAF; traces can still
+                      export when telemetry.mode=Managed.
                     type: boolean
                   extraLabels:
                     additionalProperties:
                       type: string
                     description: |-
-                      ExtraLabels are key/value pairs passed to coraza-proxy-wasm.
-                      They will be attached to waf_filter_tx_interruptions metrics.
+                      ExtraLabels are additional name-embedding keys on WAF filter metrics
+                      (modsecurity_proxy_wasm.* / kubewaf_waf.*).
+                      ExtraLabels are copied first; reserved identity keys (waf_namespace,
+                      waf_name, engine, owner) are written after and collisions are dropped.
                       Example: { "team": "payments", "env": "prod", "gateway": "external" }
                     type: object
                   includeRuleID:
                     default: true
                     description: |-
-                      IncludeRuleID controls whether the specific `rule_id` label is included
-                      on waf_filter_tx_interruptions metrics.
-                      Disabling this significantly reduces cardinality in high-traffic environments.
+                      IncludeRuleID controls whether per-rule_id series are emitted
+                      (tx interruptions and rule matches). Disabling reduces cardinality.
                       Default: true
                     type: boolean
                   name:
                     description: |-
                       Name sets the logical name / VM ID of the Wasm filter inside Envoy.
                       This influences metric prefixes (e.g. wasm.<name>.*).
-                      If unset, the controller uses "kubewaf.io".
+                      If unset, the controller uses the engine default (e.g. kubewaf.modsecurity).
                     type: string
                   rootID:
                     description: RootID matches the root_id expected by the Wasm module
                       for stats/context.
                     type: string
                 type: object
+              mode:
+                default: Blocking
+                description: |-
+                  Mode selects blocking vs observe-only engine behaviour.
+                  Blocking (default) emits SecRuleEngine On; DetectionOnly emits SecRuleEngine DetectionOnly
+                  for safe CRS / rule rollouts without denying traffic.
+                enum:
+                - Blocking
+                - DetectionOnly
+                type: string
               parentRefs:
                 description: |-
-                  ParentRefs specifies the target resources (typically Gateways or
-                  GatewayClasses) to which this WAF policy should be attached.
-                  Follows Envoy Gateway policy attachment semantics (targetRef/targetRefs).
+                  ParentRefs is the legacy nested attachment form (spec.parentRefs.targetRef).
+                  Prefer top-level targetRef/targetRefs. When only parentRefs is set,
+                  EffectivePolicyTargets() still resolves attachment.
                 properties:
                   targetRef:
                     description: |-
@@ -439,12 +559,39 @@ spec:
                           : true '
                     type: array
                 type: object
+              phraseListPolicy:
+                default: FailClosed
+                description: |-
+                  PhraseListPolicy controls publish behavior when a custom @pmFromFile /
+                  @ipMatchFromFile basename cannot be resolved to a Ready PhraseList or
+                  IPList in the WAF namespace. Data-files injection is always enabled.
+                enum:
+                - FailClosed
+                - IgnoreUnknown
+                type: string
               provider:
                 description: |-
-                  Provider selects the data-plane control plane that will receive the ECDS
-                  filter slot (Envoy Gateway Extension Server hooks, or Istio EnvoyFilter).
-                  Rule/plugin configuration is always pushed over gRPC ECDS regardless of provider.
+                  Provider selects the data-plane control plane that will receive the filter
+                  slot (Envoy Gateway Extension Server, Istio EnvoyFilter, or CiliumEnvoyConfig).
+                  When omitted or type=Auto, the operator discovers the provider from the
+                  targeted Gateway's GatewayClass.controllerName, then from installed
+                  platform CRDs (Envoy Gateway / Istio / Cilium). Status.provider reports
+                  the resolved value. Rule/plugin configuration is always pushed over gRPC
+                  ECDS regardless of provider.
                 properties:
+                  cilium:
+                    description: Cilium holds Cilium-specific slot settings (only
+                      used when Type=Cilium).
+                    properties:
+                      serviceName:
+                        description: |-
+                          ServiceName is the Kubernetes Service the CEC attaches to (same namespace as the WAF
+                          unless ServiceNamespace is set). When empty, falls back to the WAF name.
+                        type: string
+                      serviceNamespace:
+                        description: ServiceNamespace defaults to the WAF namespace.
+                        type: string
+                    type: object
                   ecdsCluster:
                     default: kubewaf_ecds
                     description: ECDSCluster is the Envoy cluster name used to open
@@ -473,12 +620,15 @@ spec:
                     type: object
                   type:
                     default: Auto
-                    description: Type selects EnvoyGateway, Istio, or Auto (default
-                      EnvoyGateway).
+                    description: |-
+                      Type selects EnvoyGateway, Istio, Cilium, or Auto.
+                      Auto (default when omitted) discovers from GatewayClass.controllerName
+                      of targeted Gateways, then from installed CRDs.
                     enum:
                     - Auto
                     - EnvoyGateway
                     - Istio
+                    - Cilium
                     type: string
                 type: object
               ruleRefs:
@@ -494,7 +644,7 @@ spec:
                       description: |-
                         Kind specifies the type of resource being referenced.
                         Supported: "SecRule", "SecAction", "RuleSet", "ConfigMap".
-                        Note: non-RuleSet owners (e.g. WAFInstance) may ONLY reference "RuleSet"
+                        Note: non-RuleSet owners (e.g. WAF) may ONLY reference "RuleSet"
                         (enforced in internal/references2/resolver.go; future webhook planned).
                       type: string
                     name:
@@ -561,13 +711,311 @@ spec:
                   - message: name and selector are mutually exclusive
                     rule: '!(has(self.selector) && has(self.name))'
                 type: array
+              targetRef:
+                description: |-
+                  TargetRef is the name of the resource this policy is being attached to.
+                  This policy and the TargetRef MUST be in the same namespace for this
+                  Policy to have effect
+
+                  Deprecated: use targetRefs/targetSelectors instead
+                properties:
+                  group:
+                    description: Group is the group of the target resource.
+                    maxLength: 253
+                    pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                  kind:
+                    description: Kind is kind of the target resource.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                    type: string
+                  name:
+                    description: Name is the name of the target resource.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  sectionName:
+                    description: |-
+                      SectionName is the name of a section within the target resource. When
+                      unspecified, this targetRef targets the entire resource. In the following
+                      resources, SectionName is interpreted as the following:
+
+                      * Gateway: Listener name
+                      * HTTPRoute: HTTPRouteRule name
+                      * Service: Port name
+
+                      If a SectionName is specified, but does not exist on the targeted object,
+                      the Policy must fail to attach, and the policy implementation should record
+                      a `ResolvedRefs` or similar Condition in the Policy's status.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - group
+                - kind
+                - name
+                type: object
+              targetRefs:
+                description: |-
+                  TargetRefs are the names of the Gateway resources this policy
+                  is being attached to.
+                items:
+                  description: |-
+                    LocalPolicyTargetReferenceWithSectionName identifies an API object to apply a
+                    direct policy to. This should be used as part of Policy resources that can
+                    target single resources. For more information on how this policy attachment
+                    mode works, and a sample Policy resource, refer to the policy attachment
+                    documentation for Gateway API.
+
+                    Note: This should only be used for direct policy attachment when references
+                    to SectionName are actually needed. In all other cases,
+                    LocalPolicyTargetReference should be used.
+                  properties:
+                    group:
+                      description: Group is the group of the target resource.
+                      maxLength: 253
+                      pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
+                    kind:
+                      description: Kind is kind of the target resource.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                      type: string
+                    name:
+                      description: Name is the name of the target resource.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    sectionName:
+                      description: |-
+                        SectionName is the name of a section within the target resource. When
+                        unspecified, this targetRef targets the entire resource. In the following
+                        resources, SectionName is interpreted as the following:
+
+                        * Gateway: Listener name
+                        * HTTPRoute: HTTPRouteRule name
+                        * Service: Port name
+
+                        If a SectionName is specified, but does not exist on the targeted object,
+                        the Policy must fail to attach, and the policy implementation should record
+                        a `ResolvedRefs` or similar Condition in the Policy's status.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
+                  required:
+                  - group
+                  - kind
+                  - name
+                  type: object
+                type: array
+              targetSelectors:
+                description: TargetSelectors allow targeting resources for this policy
+                  based on labels
+                items:
+                  properties:
+                    group:
+                      default: gateway.networking.k8s.io
+                      description: Group is the group that this selector targets.
+                        Defaults to gateway.networking.k8s.io
+                      maxLength: 253
+                      pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
+                    kind:
+                      description: Kind is the resource kind that this selector targets.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                      type: string
+                    matchExpressions:
+                      description: MatchExpressions is a list of label selector requirements.
+                        The requirements are ANDed.
+                      items:
+                        description: |-
+                          A label selector requirement is a selector that contains values, a key, and an operator that
+                          relates the key and values.
+                        properties:
+                          key:
+                            description: key is the label key that the selector applies
+                              to.
+                            type: string
+                          operator:
+                            description: |-
+                              operator represents a key's relationship to a set of values.
+                              Valid operators are In, NotIn, Exists and DoesNotExist.
+                            type: string
+                          values:
+                            description: |-
+                              values is an array of string values. If the operator is In or NotIn,
+                              the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                              the values array must be empty. This array is replaced during a strategic
+                              merge patch.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        required:
+                        - key
+                        - operator
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    matchLabels:
+                      additionalProperties:
+                        type: string
+                      description: MatchLabels are the set of label selectors for
+                        identifying the targeted resource.
+                      type: object
+                    namespaces:
+                      description: |-
+                        Namespaces determines which namespaces are considered for target selection.
+
+                        If unspecified, only targets in the same namespace as this policy are considered.
+
+                        When specified, the effective set of namespaces is always constrained to the
+                        namespaces watched by Envoy Gateway.
+
+                        Selecting targets across namespaces requires a ReferenceGrant in the target
+                        namespace that allows this policy kind to reference the selected target kind.
+                        Cross-namespace targets without a matching ReferenceGrant are ignored.
+                      properties:
+                        from:
+                          default: Same
+                          description: |-
+                            From indicates how namespaces are selected for this target selector.
+
+                            All means all namespaces watched by Envoy Gateway.
+                            Selector means namespaces watched by Envoy Gateway that match Selector.
+                          enum:
+                          - Same
+                          - All
+                          - Selector
+                          type: string
+                        selector:
+                          description: Selector selects namespaces when From is set
+                            to Selector.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - from
+                      type: object
+                      x-kubernetes-validations:
+                      - message: selector must be specified when from is Selector
+                        rule: self.from != 'Selector' || has(self.selector)
+                  required:
+                  - kind
+                  type: object
+                  x-kubernetes-validations:
+                  - message: group must be gateway.networking.k8s.io
+                    rule: 'has(self.group) ? self.group == ''gateway.networking.k8s.io''
+                      : true '
+                type: array
+              telemetry:
+                description: |-
+                  Telemetry is opt-in managed observability policy (mode, sample/redact).
+                  Published on the ECDS plugin snapshot so Wasm can annotate requests.
+                  The OTLP destination is Envoy cluster kubewaf_otel (bootstrap/slot inject),
+                  not this field. There is no telemetry.otel client block.
+                properties:
+                  mode:
+                    default: None
+                    description: Mode is None (default) or Managed.
+                    enum:
+                    - None
+                    - Managed
+                    type: string
+                  traces:
+                    description: Traces is the security-trace sampling and redact
+                      policy.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled exports security traces when Mode is Managed.
+                          When unset, Helm profile defaults apply (lite=false, full=true).
+                        type: boolean
+                      includeMatchData:
+                        description: IncludeMatchData includes waf.match.data on the
+                          span. Default false.
+                        type: boolean
+                      redact:
+                        description: Redact omits client.address from export metadata.
+                          Default true.
+                        type: boolean
+                      sampleDisruptive:
+                        description: SampleDisruptive is the sample probability for
+                          interrupts (default 1.0).
+                        pattern: ^(0(\.[0-9]+)?|1(\.0+)?)$
+                        type: string
+                      sampleRate:
+                        description: SampleRate is the sample probability for non-disruptive
+                          matches (0.0–1.0).
+                        pattern: ^(0(\.[0-9]+)?|1(\.0+)?)$
+                        type: string
+                    type: object
+                type: object
             type: object
-            x-kubernetes-validations:
-            - message: crs tuning requires crsEnable=true
-              rule: '!has(self.crs) || self.crsEnable'
           status:
             description: status defines the observed state of WAF
             properties:
+              actionsLoaded:
+                description: ActionsLoaded is the number of SecAction objects resolved
+                  into this WAF.
+                format: int32
+                type: integer
+              challengeEnabled:
+                description: ChallengeEnabled reports whether the PoW challenge filter
+                  is installed.
+                type: boolean
+              challengeSecretName:
+                description: |-
+                  ChallengeSecretName is the Kubernetes Secret used for the challenge HMAC
+                  (operator-managed name, or the SecretRef name when configured).
+                type: string
               conditions:
                 description: Conditions represent the current state of the WAF resource.
                 items:
@@ -628,23 +1076,100 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dataFilesContentHash:
+                description: DataFilesContentHash is sha256 over sorted "basename\0body"
+                  pairs.
+                type: string
+              dataFilesCount:
+                description: DataFilesCount is the number of basenames injected into
+                  plugin data_files.
+                format: int32
+                type: integer
+              dataFilesRawBytes:
+                description: DataFilesRawBytes is the total uncompressed injected
+                  body size.
+                format: int64
+                type: integer
+              directivesCount:
+                description: |-
+                  DirectivesCount is the number of SecLang directive lines pushed over ECDS
+                  (engine setup + includes + user rules).
+                format: int32
+                type: integer
               ecdsResourceName:
-                description: ECDSResourceName is the ECDS extension config name (HTTP
-                  filter name).
+                description: ECDSResourceName is the primary WAF ECDS extension config
+                  name.
                 type: string
               ecdsVersion:
                 description: ECDSVersion is the snapshot version counter last published
                   for this WAF.
                 format: int64
                 type: integer
+              engine:
+                description: Engine is the WAF Proxy-Wasm implementation (ModSecurity).
+                type: string
+              mode:
+                description: Mode is the effective rule engine mode (Blocking or DetectionOnly).
+                enum:
+                - Blocking
+                - DetectionOnly
+                type: string
               provider:
-                description: Provider is the resolved data-plane provider (EnvoyGateway
-                  or Istio).
+                description: |-
+                  Provider is the resolved data-plane provider (EnvoyGateway, Istio, or Cilium).
+                  Always set on Ready: either from Auto discovery or from explicit spec.provider.type.
                 enum:
                 - Auto
                 - EnvoyGateway
                 - Istio
+                - Cilium
                 type: string
+              providerDetection:
+                description: |-
+                  ProviderDetection explains how status.provider was chosen.
+                  For Auto/empty spec.provider this is the discovery chain, e.g.
+                    targetRef Gateway demo/gw → GatewayClass "cilium" → controller "io.cilium/gateway-controller"
+                  When the user set provider.type explicitly: "explicit (spec.provider.type)".
+                type: string
+              renderedDirectives:
+                description: |-
+                  RenderedDirectives is the SecLang config last published to the data plane.
+                  Large payloads are truncated (see RenderedDirectivesTruncated).
+                type: string
+              renderedDirectivesTruncated:
+                description: RenderedDirectivesTruncated is true when RenderedDirectives
+                  was size-capped.
+                type: boolean
+              ruleRefs:
+                description: |-
+                  RuleRefs is a capped leaf list of SecRule/SecAction membership after Resolve
+                  (selectors are expanded). Not a join key for Headlamp noisy-rule links.
+                items:
+                  description: RuleRefStatus contains the observed status for a referenced
+                    rule or action.
+                  properties:
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  type: object
+                type: array
+              ruleRefsOmitted:
+                description: RuleRefsOmitted is the count of resolved leaves not written
+                  to RuleRefs.
+                format: int32
+                type: integer
+              ruleRefsTruncated:
+                description: RuleRefsTruncated is true when RuleRefs omitted some
+                  resolved leaves.
+                type: boolean
+              rulesLoaded:
+                description: RulesLoaded is the number of SecRule objects resolved
+                  into this WAF.
+                format: int32
+                type: integer
               slotKind:
                 description: |-
                   SlotKind is the platform slot resource kind (e.g. EnvoyFilter, or

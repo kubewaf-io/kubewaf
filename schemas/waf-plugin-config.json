@@ -14,10 +14,53 @@
     "directives_map": {
       "type": "object",
       "additionalProperties": {
-        "type": "array",
-        "items": { "type": "string" }
+        "oneOf": [
+          {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Plain SecLang lines / Include @virtual paths."
+          },
+          {
+            "type": "string",
+            "description": "When directives_encoding is gzip+base64: base64(gzip(joined SecLang))."
+          }
+        ]
       },
-      "description": "Named lists of SecLang directives / Include @virtual paths."
+      "description": "Named directive profiles (array, or compressed string)."
+    },
+    "directives_encoding": {
+      "type": "string",
+      "enum": ["gzip+base64"],
+      "description": "When set, directives_map values are base64(gzip(...)) blobs instead of string arrays. modsecurity-proxy-wasm inflates on configure. Coraza path keeps plain arrays."
+    },
+    "directives_stats": {
+      "type": "object",
+      "properties": {
+        "raw_bytes": { "type": "integer" },
+        "compressed_bytes": { "type": "integer" },
+        "encoding": { "type": "string" }
+      },
+      "description": "Optional size metrics for compressed payloads (operator debug)."
+    },
+    "data_files": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Basename → base64 (or gzip+base64) body for @pmFromFile runtime resolution. Preferred over embedded @crs-data catalog for matching basenames."
+    },
+    "data_files_encoding": {
+      "type": "string",
+      "enum": ["base64", "gzip+base64"],
+      "description": "Encoding of data_files values. Default base64."
+    },
+    "data_files_stats": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer" },
+        "raw_bytes": { "type": "integer" },
+        "compressed_bytes": { "type": "integer" },
+        "override_crs_count": { "type": "integer" }
+      },
+      "description": "Optional size metrics for injected phrase lists."
     },
     "mode": {
       "type": "string",
@@ -60,13 +103,42 @@
       "type": "boolean",
       "description": "Flat alias for metrics.rule_tags (legacy)."
     },
+    "telemetry": {
+      "type": "object",
+      "description": "Policy only. Wasm annotates requests when mode=Managed. No OTLP client fields.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["None", "Managed"],
+          "description": "Managed: set export metadata for Envoy OTel access log. None: do not annotate."
+        },
+        "traces": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "sample_rate": {
+              "type": "string",
+              "description": "Non-disruptive match sample probability as a decimal string (0.0–1.0)."
+            },
+            "sample_disruptive": {
+              "type": "string",
+              "description": "Interrupt sample probability as a decimal string (0.0–1.0)."
+            },
+            "redact": { "type": "boolean", "default": true },
+            "include_match_data": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "block": {
       "type": "object",
       "properties": {
         "message": {
           "type": "string",
-          "default": "blocked by kubeWAF",
-          "description": "Local reply details string."
+          "default": "Forbidden",
+          "description": "Local reply details string. Keep product-neutral; do not put vendor names here."
         },
         "status": {
           "type": "integer",
@@ -74,10 +146,26 @@
           "maximum": 599,
           "description": "Override intervention HTTP status; 0 keeps ModSecurity status."
         },
+        "blocked_header": {
+          "type": "string",
+          "default": "x-blocked",
+          "description": "Generic marker header on deny local-replies. Empty string omits the header. Avoid product names."
+        },
         "add_rule_id_header": { "type": "boolean", "default": false },
         "rule_id_header": {
           "type": "string",
-          "default": "x-kubewaf-rule-id"
+          "default": "x-blocked-rule-id",
+          "description": "Response header name for the disrupting rule id when add_rule_id_header is true."
+        },
+        "add_request_id_header": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, include the correlated request id on deny local-replies."
+        },
+        "request_id_header": {
+          "type": "string",
+          "default": "x-request-id",
+          "description": "Response header name for the request id when add_request_id_header is true."
         }
       },
       "additionalProperties": false
@@ -114,9 +202,12 @@
       "metrics_per_rule_id": true,
       "metrics_rule_tags": true,
       "block": {
-        "message": "blocked by kubeWAF",
+        "message": "Forbidden",
+        "blocked_header": "x-blocked",
         "add_rule_id_header": false,
-        "rule_id_header": "x-kubewaf-rule-id"
+        "rule_id_header": "x-blocked-rule-id",
+        "add_request_id_header": false,
+        "request_id_header": "x-request-id"
       }
     }
   ]

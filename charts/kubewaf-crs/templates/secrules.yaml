@@ -1,0 +1,26 @@
+{{- /*
+Install converted CRS SecRules (multi-doc YAMLs under files/crs/).
+Documents omit metadata.namespace; Helm installs them into the release namespace.
+Requires seclang.kubewaf.io CRDs from the kubewaf operator chart.
+*/ -}}
+{{- if .Values.crs.installSecRules }}
+{{- $root := . }}
+{{- $include := (.Values.crs.includeFiles | default list) }}
+{{- range $path, $_ := .Files.Glob "files/crs/*.yaml" }}
+{{- $raw := $root.Files.Get $path }}
+{{- $emit := true }}
+{{- if $include }}
+  {{- $emit = false }}
+  {{- range $want := $include }}
+    {{- if or (contains (printf "coreruleset/file: %s" $want) $raw) (contains (printf "coreruleset/file: \"%s\"" $want) $raw) }}
+      {{- $emit = true }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- if $emit }}
+---
+# Source: {{ $path }}
+{{ $raw }}
+{{- end }}
+{{- end }}
+{{- end }}

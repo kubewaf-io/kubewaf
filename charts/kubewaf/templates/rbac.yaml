@@ -12,6 +12,15 @@ rules:
     - secrets
   verbs:
     - "*"
+# Cluster-wide ConfigMap read for PhraseList/IPList configMapRef / parts (app namespaces).
+- apiGroups:
+    - ""
+  resources:
+    - configmaps
+  verbs:
+    - get
+    - list
+    - watch
 - apiGroups:
     - ""
   resources:
@@ -34,6 +43,16 @@ rules:
   resources:
   - "secrules"
   - "secrules/status"
+  - "secactions"
+  - "secactions/status"
+  - "secruleidpools"
+  - "secruleidpools/status"
+  - "phraselists"
+  - "phraselists/status"
+  - "phraselists/finalizers"
+  - "iplists"
+  - "iplists/status"
+  - "iplists/finalizers"
   verbs:
   - "*"
 - apiGroups:
@@ -41,8 +60,6 @@ rules:
   resources:
   - "rulesets"
   - "rulesets/status"
-  - "wafinstances"
-  - "wafinstances/status"
   - "wafs"
   - "wafs/status"
   - "wafs/finalizers"

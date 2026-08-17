@@ -1,0 +1,13 @@
+# Cluster-scoped singleton that owns auto-allocated SecRule ids.
+# The operator creates this with defaults if missing; apply this only to pin a range.
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRuleIDPool
+metadata:
+  name: cluster
+  labels:
+    app.kubernetes.io/name: secrule-id-pool
+    app.kubernetes.io/managed-by: kubewaf
+spec:
+  # Custom rules: stay above CRS (typically < 100000).
+  minId: 100000
+  maxId: 999999

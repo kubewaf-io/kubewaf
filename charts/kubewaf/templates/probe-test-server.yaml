@@ -1,0 +1,164 @@
+{{- /*
+  Probe Test HTTP Server (go-coraza). Cluster-internal only; bearer auth required.
+*/ -}}
+{{- $probesOn := and .Values.subresourceApi.enabled (dig "probes" "enabled" true .Values.subresourceApi) }}
+{{- $tsOn := or .Values.probeTestServer.enabled $probesOn }}
+{{- if $tsOn }}
+{{- $fullName := include "helm.fullname" . }}
+{{- $ns := .Release.Namespace }}
+{{- $tsSvcName := printf "%s-probe-test-server" $fullName }}
+{{- $tokenSecretName := default (printf "%s-probe-eval-token" $fullName) .Values.probeTestServer.auth.tokenSecretName }}
+{{- if .Values.subresourceApi.testServer.tokenSecretName }}
+{{- $tokenSecretName = .Values.subresourceApi.testServer.tokenSecretName }}
+{{- end }}
+{{- $tsRegistry := default .Values.image.registry .Values.probeTestServer.image.registry }}
+{{- $tsRepo := .Values.probeTestServer.image.repository }}
+{{- $tsTag := default (default .Chart.AppVersion .Values.image.tag) .Values.probeTestServer.image.tag }}
+{{- $tsPull := default .Values.image.pullPolicy .Values.probeTestServer.image.pullPolicy }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullName }}-probe-test-server
+  namespace: {{ $ns }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: probe-test-server
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $tsSvcName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: probe-test-server
+spec:
+  ports:
+    - name: http
+      port: {{ .Values.probeTestServer.service.port | default 8080 }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ include "helm.name" . }}-probe-test-server
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: probe-test-server
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-probe-test-server
+  namespace: {{ $ns }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: probe-test-server
+spec:
+  replicas: {{ .Values.probeTestServer.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "helm.name" . }}-probe-test-server
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: probe-test-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "helm.name" . }}-probe-test-server
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: probe-test-server
+        {{- with .Values.probeTestServer.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.probeTestServer.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ $fullName }}-probe-test-server
+      {{- if $.Values.podSecurityContext.enabled }}
+      securityContext: {{- omit $.Values.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: probe-test-server
+          {{- if $.Values.securityContext.enabled }}
+          securityContext: {{- omit $.Values.securityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          image: "{{ $tsRegistry | trimSuffix "/" }}/{{ $tsRepo }}:{{ $tsTag }}"
+          imagePullPolicy: {{ $tsPull }}
+          args:
+            # Cluster Service needs non-loopback bind; NetworkPolicy restricts peers.
+            - --bind-address=:8080
+            - --eval-token-file=/var/probe-test/eval-token/token
+            - --max-in-flight={{ .Values.probeTestServer.concurrency.globalMaxInFlight | default 16 }}
+            - --max-concurrent-compiles={{ .Values.probeTestServer.concurrency.maxConcurrentCompiles | default 4 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.probeTestServer.resources | nindent 12 }}
+          volumeMounts:
+            - name: eval-token
+              mountPath: /var/probe-test/eval-token
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: eval-token
+          secret:
+            secretName: {{ $tokenSecretName }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if .Values.probeTestServer.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-probe-test-server
+  namespace: {{ $ns }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: probe-test-server
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "helm.name" . }}-probe-test-server
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: probe-test-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "helm.name" . }}-subresource-api
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: subresource-api
+      ports:
+        - protocol: TCP
+          port: 8080
+{{- end }}
+{{- end }}

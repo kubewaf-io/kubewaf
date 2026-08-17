@@ -1,11 +1,6 @@
-# Cilium Gateway API resources for e2e
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: cilium
-spec:
-  controllerName: io.cilium/gateway-controller
+# Cilium Gateway API resources for e2e.
+# GatewayClass "cilium" is created by the Cilium Helm chart when
+# gatewayAPI.enabled=true — do not create it here (Helm ownership conflict).
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway

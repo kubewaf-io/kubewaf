@@ -36,16 +36,16 @@ import (
 // Note: provider matrix lives in providers_test.go (E2E_PROVIDER).
 
 // namespace where the project is deployed in (legacy kustomize manager path)
-const namespace = "wafv2-system"
+const namespace = "kubewaf-system"
 
 // serviceAccountName created for the project
-const serviceAccountName = "wafv2-controller-manager"
+const serviceAccountName = "kubewaf-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "wafv2-controller-manager-metrics-service"
+const metricsServiceName = "kubewaf-controller-manager-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "wafv2-metrics-binding"
+const metricsRoleBindingName = "kubewaf-metrics-binding"
 
 // projectImage is used by the legacy manager suite (kustomize deploy).
 var projectImageLegacy = projectImage()
@@ -204,7 +204,7 @@ var _ = Describe("Manager", Ordered, func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
 			cmd := exec.Command(
 				"kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=wafv2-metrics-reader",
+				"--clusterrole=kubewaf-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
 			)
 			_, err := utils.Run(cmd)
@@ -313,17 +313,7 @@ var _ = Describe("Manager", Ordered, func() {
 		//			Eventually(verifyKubeWAFMetrics, 2*time.Minute, time.Second).Should(Succeed())
 		//		})
 
-		// +kubebuilder:scaffold:e2e-webhooks-checks
-
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		// Provider matrix + FTW coverage lives in providers_test.go / ftw_*.go.
 	})
 })
 

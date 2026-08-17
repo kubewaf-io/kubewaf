@@ -3,6 +3,14 @@ ignore:
   - config/
   - charts/*/templates/
   - charts/**/templates/
+  # Engine submodule trees and local build/cache artifacts (not monorepo source of truth).
+  - engines/
+  - dist/
+  - headlamp-plugin/
+  - website2/
+  - node_modules/
+  - "**/node_modules/"
+  - test/e2e/ftw/.crs-cache/
 rules:
   truthy:
     level: warning

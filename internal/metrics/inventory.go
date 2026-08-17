@@ -49,17 +49,17 @@ func NewInventoryUpdater(c client.Client, interval time.Duration) *InventoryUpda
 
 // Start implements manager.Runnable.
 func (u *InventoryUpdater) Start(ctx context.Context) error {
-	log := log.FromContext(ctx).WithName("metrics.inventory")
+	logger := log.FromContext(ctx).WithName("metrics.inventory")
 	ticker := time.NewTicker(u.interval)
 	defer ticker.Stop()
 
 	// Initial population
-	u.updateAll(ctx, log)
+	u.updateAll(ctx, logger)
 
 	for {
 		select {
 		case <-ticker.C:
-			u.updateAll(ctx, log)
+			u.updateAll(ctx, logger)
 		case <-ctx.Done():
 			return nil
 		}
@@ -110,13 +110,6 @@ func (u *InventoryUpdater) updateAll(ctx context.Context, logger logr.Logger) {
 		for ns, count := range byNS {
 			WAFTotal.WithLabelValues(ns).Set(float64(count))
 		}
-	}
-
-	// WAFInstances (when they become more active)
-	var instances wafv1beta1.WAFInstanceList
-	if err := u.List(ctx, &instances); err == nil {
-		// We can add a metric later if needed
-		_ = instances
 	}
 
 	logger.V(3).Info("inventory metrics updated")

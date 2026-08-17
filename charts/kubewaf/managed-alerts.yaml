@@ -1,0 +1,22 @@
+# Managed-alert path only (catalog + operator kubewaf_waf_ready).
+groups:
+  - name: kubewaf.managed.alerts
+    rules:
+      - alert: KubeWAFHighBlockRate
+        expr: |
+          sum(rate(kubewaf_waf_tx_interruptions[5m])) / clamp_min(sum(rate(kubewaf_waf_tx_total[5m])), 1) > 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High WAF block rate detected"
+          description: "The WAF is blocking a large percentage of traffic (catalog series)."
+
+      - alert: KubeWAFPolicyNotReady
+        expr: kubewaf_waf_ready == 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "WAF is not Ready"
+          description: "WAF policy {{ $labels.name }} has been unhealthy for a long time."

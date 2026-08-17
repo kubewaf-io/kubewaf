@@ -1,0 +1,42 @@
+{{- if .Values.observability.managed.enabled }}
+{{- if not (include "kubewaf.metricsBackendOK" .) }}
+{{- fail "observability.managed requires victoriaMetrics (enabled or endpoint) or prometheusRemoteWrite.endpoint" }}
+{{- end }}
+{{- $profile := .Values.observability.managed.profile | default "lite" }}
+{{- $metricsBackend := "none" }}
+{{- if .Values.observability.managed.victoriaMetrics.enabled }}
+{{- $metricsBackend = "victoriaMetrics" }}
+{{- else if .Values.observability.managed.victoriaMetrics.endpoint }}
+{{- $metricsBackend = "victoriaMetrics" }}
+{{- else if .Values.observability.managed.prometheusRemoteWrite.enabled }}
+{{- $metricsBackend = "prometheusRemoteWrite" }}
+{{- end }}
+{{- $tracesBackend := "none" }}
+{{- if or .Values.observability.managed.victoriaTraces.enabled .Values.observability.managed.victoriaTraces.endpoint }}
+{{- $tracesBackend = "victoriaTraces" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubewaf-managed-observability
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: managed-observability
+data:
+  enabled: "true"
+  profile: {{ $profile | quote }}
+  injectConfigured: {{ .Values.observability.managed.injectConfigured | quote }}
+  tracesBackend: {{ $tracesBackend | quote }}
+  metricsBackend: {{ $metricsBackend | quote }}
+  {{- if .Values.observability.managed.victoriaMetrics.enabled }}
+  metricsQueryService: {{ printf "%s-victoria-metrics" (include "helm.fullname" .) | quote }}
+  metricsQueryPort: "8428"
+  {{- end }}
+  {{- if or .Values.observability.managed.victoriaTraces.enabled .Values.observability.managed.victoriaTraces.endpoint }}
+  tracesQueryService: {{ printf "%s-victoria-traces" (include "helm.fullname" .) | quote }}
+  tracesQueryPort: "10428"
+  {{- end }}
+  evalIds: "v1"
+  queryTransport: "subresources"
+{{- end }}

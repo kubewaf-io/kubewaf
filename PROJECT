@@ -7,7 +7,7 @@ domain: kubewaf.io
 layout:
 - go.kubebuilder.io/v4
 multigroup: true
-projectName: wafv2
+projectName: kubewaf
 repo: github.com/kubewaf-io/kubewaf
 resources:
 - api:
@@ -26,15 +26,6 @@ resources:
   domain: kubewaf.io
   group: waf
   kind: RuleSet
-  path: github.com/kubewaf-io/kubewaf/api/waf/v1beta1
-  version: v1beta1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: kubewaf.io
-  group: waf
-  kind: WAFInstance
   path: github.com/kubewaf-io/kubewaf/api/waf/v1beta1
   version: v1beta1
 - api:

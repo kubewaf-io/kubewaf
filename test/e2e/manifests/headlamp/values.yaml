@@ -1,0 +1,22 @@
+# In-cluster Headlamp for kubeWAF e2e screenshots.
+# Plugin files are mounted from ConfigMap kubewaf-headlamp-plugin.
+config:
+  inCluster: true
+  inClusterContextName: main
+  # e2e-only: skip the token login so Playwright can land on /c/main/...
+  unsafeUseServiceAccountToken: true
+  watchPlugins: true
+  pluginsDir: /headlamp/plugins
+
+clusterRoleBinding:
+  create: true
+  clusterRoleName: cluster-admin
+
+volumes:
+  - name: kubewaf-plugin
+    configMap:
+      name: kubewaf-headlamp-plugin
+volumeMounts:
+  - name: kubewaf-plugin
+    mountPath: /headlamp/plugins/kubewaf
+    readOnly: true

@@ -1,0 +1,22 @@
+# Kind has no cloud LoadBalancer. Cilium Gateway defaults to type=LoadBalancer,
+# so without IPAM the Service EXTERNAL-IP stays <pending> and Gateway status
+# remains Programmed=AddressNotAssigned forever.
+#
+# CiliumLoadBalancerIPPool allocates IPs from the Kind docker network (172.18.0.0/16
+# on typical kind setups; override KIND_LB_CIDR if your network differs).
+# Pool is selected for all Gateway-owned Services via label selector.
+apiVersion: cilium.io/v2
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: kind-e2e-gateway-pool
+  labels:
+    e2e: "true"
+spec:
+  # High end of the kind bridge range — avoid node IPs (usually 172.18.0.2+).
+  blocks:
+  - start: 172.18.255.1
+    stop: 172.18.255.20
+  serviceSelector:
+    matchExpressions:
+    - key: gateway.networking.k8s.io/gateway-name
+      operator: Exists

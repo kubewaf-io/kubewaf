@@ -1,0 +1,6 @@
+[submodule "engines/modsecurity-proxy-wasm"]
+	path = engines/modsecurity-proxy-wasm
+	url = https://github.com/kubewaf-io/modsecurity-proxy-wasm.git
+[submodule "engines/pow-proxy-wasm"]
+	path = engines/pow-proxy-wasm
+	url = https://github.com/kubewaf-io/pow-proxy-wasm.git

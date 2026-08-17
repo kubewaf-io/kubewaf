@@ -1,0 +1,73 @@
+kubeWAF {{ .Chart.AppVersion | default .Chart.Version }} is installed.
+
+ECDS Service: {{ include "helm.fullname" . }}-ecds.{{ .Release.Namespace }}.svc:{{ .Values.dataplane.ecds.port | default 18001 }}
+
+Cilium (required for WAF filters on cilium-envoy)
+  CEC HTTP filters use config_discovery → kubewaf_ecds. Envoy accepts that only
+  when kubewaf_ecds is a STATIC cluster on the cilium-envoy *bootstrap* (not in
+  the CEC). WAF Ready does not mean Envoy subscribed.
+
+  Do not set Cilium envoy.bootstrapConfigMap to this chart's fragment ConfigMap
+  {{ include "helm.fullname" . }}-cilium-envoy-ecds-fragment — that is a cluster
+  fragment only. Replacing Cilium's generated bootstrap drops xds-grpc-cilium.
+
+  Helm-only merge (keep xds-grpc-cilium):
+    1. IP=$(kubectl -n {{ .Release.Namespace }} get svc {{ include "helm.fullname" . }}-ecds \
+         -o jsonpath='{.spec.clusterIP}')
+       Abort if empty/None. cilium-envoy is hostNetwork — do not use DNS.
+    2. Substitute that IP into data.kubewaf_ecds-cluster.json on ConfigMap
+       {{ include "helm.fullname" . }}-cilium-envoy-ecds-fragment.
+    3. Dump /var/run/cilium/envoy/bootstrap-config.json from ds/cilium-envoy,
+       append the STATIC cluster, write kube-system/cilium-envoy-bootstrap-kubewaf
+       (key bootstrap-config.json).
+    4. helm upgrade <cilium-release> <same-chart> -n kube-system --reuse-values \
+         --version <installed Cilium chart version> \
+         --set-string envoy.bootstrapConfigMap=cilium-envoy-bootstrap-kubewaf
+       Never run an unpinned helm upgrade (omitting --version can replace the CNI).
+    5. kubectl -n kube-system rollout restart ds/cilium-envoy
+       Do not restart ds/cilium.
+
+  ClusterIP is pinned in the STATIC cluster. If the ECDS Service is deleted, that
+  IP can be reallocated and another process could serve ECDS. Re-merge after IP
+  changes (apply the ConfigMap *and* rollout cilium-envoy). This chart does not
+  terminate TLS on ECDS.
+
+  Uninstall / revert:
+    helm upgrade <cilium-release> <same-chart> -n kube-system --reuse-values \
+      --version <installed> --set-string envoy.bootstrapConfigMap=""
+    kubectl -n kube-system delete cm cilium-envoy-bootstrap-kubewaf --ignore-not-found
+    kubectl -n kube-system rollout restart ds/cilium-envoy
+
+Managed observability (Envoy OTLP, not scrape, not Wasm httpCall)
+  Off by default. Enable with:
+    --set observability.managed.enabled=true --set observability.managed.victoriaMetrics.enabled=true
+  Envoy exporters target cluster kubewaf_otel (HTTP/2 gRPC :4317), same inject class as kubewaf_ecds.
+  Do not fill EnvoyProxy.spec.telemetry / Istio Telemetry / Hubble for this product path.
+  OTLP is plaintext in-cluster (no client auth), same class as ECDS.
+  Helm fails if managed is on with no VictoriaMetrics and no prometheusRemoteWrite.endpoint.
+  prometheusRemoteWrite is Prometheus remote_write, not OTLP.
+
+  EG/Istio: apply the bootstrap fragment (cluster + sink + stats_tags, tag before phase;
+  conversions in charts/kubewaf/files/otel-stats-sink.yaml). Then:
+    --set observability.managed.injectConfigured=true
+  TelemetrySink stays Degraded until injectConfigured is true.
+
+  Security traces: set profile=full and victoriaTraces.enabled=true. The Collector
+  converts Envoy OTel access-log records into waf.eval spans (otlpjson connector).
+  Query kubewaf_waf_* / kubewaf.waf.* in VM and service.name=kubewaf in VictoriaTraces.
+  Headlamp queries metrics/traces via subresources.kubewaf.io (not services/proxy):
+    GET /apis/subresources.kubewaf.io/v1alpha1/namespaces/{ns}/wafs/{name}/metrics
+    GET /apis/subresources.kubewaf.io/v1alpha1/namespaces/{ns}/wafs/{name}/traces
+  Enable the aggregated API (no Test Server needed for directives/query):
+    --set subresourceApi.enabled=true --set subresourceApi.probes.enabled=false
+  Query NetworkPolicy allows the collector + subresource-api / operator pods only.
+  Do not open VM :8428 / VT :10428 to kube-system or [cluster].
+  Bind ClusterRole {{ include "helm.fullname" . }}-query to Headlamp users (get wafs/metrics, wafs/traces, wafs/directives).
+
+  Cilium: after the Collector Service exists, remesh:
+    hack/scripts/merge-cilium-envoy-ecds-bootstrap.sh --apply --helm-upgrade \
+      --ecds-service {{ include "helm.fullname" . }}-ecds \
+      --otel-service {{ include "kubewaf.otelCollectorName" . }}
+  Helm never owns ConfigMap kubewaf-cilium-otel (script-owned ciliumOtelMerged).
+  cilium-envoy is hostNetwork: if you enable ciliumNetworkPolicy, include reserved:host
+  / nodeCIDRs. Skipping CNP means any node can POST fake waf.* to :4317.

@@ -1,0 +1,48 @@
+# Fragment only — not a complete cilium-envoy bootstrap.
+# envoy.bootstrapConfigMap *replaces* Cilium's generated file; applying this
+# ConfigMap as-is would drop xds-grpc-cilium and break L7 policy.
+#
+# Merge kubewaf-ecds-cluster.json into a dump of /var/run/cilium/envoy/bootstrap-config.json,
+# substitute REPLACE_WITH_KUBEWAF_ECDS_CLUSTERIP with the ECDS Service ClusterIP, then
+# put the *full* JSON in data.bootstrap-config.json. Or run:
+#   hack/scripts/merge-cilium-envoy-ecds-bootstrap.sh --apply --helm-upgrade \
+#     --ecds-namespace kubewaf-system --ecds-service kubewaf-ecds
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cilium-envoy-bootstrap-kubewaf-fragment
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/managed-by: kubewaf
+    app.kubernetes.io/component: cilium-envoy-ecds
+data:
+  kubewaf_ecds-cluster.json: |
+    {
+      "name": "kubewaf_ecds",
+      "type": "STATIC",
+      "connect_timeout": "2s",
+      "lb_policy": "ROUND_ROBIN",
+      "typed_extension_protocol_options": {
+        "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+          "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+          "explicit_http_config": {
+            "http2_protocol_options": {}
+          }
+        }
+      },
+      "load_assignment": {
+        "cluster_name": "kubewaf_ecds",
+        "endpoints": [{
+          "lb_endpoints": [{
+            "endpoint": {
+              "address": {
+                "socket_address": {
+                  "address": "REPLACE_WITH_KUBEWAF_ECDS_CLUSTERIP",
+                  "port_value": 18001
+                }
+              }
+            }
+          }]
+        }]
+      }
+    }

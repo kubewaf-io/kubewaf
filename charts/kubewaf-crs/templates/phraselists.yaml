@@ -1,0 +1,13 @@
+{{- /*
+Stock CRS PhraseLists (@pmFromFile data files) for Path B ModSecurity data_files inject.
+Generated into files/phraselists/; documents omit metadata.namespace.
+*/ -}}
+{{- if (.Values.crs.installPhraseLists | default true) }}
+{{- $root := . }}
+{{- range $path, $_ := .Files.Glob "files/phraselists/*.yaml" }}
+{{- $raw := $root.Files.Get $path }}
+---
+# Source: {{ $path }}
+{{ $raw }}
+{{- end }}
+{{- end }}

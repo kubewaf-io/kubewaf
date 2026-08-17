@@ -1,0 +1,159 @@
+{{- if and .Values.observability.managed.enabled .Values.observability.managed.victoriaMetrics.enabled }}
+{{- $name := printf "%s-victoria-metrics" (include "helm.fullname" .) }}
+{{- $adminSecret := printf "%s-victoria-admin" (include "helm.fullname" .) }}
+{{- $deleteKey := "" }}
+{{- $snapshotKey := "" }}
+{{- $configKey := "" }}
+{{- $existingAdmin := lookup "v1" "Secret" .Release.Namespace $adminSecret }}
+{{- if and $existingAdmin $existingAdmin.data }}
+{{- $deleteKey = index $existingAdmin.data "deleteAuthKey" }}
+{{- $snapshotKey = index $existingAdmin.data "snapshotAuthKey" }}
+{{- $configKey = index $existingAdmin.data "configAuthKey" }}
+{{- else }}
+{{- $deleteKey = randAlphaNum 48 | b64enc }}
+{{- $snapshotKey = randAlphaNum 48 | b64enc }}
+{{- $configKey = randAlphaNum 48 | b64enc }}
+{{- end }}
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $adminSecret }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: victoria-metrics
+type: Opaque
+data:
+  deleteAuthKey: {{ $deleteKey }}
+  snapshotAuthKey: {{ $snapshotKey }}
+  configAuthKey: {{ $configKey }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: victoria-metrics
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8428
+      targetPort: http
+  selector:
+    {{- include "helm.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: victoria-metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: victoria-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "helm.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: victoria-metrics
+  template:
+    metadata:
+      labels:
+        {{- include "helm.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: victoria-metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: victoria-metrics
+          image: "{{ .Values.observability.managed.victoriaMetrics.image.registry }}/{{ .Values.observability.managed.victoriaMetrics.image.repository }}:{{ .Values.observability.managed.victoriaMetrics.image.tag }}"
+          imagePullPolicy: {{ .Values.observability.managed.victoriaMetrics.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          args:
+            - --httpListenAddr=:8428
+            - --storageDataPath=/victoria-metrics-data
+            - --retentionPeriod={{ .Values.observability.managed.victoriaMetrics.retentionPeriod | default "14d" }}
+            - --deleteAuthKey=$(VM_DELETE_AUTH_KEY)
+            - --snapshotAuthKey=$(VM_SNAPSHOT_AUTH_KEY)
+            - --configAuthKey=$(VM_CONFIG_AUTH_KEY)
+          env:
+            - name: VM_DELETE_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $adminSecret }}
+                  key: deleteAuthKey
+            - name: VM_SNAPSHOT_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $adminSecret }}
+                  key: snapshotAuthKey
+            - name: VM_CONFIG_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $adminSecret }}
+                  key: configAuthKey
+          ports:
+            - name: http
+              containerPort: 8428
+          volumeMounts:
+            - name: data
+              mountPath: /victoria-metrics-data
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.observability.managed.victoriaMetrics.resources | nindent 12 }}
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+{{- if .Values.observability.managed.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: victoria-metrics
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "helm.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: victoria-metrics
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "helm.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: otel-collector
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "helm.name" . }}-subresource-api
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: subresource-api
+        - podSelector:
+            matchLabels:
+              {{- include "helm.selectorLabels" . | nindent 14 }}
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: DoesNotExist
+      ports:
+        - protocol: TCP
+          port: 8428
+{{- end }}
+{{- end }}

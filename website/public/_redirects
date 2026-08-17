@@ -1,3 +1,0 @@
-# Netlify static redirects (output:export has no server redirects)
-/docs              /docs/kubewaf/   302
-/docs/             /docs/kubewaf/   302

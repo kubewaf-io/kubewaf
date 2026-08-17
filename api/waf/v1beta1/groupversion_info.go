@@ -42,8 +42,6 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&RuleSetList{},
 		&WAF{},
 		&WAFList{},
-		&WAFInstance{},
-		&WAFInstanceList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil

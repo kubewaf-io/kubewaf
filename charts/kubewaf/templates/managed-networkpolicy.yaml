@@ -1,0 +1,96 @@
+{{- if and .Values.observability.managed.enabled .Values.observability.managed.networkPolicy.enabled }}
+{{- $name := include "kubewaf.otelCollectorName" . }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "helm.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 4317
+{{- end }}
+{{- if and .Values.observability.managed.enabled .Values.observability.managed.ciliumNetworkPolicy.enabled }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "kubewaf.otelCollectorName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "helm.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  ingress:
+    - fromEntities:
+        - cluster
+        - host
+      toPorts:
+        - ports:
+            - port: "4317"
+              protocol: TCP
+    {{- with .Values.observability.managed.ciliumNetworkPolicy.nodeCIDRs }}
+    - fromCIDR:
+        {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports:
+            - port: "4317"
+              protocol: TCP
+    {{- end }}
+  # Query ports: labeled operator / subresource-api / collector only.
+  # Do not default fromEntities to [cluster].
+{{- if or .Values.observability.managed.victoriaMetrics.enabled .Values.observability.managed.victoriaTraces.enabled }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "helm.fullname" . }}-query-backends
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: managed-observability
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [victoria-metrics, victoria-traces]
+      - key: app.kubernetes.io/instance
+        operator: In
+        values: [{{ .Release.Name | quote }}]
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            {{- include "helm.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: otel-collector
+        - matchLabels:
+            app.kubernetes.io/name: {{ include "helm.name" . }}-subresource-api
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: subresource-api
+        - matchLabels:
+            {{- include "helm.selectorLabels" . | nindent 12 }}
+          matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: DoesNotExist
+      toPorts:
+        - ports:
+            - port: "8428"
+              protocol: TCP
+            - port: "10428"
+              protocol: TCP
+{{- end }}
+{{- end }}

@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package ecds implements a gRPC Extension Config Discovery Service (ECDS)
-// that serves Coraza Wasm filter configurations to Envoy proxies.
+// that serves Wasm filter configurations to Envoy proxies.
 package ecds
 
 import (
@@ -171,7 +171,7 @@ func (s *Server) publishLocked() error {
 // Run starts the gRPC ECDS server on the given bind address (e.g. ":18001").
 // It blocks until ctx is cancelled or Serve fails.
 func (s *Server) Run(ctx context.Context, bindAddr string) error {
-	var grpcOptions []grpc.ServerOption
+	grpcOptions := make([]grpc.ServerOption, 0, 3)
 	grpcOptions = append(grpcOptions,
 		grpc.MaxConcurrentStreams(grpcMaxConcurrentStreams),
 		grpc.KeepaliveParams(keepalive.ServerParameters{

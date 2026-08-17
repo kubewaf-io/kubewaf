@@ -1,0 +1,27 @@
+# Path B FTW WAF (Cilium): structured CRS only (crsEnable: false).
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: demo-waf-cilium-path-b
+  namespace: demo
+  labels:
+    e2e: "true"
+    provider: cilium
+    waf.kubewaf.io/path: "B"
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: demo-gateway
+  ruleRefs:
+    - kind: RuleSet
+      name: ftw-crs-path-b
+      namespace: demo
+      group: waf.kubewaf.io
+      version: v1beta1
+  crsEnable: false
+  crs:
+    paranoiaLevel: 4
+    inboundAnomalyThreshold: 1
+    outboundAnomalyThreshold: 1
+  logLevel: 3

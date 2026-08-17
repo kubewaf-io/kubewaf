@@ -1,0 +1,27 @@
+# Path B: structured CRS RuleSet only (no crsEnable / no Include @owasp_crs).
+# Prerequisites: apply CRS SecRule samples + optimized-rulesets.yaml in the same namespace.
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: waf-api
+  labels:
+    waf.kubewaf.io/profile: api
+spec:
+  # Path B: do not load engine-embedded CRS.
+  crsEnable: false
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: api
+  ruleRefs:
+    - kind: RuleSet
+      name: ruleset-api
+      group: waf.kubewaf.io
+      version: v1beta1
+  # Tuning works without crsEnable: setup SecAction before rules, exclusions after.
+  crs:
+    paranoiaLevel: 1
+    inboundAnomalyThreshold: 5
+    outboundAnomalyThreshold: 4
+    # Example: drop a noisy rule even though it is selected by the RuleSet.
+    # removeById: [942100]

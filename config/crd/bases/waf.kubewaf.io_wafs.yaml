@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.2
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: wafs.waf.kubewaf.io
 spec:
   group: waf.kubewaf.io
@@ -20,7 +20,32 @@ spec:
     singular: waf
   scope: Namespaced
   versions:
-  - name: v1beta1
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.provider
+      name: Provider
+      type: string
+    - jsonPath: .status.engine
+      name: Engine
+      type: string
+    - jsonPath: .status.mode
+      name: Mode
+      type: string
+    - jsonPath: .status.rulesLoaded
+      name: Rules
+      type: integer
+    - jsonPath: .spec.crsEnable
+      name: CRS
+      type: boolean
+    - jsonPath: .spec.telemetry.mode
+      name: Telemetry
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
     schema:
       openAPIV3Schema:
         description: WAF is the Schema for the wafs API
@@ -48,6 +73,48 @@ spec:
               See WAFSpec for details on policy attachment, RuleSet
               resolution (with CRS support), and logging configuration.
             properties:
+              block:
+                description: |-
+                  Block configures client-visible deny local-replies (ModSecurity engine).
+                  Defaults are product-neutral: message "Forbidden", marker header "x-blocked".
+                  Enable addRequestIDHeader to echo the request id on deny responses.
+                properties:
+                  addBlockedHeader:
+                    default: true
+                    description: |-
+                      AddBlockedHeader controls whether deny responses include a blocked marker header.
+                      Default: true
+                    type: boolean
+                  addRequestIDHeader:
+                    default: false
+                    description: |-
+                      AddRequestIDHeader controls whether deny responses include the correlated request id.
+                      Default: false
+                    type: boolean
+                  blockedHeader:
+                    default: x-blocked
+                    description: |-
+                      BlockedHeader is the name of the blocked marker header on deny responses.
+                      Default: "x-blocked". Only applied when AddBlockedHeader is true.
+                      Set AddBlockedHeader to false to omit the header entirely.
+                    maxLength: 256
+                    pattern: ^[A-Za-z0-9!#$%&'*+.^_|~-]+$
+                    type: string
+                  message:
+                    default: Forbidden
+                    description: |-
+                      Message is the local-reply details string shown to clients on deny.
+                      Default: "Forbidden"
+                    type: string
+                  requestIDHeader:
+                    default: x-request-id
+                    description: |-
+                      RequestIDHeader is the response header name for the request id on deny responses.
+                      Default: "x-request-id". Only applied when AddRequestIDHeader is true.
+                    maxLength: 256
+                    pattern: ^[A-Za-z0-9!#$%&'*+.^_|~-]+$
+                    type: string
+                type: object
               challenge:
                 description: |-
                   Challenge optionally installs a Proof-of-Work browser challenge filter
@@ -102,31 +169,14 @@ spec:
                     - key
                     - name
                     type: object
-                  wasmHTTP:
-                    description: WasmHTTP overrides the challenge module download
-                      URL.
-                    type: string
-                  wasmSHA256:
-                    description: WasmSHA256 pins the challenge module binary.
-                    type: string
                 type: object
-              corazaProxyWasmHTTP:
-                description: 'CorazaProxyWasmHTTP is deprecated: use wasmHTTP (or
-                  engine defaults).'
-                type: string
-              corazaProxyWasmImage:
-                default: ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0
-                description: |-
-                  CorazaProxyWasmImage is deprecated: use engine=Coraza + wasmImage.
-                  Kept for backward compatibility.
-                type: string
-              corazaProxyWasmSHA256:
-                description: 'CorazaProxyWasmSHA256 is deprecated: use wasmSHA256.'
-                type: string
               crs:
                 description: |-
-                  CRS contains declarative tuning knobs for the OWASP Core Rule Set.
-                  Only has effect when CRSEnable is true.
+                  CRS contains declarative tuning knobs for the OWASP Core Rule Set
+                  (paranoia levels, anomaly thresholds, remove-by-id/tag, update-target).
+                  Applies with either Path A (crsEnable) or Path B (structured RuleSets only).
+                  Setup setvars are emitted before CRS/user rules; exclusions after the
+                  engine include (Path A) or after RuleSet SecLang (Path B).
                 properties:
                   inboundAnomalyThreshold:
                     description: |-
@@ -192,30 +242,18 @@ spec:
               crsEnable:
                 default: false
                 description: |-
-                  CRSEnable enables the OWASP Core Rule Set (v4.x recommended).
-                  When true, CRS rules are merged with those from RuleSetRefs.
-                  For engine=ModSecurity, CRS is embedded in the wasm binary and loaded via
-                  virtual includes (Include @owasp_crs/*.conf).
+                  CRSEnable enables Path A: load OWASP CRS from the engine via virtual includes
+                  (Include @crs-setup-conf + Include @owasp_crs/*.conf).
+                  Prefer Path B for kube-native CRS: leave false and attach a RuleSet of
+                  structured SecRules (config/samples/crs/, optimized-rulesets). Use spec.crs
+                  for paranoia / thresholds / exclusions with either path.
                 type: boolean
-              engine:
-                allOf:
-                - enum:
-                  - Coraza
-                  - ModSecurity
-                - enum:
-                  - Coraza
-                  - ModSecurity
-                default: Coraza
-                description: |-
-                  Engine selects the Proxy-Wasm WAF implementation that evaluates SecLang rules.
-                  Coraza (default) uses coraza-proxy-wasm; ModSecurity uses the in-tree
-                  modsecurity-proxy-wasm module (embedded CRS, same directives_map JSON shape).
-                type: string
               logLevel:
-                default: 7
+                default: 1
                 description: |-
                   LogLevel controls verbosity of the Envoy WAF filter logs.
                   Common values: 0=off, 1=error, 2=warn, 3=info, 4=debug (up to 7).
+                  Default is 1 (error) so production clusters are not flooded; set higher for debug.
                 maximum: 7
                 minimum: 0
                 type: integer
@@ -226,17 +264,19 @@ spec:
                   enableStats:
                     default: true
                     description: |-
-                      EnableStats enables the core WAF metrics (tx total, allowed, interruptions,
-                      rule matches). Default: true
+                      EnableStats enables the core WAF ABI metrics (tx total, allowed, interruptions,
+                      rule matches). Default: true.
+                      When false the managed catalog has no series for this WAF; traces can still
+                      export when telemetry.mode=Managed.
                     type: boolean
                   extraLabels:
                     additionalProperties:
                       type: string
                     description: |-
-                      ExtraLabels are key/value pairs attached to all WAF filter metrics
+                      ExtraLabels are additional name-embedding keys on WAF filter metrics
                       (modsecurity_proxy_wasm.* / kubewaf_waf.*).
-                      The operator always injects waf_namespace, waf_name, engine, and owner;
-                      ExtraLabels override those keys when set.
+                      ExtraLabels are copied first; reserved identity keys (waf_namespace,
+                      waf_name, engine, owner) are written after and collisions are dropped.
                       Example: { "team": "payments", "env": "prod", "gateway": "external" }
                     type: object
                   includeRuleID:
@@ -257,6 +297,16 @@ spec:
                       for stats/context.
                     type: string
                 type: object
+              mode:
+                default: Blocking
+                description: |-
+                  Mode selects blocking vs observe-only engine behaviour.
+                  Blocking (default) emits SecRuleEngine On; DetectionOnly emits SecRuleEngine DetectionOnly
+                  for safe CRS / rule rollouts without denying traffic.
+                enum:
+                - Blocking
+                - DetectionOnly
+                type: string
               parentRefs:
                 description: |-
                   ParentRefs is the legacy nested attachment form (spec.parentRefs.targetRef).
@@ -509,11 +559,25 @@ spec:
                           : true '
                     type: array
                 type: object
+              phraseListPolicy:
+                default: FailClosed
+                description: |-
+                  PhraseListPolicy controls publish behavior when a custom @pmFromFile /
+                  @ipMatchFromFile basename cannot be resolved to a Ready PhraseList or
+                  IPList in the WAF namespace. Data-files injection is always enabled.
+                enum:
+                - FailClosed
+                - IgnoreUnknown
+                type: string
               provider:
                 description: |-
-                  Provider selects the data-plane control plane that will receive the ECDS
-                  filter slot (Envoy Gateway Extension Server hooks, or Istio EnvoyFilter).
-                  Rule/plugin configuration is always pushed over gRPC ECDS regardless of provider.
+                  Provider selects the data-plane control plane that will receive the filter
+                  slot (Envoy Gateway Extension Server, Istio EnvoyFilter, or CiliumEnvoyConfig).
+                  When omitted or type=Auto, the operator discovers the provider from the
+                  targeted Gateway's GatewayClass.controllerName, then from installed
+                  platform CRDs (Envoy Gateway / Istio / Cilium). Status.provider reports
+                  the resolved value. Rule/plugin configuration is always pushed over gRPC
+                  ECDS regardless of provider.
                 properties:
                   cilium:
                     description: Cilium holds Cilium-specific slot settings (only
@@ -556,8 +620,10 @@ spec:
                     type: object
                   type:
                     default: Auto
-                    description: Type selects EnvoyGateway, Istio, Cilium, or Auto
-                      (default EnvoyGateway).
+                    description: |-
+                      Type selects EnvoyGateway, Istio, Cilium, or Auto.
+                      Auto (default when omitted) discovers from GatewayClass.controllerName
+                      of targeted Gateways, then from installed CRDs.
                     enum:
                     - Auto
                     - EnvoyGateway
@@ -578,7 +644,7 @@ spec:
                       description: |-
                         Kind specifies the type of resource being referenced.
                         Supported: "SecRule", "SecAction", "RuleSet", "ConfigMap".
-                        Note: non-RuleSet owners (e.g. WAFInstance) may ONLY reference "RuleSet"
+                        Note: non-RuleSet owners (e.g. WAF) may ONLY reference "RuleSet"
                         (enforced in internal/references2/resolver.go; future webhook planned).
                       type: string
                     name:
@@ -889,27 +955,58 @@ spec:
                     rule: 'has(self.group) ? self.group == ''gateway.networking.k8s.io''
                       : true '
                 type: array
-              wasmHTTP:
+              telemetry:
                 description: |-
-                  WasmHTTP is the HTTP(S) URL where Envoy fetches the WAF engine .wasm binary.
-                  When empty, the operator default for the selected engine is used
-                  (typically the operator-hosted multi-module wasm server).
-                type: string
-              wasmImage:
-                description: WasmImage is an optional OCI image reference for documentation
-                  / future fetchers.
-                type: string
-              wasmSHA256:
-                description: WasmSHA256 is the expected SHA-256 of the WAF engine
-                  .wasm binary.
-                type: string
+                  Telemetry is opt-in managed observability policy (mode, sample/redact).
+                  Published on the ECDS plugin snapshot so Wasm can annotate requests.
+                  The OTLP destination is Envoy cluster kubewaf_otel (bootstrap/slot inject),
+                  not this field. There is no telemetry.otel client block.
+                properties:
+                  mode:
+                    default: None
+                    description: Mode is None (default) or Managed.
+                    enum:
+                    - None
+                    - Managed
+                    type: string
+                  traces:
+                    description: Traces is the security-trace sampling and redact
+                      policy.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled exports security traces when Mode is Managed.
+                          When unset, Helm profile defaults apply (lite=false, full=true).
+                        type: boolean
+                      includeMatchData:
+                        description: IncludeMatchData includes waf.match.data on the
+                          span. Default false.
+                        type: boolean
+                      redact:
+                        description: Redact omits client.address from export metadata.
+                          Default true.
+                        type: boolean
+                      sampleDisruptive:
+                        description: SampleDisruptive is the sample probability for
+                          interrupts (default 1.0).
+                        pattern: ^(0(\.[0-9]+)?|1(\.0+)?)$
+                        type: string
+                      sampleRate:
+                        description: SampleRate is the sample probability for non-disruptive
+                          matches (0.0–1.0).
+                        pattern: ^(0(\.[0-9]+)?|1(\.0+)?)$
+                        type: string
+                    type: object
+                type: object
             type: object
-            x-kubernetes-validations:
-            - message: crs tuning requires crsEnable=true
-              rule: '!has(self.crs) || self.crsEnable'
           status:
             description: status defines the observed state of WAF
             properties:
+              actionsLoaded:
+                description: ActionsLoaded is the number of SecAction objects resolved
+                  into this WAF.
+                format: int32
+                type: integer
               challengeEnabled:
                 description: ChallengeEnabled reports whether the PoW challenge filter
                   is installed.
@@ -979,6 +1076,26 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dataFilesContentHash:
+                description: DataFilesContentHash is sha256 over sorted "basename\0body"
+                  pairs.
+                type: string
+              dataFilesCount:
+                description: DataFilesCount is the number of basenames injected into
+                  plugin data_files.
+                format: int32
+                type: integer
+              dataFilesRawBytes:
+                description: DataFilesRawBytes is the total uncompressed injected
+                  body size.
+                format: int64
+                type: integer
+              directivesCount:
+                description: |-
+                  DirectivesCount is the number of SecLang directive lines pushed over ECDS
+                  (engine setup + includes + user rules).
+                format: int32
+                type: integer
               ecdsResourceName:
                 description: ECDSResourceName is the primary WAF ECDS extension config
                   name.
@@ -989,21 +1106,70 @@ spec:
                 format: int64
                 type: integer
               engine:
-                description: Engine is the resolved WAF Proxy-Wasm implementation
-                  (Coraza or ModSecurity).
+                description: Engine is the WAF Proxy-Wasm implementation (ModSecurity).
+                type: string
+              mode:
+                description: Mode is the effective rule engine mode (Blocking or DetectionOnly).
                 enum:
-                - Coraza
-                - ModSecurity
+                - Blocking
+                - DetectionOnly
                 type: string
               provider:
-                description: Provider is the resolved data-plane provider (EnvoyGateway,
-                  Istio, or Cilium).
+                description: |-
+                  Provider is the resolved data-plane provider (EnvoyGateway, Istio, or Cilium).
+                  Always set on Ready: either from Auto discovery or from explicit spec.provider.type.
                 enum:
                 - Auto
                 - EnvoyGateway
                 - Istio
                 - Cilium
                 type: string
+              providerDetection:
+                description: |-
+                  ProviderDetection explains how status.provider was chosen.
+                  For Auto/empty spec.provider this is the discovery chain, e.g.
+                    targetRef Gateway demo/gw → GatewayClass "cilium" → controller "io.cilium/gateway-controller"
+                  When the user set provider.type explicitly: "explicit (spec.provider.type)".
+                type: string
+              renderedDirectives:
+                description: |-
+                  RenderedDirectives is the SecLang config last published to the data plane.
+                  Large payloads are truncated (see RenderedDirectivesTruncated).
+                type: string
+              renderedDirectivesTruncated:
+                description: RenderedDirectivesTruncated is true when RenderedDirectives
+                  was size-capped.
+                type: boolean
+              ruleRefs:
+                description: |-
+                  RuleRefs is a capped leaf list of SecRule/SecAction membership after Resolve
+                  (selectors are expanded). Not a join key for Headlamp noisy-rule links.
+                items:
+                  description: RuleRefStatus contains the observed status for a referenced
+                    rule or action.
+                  properties:
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  type: object
+                type: array
+              ruleRefsOmitted:
+                description: RuleRefsOmitted is the count of resolved leaves not written
+                  to RuleRefs.
+                format: int32
+                type: integer
+              ruleRefsTruncated:
+                description: RuleRefsTruncated is true when RuleRefs omitted some
+                  resolved leaves.
+                type: boolean
+              rulesLoaded:
+                description: RulesLoaded is the number of SecRule objects resolved
+                  into this WAF.
+                format: int32
+                type: integer
               slotKind:
                 description: |-
                   SlotKind is the platform slot resource kind (e.g. EnvoyFilter, or

@@ -159,6 +159,20 @@ func (s *Server) PostTranslateModify(_ context.Context, req *egext.PostTranslate
 		)
 	}
 
+	otelCluster, err := s.buildOTelCluster(cfgs)
+	if err != nil {
+		return nil, err
+	}
+	if otelCluster != nil {
+		before := len(clusters)
+		clusters = xdsutil.EnsureCluster(clusters, otelCluster)
+		s.log.Info("PostTranslateModify: ensured OTel cluster",
+			"name", otelCluster.GetName(),
+			"host", ecdsClusterHost(otelCluster),
+			"added", len(clusters) > before,
+		)
+	}
+
 	// One wasm HTTP-fetch cluster per unique URL host.
 	seenWasm := map[string]bool{}
 	for _, p := range cfgs {
@@ -238,6 +252,19 @@ func (s *Server) buildECDSCluster(cfgs []*config.PortableConfig) (*cluster.Clust
 		ECDSHost:    host,
 		ECDSPort:    port,
 	})
+}
+
+func (s *Server) buildOTelCluster(cfgs []*config.PortableConfig) (*cluster.Cluster, error) {
+	for _, p := range cfgs {
+		if p == nil || p.OTelHost == "" {
+			continue
+		}
+		return xdsutil.MakeOTelCluster(p.OTelHost, p.OTelPort)
+	}
+	if s.opts.DefaultOTelHost == "" {
+		return nil, nil
+	}
+	return xdsutil.MakeOTelCluster(s.opts.DefaultOTelHost, s.opts.DefaultOTelPort)
 }
 
 func ecdsClusterHost(c *cluster.Cluster) string {
@@ -360,9 +387,9 @@ func parseListenerGateway(listenerName string) (ns, name string) {
 }
 
 func matchesGateway(p *config.PortableConfig, gwNS, gwName string) bool {
-	// PortableConfig.ParentRefs holds the full WAFSpec (legacy field name).
-	refs := p.ParentRefs.EffectivePolicyTargets()
+	refs := p.PolicyTargets
 	// targetRef
+	//nolint:staticcheck // SA1019: TargetRef compat
 	if tr := refs.TargetRef; tr != nil {
 		if string(tr.Kind) == "Gateway" && string(tr.Name) == gwName {
 			// Same-namespace policy attachment (EG requirement).
@@ -402,10 +429,7 @@ func injectFilters(l *listener.Listener, cfgs []*config.PortableConfig) error {
 
 func injectIntoFilterChain(fc *listener.FilterChain, cfgs []*config.PortableConfig) error {
 	for i, f := range fc.Filters {
-		if f.GetName() != "envoy.filters.network.http_connection_manager" &&
-			!strings.Contains(f.GetName(), "http_connection_manager") {
-			// Still try to unpack as HCM by type URL.
-		}
+		// Attempt to unpack each filter as HCM (by type URL); skip non-HCM filters.
 		var mgr hcm.HttpConnectionManager
 		if tc := f.GetTypedConfig(); tc != nil {
 			if err := tc.UnmarshalTo(&mgr); err != nil {
@@ -431,24 +455,39 @@ func injectIntoFilterChain(fc *listener.FilterChain, cfgs []*config.PortableConf
 				existing[stub.GetName()] = true
 			}
 		}
-		if len(toInsert) == 0 {
+		needAccessLog := false
+		for _, p := range cfgs {
+			if p != nil && p.TelemetryManaged {
+				needAccessLog = true
+				break
+			}
+		}
+
+		if len(toInsert) == 0 && (!needAccessLog || xdsutil.HasOTelAccessLog(&mgr)) {
 			return nil
 		}
 
 		// Insert before router filter.
-		newFilters := make([]*hcm.HttpFilter, 0, len(mgr.HttpFilters)+len(toInsert))
-		inserted := false
-		for _, hf := range mgr.HttpFilters {
-			if !inserted && (hf.GetName() == "envoy.filters.http.router" || strings.HasSuffix(hf.GetName(), "router")) {
-				newFilters = append(newFilters, toInsert...)
-				inserted = true
+		if len(toInsert) > 0 {
+			newFilters := make([]*hcm.HttpFilter, 0, len(mgr.HttpFilters)+len(toInsert))
+			inserted := false
+			for _, hf := range mgr.HttpFilters {
+				if !inserted && (hf.GetName() == "envoy.filters.http.router" || strings.HasSuffix(hf.GetName(), "router")) {
+					newFilters = append(newFilters, toInsert...)
+					inserted = true
+				}
+				newFilters = append(newFilters, hf)
 			}
-			newFilters = append(newFilters, hf)
+			if !inserted {
+				newFilters = append(newFilters, toInsert...)
+			}
+			mgr.HttpFilters = newFilters
 		}
-		if !inserted {
-			newFilters = append(newFilters, toInsert...)
+		if needAccessLog {
+			if err := xdsutil.AppendOTelAccessLog(&mgr, config.DefaultOTelCluster); err != nil {
+				return fmt.Errorf("otel access log: %w", err)
+			}
 		}
-		mgr.HttpFilters = newFilters
 
 		anyHCM, err := anypb.New(&mgr)
 		if err != nil {
@@ -467,7 +506,7 @@ func injectIntoFilterChain(fc *listener.FilterChain, cfgs []*config.PortableConf
 
 // Run starts the Extension Server gRPC listener (blocks until ctx cancelled).
 func (s *Server) Run(ctx context.Context, bindAddr string) error {
-	var grpcOptions []grpc.ServerOption
+	grpcOptions := make([]grpc.ServerOption, 0, 3)
 	grpcOptions = append(grpcOptions,
 		grpc.MaxConcurrentStreams(100000),
 		grpc.KeepaliveParams(keepalive.ServerParameters{

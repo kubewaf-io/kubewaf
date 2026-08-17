@@ -1,0 +1,93 @@
+# IPList + @ipMatchFromFile via data_files.
+# Matches REQUEST_HEADERS:X-E2E-Client-IP (header) so e2e is independent of
+# Envoy REMOTE_ADDR / pod CIDR quirks. Production rules typically use REMOTE_ADDR.
+# Requires wasm with IpMatchFromFile catalog hook (data_files inject always on).
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: IPList
+metadata:
+  name: e2e-ip-blocklist
+  namespace: demo
+  labels:
+    e2e: "true"
+    seclang.kubewaf.io/ip-list: "true"
+spec:
+  fileName: e2e-ip-blocklist.data
+  content: |
+    # e2e blocked IPs / CIDRs
+    203.0.113.0/24
+    198.51.100.50
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: block-e2e-ip-list
+  namespace: demo
+  labels:
+    app: e2e-iplist
+    e2e: "true"
+spec:
+  match:
+    - collections:
+        - name: REQUEST_HEADERS
+          arguments: [X-E2E-Client-IP]
+      operator:
+        name: ipMatchFromFile
+        value: e2e-ip-blocklist.data
+  metadata:
+    id: 100902
+    phase: "1"
+    message: "e2e IP blocklist"
+    severity: "ERROR"
+    tags:
+      - "e2e"
+      - "iplist"
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "403"
+    non-disruptive:
+      - nonDisruptiveActionType: log
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: e2e-iplist-rules
+  namespace: demo
+  labels:
+    e2e: "true"
+spec:
+  ruleRefs:
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app: e2e-iplist
+  ipListRefs:
+    - name: e2e-ip-blocklist
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: demo-waf-iplist
+  namespace: demo
+  labels:
+    e2e: "true"
+    provider: envoy-gateway
+spec:
+  phraseListPolicy: FailClosed
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: demo-gateway
+  ruleRefs:
+    - kind: RuleSet
+      name: e2e-iplist-rules
+      namespace: demo
+      group: waf.kubewaf.io
+      version: v1beta1
+  crsEnable: false
+  logLevel: 3

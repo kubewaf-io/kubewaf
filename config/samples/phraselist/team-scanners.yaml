@@ -1,0 +1,40 @@
+# Example: custom PhraseList + SecRule using @pmFromFile (Path B / ModSecurity).
+# data_files injection is always enabled for ModSecurity.
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: PhraseList
+metadata:
+  name: team-scanners
+  labels:
+    seclang.kubewaf.io/phrase-list: "true"
+spec:
+  fileName: team-scanners.data
+  content: |
+    # custom scanners for this namespace
+    evil-scanner-bot
+    internal-recon-tool
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: block-team-scanners
+spec:
+  match:
+    - collections:
+        - name: REQUEST_HEADERS
+          arguments: [User-Agent]
+      operator:
+        name: pmFromFile
+        value: team-scanners.data
+  metadata:
+    id: 100001
+    phase: "1"
+    message: Team scanner UA
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "403"
+    non-disruptive:
+      - nonDisruptiveActionType: log

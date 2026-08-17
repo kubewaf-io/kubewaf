@@ -32,12 +32,12 @@ import (
 // from non-RuleSet owners are disallowed.
 //
 // When CRSEnable=true, the OWASP Core Rule Set (CRS) is automatically
-// included alongside user RuleSets.
+// included from the engine (Path A: Include @owasp_crs). Prefer Path B for
+// GitOps: crsEnable=false + RuleSet of structured SecRules, with optional
+// CRS tuning via spec.crs (paranoia, thresholds, exclusions) without includes.
 //
-// CorazaProxyWasmImage allows overriding the Wasm module image (default:
-// ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0).
-//
-// +kubebuilder:validation:XValidation:rule="!has(self.crs) || self.crsEnable",message="crs tuning requires crsEnable=true"
+// The WAF engine is ModSecurity (modsecurity-proxy-wasm), loaded from the
+// operator image (paths under /wasm, also via KO_DATA_PATH).
 type WAFSpec struct {
 	// PolicyTargetReferences attaches this WAF to Gateway API resources.
 	// Inlined so JSON/YAML expose top-level targetRef / targetRefs — required by
@@ -56,19 +56,15 @@ type WAFSpec struct {
 	// +optional
 	ParentRefs *envoygatewayv1alpha1.PolicyTargetReferences `json:"parentRefs,omitempty"`
 
-	// Provider selects the data-plane control plane that will receive the ECDS
-	// filter slot (Envoy Gateway Extension Server hooks, or Istio EnvoyFilter).
-	// Rule/plugin configuration is always pushed over gRPC ECDS regardless of provider.
+	// Provider selects the data-plane control plane that will receive the filter
+	// slot (Envoy Gateway Extension Server, Istio EnvoyFilter, or CiliumEnvoyConfig).
+	// When omitted or type=Auto, the operator discovers the provider from the
+	// targeted Gateway's GatewayClass.controllerName, then from installed
+	// platform CRDs (Envoy Gateway / Istio / Cilium). Status.provider reports
+	// the resolved value. Rule/plugin configuration is always pushed over gRPC
+	// ECDS regardless of provider.
 	// +optional
 	Provider *WAFProvider `json:"provider,omitempty"`
-
-	// Engine selects the Proxy-Wasm WAF implementation that evaluates SecLang rules.
-	// Coraza (default) uses coraza-proxy-wasm; ModSecurity uses the in-tree
-	// modsecurity-proxy-wasm module (embedded CRS, same directives_map JSON shape).
-	// +optional
-	// +kubebuilder:default=Coraza
-	// +kubebuilder:validation:Enum=Coraza;ModSecurity
-	Engine EngineType `json:"engine,omitempty"`
 
 	// Challenge optionally installs a Proof-of-Work browser challenge filter
 	// (pow-proxy-wasm / challenge-proxy-wasm) *before* the WAF filter in the chain.
@@ -81,59 +77,76 @@ type WAFSpec struct {
 	// +optional
 	RuleSetRefs []RuleRef `json:"ruleRefs,omitempty"`
 
-	// CRSEnable enables the OWASP Core Rule Set (v4.x recommended).
-	// When true, CRS rules are merged with those from RuleSetRefs.
-	// For engine=ModSecurity, CRS is embedded in the wasm binary and loaded via
-	// virtual includes (Include @owasp_crs/*.conf).
+	// CRSEnable enables Path A: load OWASP CRS from the engine via virtual includes
+	// (Include @crs-setup-conf + Include @owasp_crs/*.conf).
+	// Prefer Path B for kube-native CRS: leave false and attach a RuleSet of
+	// structured SecRules (config/samples/crs/, optimized-rulesets). Use spec.crs
+	// for paranoia / thresholds / exclusions with either path.
 	// +optional
 	// +kubebuilder:default=false
 	CRSEnable bool `json:"crsEnable,omitempty"`
 
+	// Mode selects blocking vs observe-only engine behaviour.
+	// Blocking (default) emits SecRuleEngine On; DetectionOnly emits SecRuleEngine DetectionOnly
+	// for safe CRS / rule rollouts without denying traffic.
+	// +optional
+	// +kubebuilder:default=Blocking
+	// +kubebuilder:validation:Enum=Blocking;DetectionOnly
+	Mode WAFMode `json:"mode,omitempty"`
+
 	// LogLevel controls verbosity of the Envoy WAF filter logs.
 	// Common values: 0=off, 1=error, 2=warn, 3=info, 4=debug (up to 7).
+	// Default is 1 (error) so production clusters are not flooded; set higher for debug.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=7
-	// +kubebuilder:default=7
+	// +kubebuilder:default=1
 	LogLevel int `json:"logLevel,omitempty"`
-
-	// WasmHTTP is the HTTP(S) URL where Envoy fetches the WAF engine .wasm binary.
-	// When empty, the operator default for the selected engine is used
-	// (typically the operator-hosted multi-module wasm server).
-	// +optional
-	WasmHTTP string `json:"wasmHTTP,omitempty"`
-
-	// WasmSHA256 is the expected SHA-256 of the WAF engine .wasm binary.
-	// +optional
-	WasmSHA256 string `json:"wasmSHA256,omitempty"`
-
-	// WasmImage is an optional OCI image reference for documentation / future fetchers.
-	// +optional
-	WasmImage string `json:"wasmImage,omitempty"`
-
-	// CorazaProxyWasmImage is deprecated: use engine=Coraza + wasmImage.
-	// Kept for backward compatibility.
-	// +optional
-	// +kubebuilder:default="ghcr.io/corazawaf/coraza-proxy-wasm:0.6.0"
-	CorazaProxyWasmImage string `json:"corazaProxyWasmImage,omitempty"`
-
-	// CorazaProxyWasmHTTP is deprecated: use wasmHTTP (or engine defaults).
-	// +optional
-	CorazaProxyWasmHTTP string `json:"corazaProxyWasmHTTP,omitempty"`
-
-	// CorazaProxyWasmSHA256 is deprecated: use wasmSHA256.
-	// +optional
-	CorazaProxyWasmSHA256 string `json:"corazaProxyWasmSHA256,omitempty"`
 
 	// Metrics configures observability labels for the WAF WASM filter.
 	// +optional
 	Metrics *WAFMetrics `json:"metrics,omitempty"`
 
-	// CRS contains declarative tuning knobs for the OWASP Core Rule Set.
-	// Only has effect when CRSEnable is true.
+	// Telemetry is opt-in managed observability policy (mode, sample/redact).
+	// Published on the ECDS plugin snapshot so Wasm can annotate requests.
+	// The OTLP destination is Envoy cluster kubewaf_otel (bootstrap/slot inject),
+	// not this field. There is no telemetry.otel client block.
+	// +optional
+	Telemetry *WAFTelemetry `json:"telemetry,omitempty"`
+
+	// Block configures client-visible deny local-replies (ModSecurity engine).
+	// Defaults are product-neutral: message "Forbidden", marker header "x-blocked".
+	// Enable addRequestIDHeader to echo the request id on deny responses.
+	// +optional
+	Block *WAFBlock `json:"block,omitempty"`
+
+	// CRS contains declarative tuning knobs for the OWASP Core Rule Set
+	// (paranoia levels, anomaly thresholds, remove-by-id/tag, update-target).
+	// Applies with either Path A (crsEnable) or Path B (structured RuleSets only).
+	// Setup setvars are emitted before CRS/user rules; exclusions after the
+	// engine include (Path A) or after RuleSet SecLang (Path B).
 	// +optional
 	CRS *CRSTuning `json:"crs,omitempty"`
+
+	// PhraseListPolicy controls publish behavior when a custom @pmFromFile /
+	// @ipMatchFromFile basename cannot be resolved to a Ready PhraseList or
+	// IPList in the WAF namespace. Data-files injection is always enabled.
+	// +optional
+	// +kubebuilder:default=FailClosed
+	// +kubebuilder:validation:Enum=FailClosed;IgnoreUnknown
+	PhraseListPolicy PhraseListPolicy `json:"phraseListPolicy,omitempty"`
 }
+
+// PhraseListPolicy controls missing custom PhraseList/IPList handling on ModSecurity Path B.
+// +kubebuilder:validation:Enum=FailClosed;IgnoreUnknown
+type PhraseListPolicy string
+
+const (
+	// PhraseListPolicyFailClosed refuses ECDS publish when a custom list is missing.
+	PhraseListPolicyFailClosed PhraseListPolicy = "FailClosed"
+	// PhraseListPolicyIgnoreUnknown drops SecLang lines for unresolved custom basenames.
+	PhraseListPolicyIgnoreUnknown PhraseListPolicy = "IgnoreUnknown"
+)
 
 // EffectivePolicyTargets returns the Gateway API attachment targets for this WAF.
 // Prefers inlined targetRef/targetRefs (EG-compatible); falls back to legacy parentRefs.
@@ -141,6 +154,7 @@ func (s *WAFSpec) EffectivePolicyTargets() envoygatewayv1alpha1.PolicyTargetRefe
 	if s == nil {
 		return envoygatewayv1alpha1.PolicyTargetReferences{}
 	}
+	//nolint:staticcheck // SA1019: TargetRef retained for Gateway API / EG compatibility
 	if s.TargetRef != nil || len(s.TargetRefs) > 0 {
 		return s.PolicyTargetReferences
 	}
@@ -150,16 +164,24 @@ func (s *WAFSpec) EffectivePolicyTargets() envoygatewayv1alpha1.PolicyTargetRefe
 	return s.PolicyTargetReferences
 }
 
-// EngineType selects the Proxy-Wasm WAF implementation.
-// +kubebuilder:validation:Enum=Coraza;ModSecurity
+// EngineType identifies the WAF Proxy-Wasm implementation.
 type EngineType string
 
 const (
-	// EngineCoraza is the default Go-based Coraza proxy-wasm filter.
-	EngineCoraza EngineType = "Coraza"
-	// EngineModSecurity is the C++ ModSecurity proxy-wasm filter
+	// EngineModSecurity is the ModSecurity proxy-wasm filter
 	// (modsecurity-proxy-wasm in this monorepo).
 	EngineModSecurity EngineType = "ModSecurity"
+)
+
+// WAFMode controls SecRuleEngine (blocking vs detection-only).
+// +kubebuilder:validation:Enum=Blocking;DetectionOnly
+type WAFMode string
+
+const (
+	// WAFModeBlocking denies requests when rules interrupt (SecRuleEngine On).
+	WAFModeBlocking WAFMode = "Blocking"
+	// WAFModeDetectionOnly logs / scores only (SecRuleEngine DetectionOnly).
+	WAFModeDetectionOnly WAFMode = "DetectionOnly"
 )
 
 // ChallengeSpec configures the optional pow-proxy-wasm challenge filter.
@@ -210,14 +232,6 @@ type ChallengeSpec struct {
 	// HeaderValue is the value for Header.
 	// +optional
 	HeaderValue string `json:"headerValue,omitempty"`
-
-	// WasmHTTP overrides the challenge module download URL.
-	// +optional
-	WasmHTTP string `json:"wasmHTTP,omitempty"`
-
-	// WasmSHA256 pins the challenge module binary.
-	// +optional
-	WasmSHA256 string `json:"wasmSHA256,omitempty"`
 }
 
 // SecretKeyRef points at a key in a Secret in the same namespace as the WAF.
@@ -235,7 +249,8 @@ type SecretKeyRef struct {
 type ProviderType string
 
 const (
-	// ProviderAuto defaults to EnvoyGateway (auto-detection may improve later).
+	// ProviderAuto discovers the data plane (GatewayClass / installed CRDs).
+	// Falls back to EnvoyGateway when nothing is detected.
 	ProviderAuto ProviderType = "Auto"
 	// ProviderEnvoyGateway uses the EG Extension Server to inject ECDS slots.
 	ProviderEnvoyGateway ProviderType = "EnvoyGateway"
@@ -245,9 +260,11 @@ const (
 	ProviderCilium ProviderType = "Cilium"
 )
 
-// WAFProvider configures which control plane installs the ECDS filter slot.
+// WAFProvider configures which control plane installs the filter slot.
 type WAFProvider struct {
-	// Type selects EnvoyGateway, Istio, Cilium, or Auto (default EnvoyGateway).
+	// Type selects EnvoyGateway, Istio, Cilium, or Auto.
+	// Auto (default when omitted) discovers from GatewayClass.controllerName
+	// of targeted Gateways, then from installed CRDs.
 	// +optional
 	// +kubebuilder:default=Auto
 	Type ProviderType `json:"type,omitempty"`
@@ -350,11 +367,57 @@ type TargetExclusion struct {
 	RemoveTargets []string `json:"removeTargets"`
 }
 
+// WAFBlock configures client-visible deny local-replies for the WAF engine
+// (currently honored by ModSecurity / modsecurity-proxy-wasm).
+//
+// The operator maps these fields into the engine plugin JSON `block` object:
+//   - Message → block.message
+//   - AddBlockedHeader / BlockedHeader → block.blocked_header
+//   - AddRequestIDHeader / RequestIDHeader → block.add_request_id_header / block.request_id_header
+//
+// Client-facing values stay product-neutral by default (no vendor names).
+type WAFBlock struct {
+	// Message is the local-reply details string shown to clients on deny.
+	// Default: "Forbidden"
+	// +optional
+	// +kubebuilder:default="Forbidden"
+	Message string `json:"message,omitempty"`
+
+	// AddBlockedHeader controls whether deny responses include a blocked marker header.
+	// Default: true
+	// +optional
+	// +kubebuilder:default=true
+	AddBlockedHeader *bool `json:"addBlockedHeader,omitempty"`
+
+	// BlockedHeader is the name of the blocked marker header on deny responses.
+	// Default: "x-blocked". Only applied when AddBlockedHeader is true.
+	// Set AddBlockedHeader to false to omit the header entirely.
+	// +optional
+	// +kubebuilder:default="x-blocked"
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9!#$%&'*+.^_|~-]+$`
+	BlockedHeader string `json:"blockedHeader,omitempty"`
+
+	// AddRequestIDHeader controls whether deny responses include the correlated request id.
+	// Default: false
+	// +optional
+	// +kubebuilder:default=false
+	AddRequestIDHeader *bool `json:"addRequestIDHeader,omitempty"`
+
+	// RequestIDHeader is the response header name for the request id on deny responses.
+	// Default: "x-request-id". Only applied when AddRequestIDHeader is true.
+	// +optional
+	// +kubebuilder:default="x-request-id"
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9!#$%&'*+.^_|~-]+$`
+	RequestIDHeader string `json:"requestIDHeader,omitempty"`
+}
+
 // WAFMetrics configures observability for the WAF Proxy-Wasm filter
 // (modsecurity-proxy-wasm or coraza-proxy-wasm).
 //
 // The operator maps these fields into the engine plugin JSON:
-//   - ExtraLabels → metric_labels (merged with waf_namespace/waf_name/engine)
+//   - ExtraLabels → extra metric_labels (reserved identity keys written after)
 //   - IncludeRuleID → metrics.per_rule_id / metrics_per_rule_id
 //   - EnableStats → metrics.enabled
 type WAFMetrics struct {
@@ -368,10 +431,10 @@ type WAFMetrics struct {
 	// +optional
 	RootID *string `json:"rootID,omitempty"`
 
-	// ExtraLabels are key/value pairs attached to all WAF filter metrics
+	// ExtraLabels are additional name-embedding keys on WAF filter metrics
 	// (modsecurity_proxy_wasm.* / kubewaf_waf.*).
-	// The operator always injects waf_namespace, waf_name, engine, and owner;
-	// ExtraLabels override those keys when set.
+	// ExtraLabels are copied first; reserved identity keys (waf_namespace,
+	// waf_name, engine, owner) are written after and collisions are dropped.
 	// Example: { "team": "payments", "env": "prod", "gateway": "external" }
 	// +optional
 	ExtraLabels map[string]string `json:"extraLabels,omitempty"`
@@ -383,11 +446,64 @@ type WAFMetrics struct {
 	// +kubebuilder:default=true
 	IncludeRuleID *bool `json:"includeRuleID,omitempty"`
 
-	// EnableStats enables the core WAF metrics (tx total, allowed, interruptions,
-	// rule matches). Default: true
+	// EnableStats enables the core WAF ABI metrics (tx total, allowed, interruptions,
+	// rule matches). Default: true.
+	// When false the managed catalog has no series for this WAF; traces can still
+	// export when telemetry.mode=Managed.
 	// +optional
 	// +kubebuilder:default=true
 	EnableStats *bool `json:"enableStats,omitempty"`
+}
+
+// TelemetryMode selects whether this WAF annotates requests for managed export.
+// +kubebuilder:validation:Enum=None;Managed
+type TelemetryMode string
+
+const (
+	// TelemetryModeNone is the default: Wasm does not set export metadata.
+	TelemetryModeNone TelemetryMode = "None"
+	// TelemetryModeManaged annotates sampled requests so Envoy OTel access logs fire.
+	TelemetryModeManaged TelemetryMode = "Managed"
+)
+
+// WAFTelemetry is policy-only (mode, sample/redact). It does not configure an
+// OTLP client; Envoy exporters target cluster kubewaf_otel.
+type WAFTelemetry struct {
+	// Mode is None (default) or Managed.
+	// +optional
+	// +kubebuilder:default=None
+	// +kubebuilder:validation:Enum=None;Managed
+	Mode TelemetryMode `json:"mode,omitempty"`
+
+	// Traces is the security-trace sampling and redact policy.
+	// +optional
+	Traces *WAFTelemetryTraces `json:"traces,omitempty"`
+}
+
+// WAFTelemetryTraces controls Wasm annotation of security traces.
+type WAFTelemetryTraces struct {
+	// Enabled exports security traces when Mode is Managed.
+	// When unset, Helm profile defaults apply (lite=false, full=true).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// SampleRate is the sample probability for non-disruptive matches (0.0–1.0).
+	// +optional
+	// +kubebuilder:validation:Pattern=`^(0(\.[0-9]+)?|1(\.0+)?)$`
+	SampleRate string `json:"sampleRate,omitempty"`
+
+	// SampleDisruptive is the sample probability for interrupts (default 1.0).
+	// +optional
+	// +kubebuilder:validation:Pattern=`^(0(\.[0-9]+)?|1(\.0+)?)$`
+	SampleDisruptive string `json:"sampleDisruptive,omitempty"`
+
+	// Redact omits client.address from export metadata. Default true.
+	// +optional
+	Redact *bool `json:"redact,omitempty"`
+
+	// IncludeMatchData includes waf.match.data on the span. Default false.
+	// +optional
+	IncludeMatchData *bool `json:"includeMatchData,omitempty"`
 }
 
 // WAFStatus defines the observed state of WAF.
@@ -405,12 +521,24 @@ type WAFStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// Provider is the resolved data-plane provider (EnvoyGateway, Istio, or Cilium).
+	// Always set on Ready: either from Auto discovery or from explicit spec.provider.type.
 	// +optional
 	Provider ProviderType `json:"provider,omitempty"`
 
-	// Engine is the resolved WAF Proxy-Wasm implementation (Coraza or ModSecurity).
+	// ProviderDetection explains how status.provider was chosen.
+	// For Auto/empty spec.provider this is the discovery chain, e.g.
+	//   targetRef Gateway demo/gw → GatewayClass "cilium" → controller "io.cilium/gateway-controller"
+	// When the user set provider.type explicitly: "explicit (spec.provider.type)".
+	// +optional
+	ProviderDetection string `json:"providerDetection,omitempty"`
+
+	// Engine is the WAF Proxy-Wasm implementation (ModSecurity).
 	// +optional
 	Engine EngineType `json:"engine,omitempty"`
+
+	// Mode is the effective rule engine mode (Blocking or DetectionOnly).
+	// +optional
+	Mode WAFMode `json:"mode,omitempty"`
 
 	// ChallengeEnabled reports whether the PoW challenge filter is installed.
 	// +optional
@@ -437,11 +565,66 @@ type WAFStatus struct {
 	// SlotName is the platform slot resource name when one is created.
 	// +optional
 	SlotName string `json:"slotName,omitempty"`
+
+	// RulesLoaded is the number of SecRule objects resolved into this WAF.
+	// +optional
+	RulesLoaded int32 `json:"rulesLoaded,omitempty"`
+
+	// ActionsLoaded is the number of SecAction objects resolved into this WAF.
+	// +optional
+	ActionsLoaded int32 `json:"actionsLoaded,omitempty"`
+
+	// DirectivesCount is the number of SecLang directive lines pushed over ECDS
+	// (engine setup + includes + user rules).
+	// +optional
+	DirectivesCount int32 `json:"directivesCount,omitempty"`
+
+	// RenderedDirectives is the SecLang config last published to the data plane.
+	// Large payloads are truncated (see RenderedDirectivesTruncated).
+	// +optional
+	RenderedDirectives string `json:"renderedDirectives,omitempty"`
+
+	// RenderedDirectivesTruncated is true when RenderedDirectives was size-capped.
+	// +optional
+	RenderedDirectivesTruncated bool `json:"renderedDirectivesTruncated,omitempty"`
+
+	// DataFilesCount is the number of basenames injected into plugin data_files.
+	// +optional
+	DataFilesCount int32 `json:"dataFilesCount,omitempty"`
+
+	// DataFilesRawBytes is the total uncompressed injected body size.
+	// +optional
+	DataFilesRawBytes int64 `json:"dataFilesRawBytes,omitempty"`
+
+	// DataFilesContentHash is sha256 over sorted "basename\0body" pairs.
+	// +optional
+	DataFilesContentHash string `json:"dataFilesContentHash,omitempty"`
+
+	// RuleRefs is a capped leaf list of SecRule/SecAction membership after Resolve
+	// (selectors are expanded). Max 256 leaves.
+	// +optional
+	RuleRefs []RuleRefStatus `json:"ruleRefs,omitempty"`
+
+	// RuleRefsTruncated is true when RuleRefs omitted some resolved leaves.
+	// +optional
+	RuleRefsTruncated bool `json:"ruleRefsTruncated,omitempty"`
+
+	// RuleRefsOmitted is the count of resolved leaves not written to RuleRefs.
+	// +optional
+	RuleRefsOmitted int32 `json:"ruleRefsOmitted,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=wafs,scope=Namespaced,categories=waf;security;gateway,shortName=waf
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Provider",type=string,JSONPath=`.status.provider`
+// +kubebuilder:printcolumn:name="Engine",type=string,JSONPath=`.status.engine`
+// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.status.mode`
+// +kubebuilder:printcolumn:name="Rules",type=integer,JSONPath=`.status.rulesLoaded`
+// +kubebuilder:printcolumn:name="CRS",type=boolean,JSONPath=`.spec.crsEnable`
+// +kubebuilder:printcolumn:name="Telemetry",type=string,JSONPath=`.spec.telemetry.mode`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // WAF is the Schema for the wafs API
 type WAF struct {

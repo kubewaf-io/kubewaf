@@ -1,0 +1,16 @@
+{{- if and .Values.observability.managed.enabled .Values.observability.managed.alerts.enabled (include "kubewaf.metricsBackendOK" .) (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PrometheusRule") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "helm.fullname" . }}-managed
+  namespace: {{ .Values.monitoring.rules.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: managed-observability
+spec:
+  {{- $managedRules := .Files.Get "managed-alerts.yaml" | fromYaml }}
+  {{- if $managedRules }}
+  groups:
+    {{- toYaml $managedRules.groups | nindent 4 }}
+  {{- end }}
+{{- end }}

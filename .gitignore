@@ -8,6 +8,12 @@ bin/*
 Dockerfile.cross
 site/
 
+# ko static assets staged by `make wasm-stage-kodata` (large .wasm binaries)
+cmd/kodata/
+
+# Built/fetched Proxy-Wasm binaries (use `make wasm-build` / wasm-fetch; do not commit)
+dist/wasm/*.wasm
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -34,3 +40,32 @@ go.work
 
 # Local brainstorming / not for publication
 IDEAS.md
+
+# Local AI / tool caches
+.cache/
+.grok/
+.zed/
+
+# Scratch dumps (not product artifacts)
+CODE.pdf
+COODE_MODSEC.pdf
+*.pdf
+
+# Coverage / test noise at repo root
+cover.out
+coverage.txt
+coverage.html
+
+# Docs site lives in a separate repository (clone/checkout locally as website2/)
+website2/
+
+# Headlamp UI plugin lives in a dedicated repo (not this monorepo).
+# Keep the path ignored if a local checkout is placed here for side-by-side work.
+headlamp-plugin/
+**/kubewaf-io-headlamp-plugin-*.tar.gz
+
+# Local AI assistant project rules (not part of the published monorepo)
+AGENTS.md
+
+# Local Slidev deck (not part of the published monorepo)
+presentation/

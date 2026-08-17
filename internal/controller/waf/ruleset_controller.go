@@ -43,21 +43,18 @@ type RuleSetReconciler struct {
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=rulesets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=rulesets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=rulesets/finalizers,verbs=update
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secrules;secactions,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secrules/status;secactions/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secrules/finalizers;secactions/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the RuleSet object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
+// Reconcile resolves RuleRefs, enforces allowedRules, sets ReferencesResolved, and
+// cleans SecLang back-references on deletion.
 func (r *RuleSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := logf.FromContext(ctx)
 	ruleSet := wafv1beta1.RuleSet{}
 
-	_, err := controller.InitHandler(ctx, req, &ruleSet, r.Client)
+	updated, err := controller.InitHandler(ctx, req, &ruleSet, r.Client)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			l.V(1).Info("RuleSet not found, skipping")
@@ -66,7 +63,7 @@ func (r *RuleSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
-	// Handle deletion
+	// Handle deletion: drop back-refs on SecRule/SecAction, then finalizer.
 	if !ruleSet.DeletionTimestamp.IsZero() {
 		if err := controller.CleanupBackReferences(ctx, r.Client, &ruleSet); err != nil {
 			return ctrl.Result{}, err
@@ -79,12 +76,34 @@ func (r *RuleSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	_, _, err = r.ruleRefHandler(ctx, &ruleSet)
+	// Persist finalizer before status work so deletion cannot race past cleanup.
+	if updated {
+		if err := r.Update(ctx, &ruleSet); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.Get(ctx, req.NamespacedName, &ruleSet); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	_, resolved, err := r.ruleRefHandler(ctx, &ruleSet)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// TODO(user): your logic here (use resolved rules from ruleRefHandler if needed)
+	// Surface resolved member names for kubectl / UI (best-effort, not exhaustive for selectors).
+	refs := make([]wafv1beta1.RuleRefStatus, 0, len(resolved))
+	for i := range resolved {
+		refs = append(refs, wafv1beta1.RuleRefStatus{
+			Kind:      resolved[i].GetKind(),
+			Name:      resolved[i].GetName(),
+			Namespace: resolved[i].GetNamespace(),
+		})
+	}
+	ruleSet.Status.RuleRefs = refs
+	rulesN, actionsN := references2.CountSecLangObjects(resolved)
+	ruleSet.Status.RulesLoaded = int32(rulesN)
+	ruleSet.Status.ActionsLoaded = int32(actionsN)
 
 	if err = r.Status().Update(ctx, &ruleSet); err != nil {
 		return ctrl.Result{}, err

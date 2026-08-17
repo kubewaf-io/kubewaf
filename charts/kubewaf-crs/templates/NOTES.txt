@@ -1,0 +1,44 @@
+kubeWAF CRS chart ({{ .Chart.Name }}-{{ .Chart.Version }}) installed in namespace {{ .Release.Namespace }}.
+
+Packaged CRS version label: {{ .Values.crs.version }}
+SecRules installed: {{ .Values.crs.installSecRules }}
+Extras baseline: {{ .Values.extras.enabled }}
+
+Enabled RuleSet profiles (defaults in values.yaml):
+  - crs-core / ruleset-api / ruleset-backend when enabled under profiles.*
+{{- if .Values.extras.enabled }}
+  - {{ .Values.extras.rulesetName }}  (kubeWAF extras)
+{{- end }}
+
+Path B WAF example (crsEnable: false):
+
+  apiVersion: waf.kubewaf.io/v1beta1
+  kind: WAF
+  metadata:
+    name: my-app
+    namespace: {{ .Release.Namespace }}
+  spec:
+    engine: ModSecurity
+    crsEnable: false
+    crs:
+      paranoiaLevel: 1
+      inboundAnomalyThreshold: 5
+    targetRef:
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: my-app
+    ruleRefs:
+      - kind: RuleSet
+        name: ruleset-api
+        group: waf.kubewaf.io
+        version: v1beta1
+{{- if .Values.extras.enabled }}
+      - kind: RuleSet
+        name: {{ .Values.extras.rulesetName }}
+        group: waf.kubewaf.io
+        version: v1beta1
+{{- end }}
+
+Requires the kubewaf operator + CRDs (charts/kubewaf). Verify:
+
+  kubectl get secrules,rulesets -n {{ .Release.Namespace }}

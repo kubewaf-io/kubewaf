@@ -36,7 +36,7 @@ var (
 	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
 	// - E2E_PROVIDER=envoy-gateway|istio|cilium|all|manager: which provider suite to run.
 	// - E2E_IMG: operator image (default ghcr.io/kubewaf-io/kubewaf:e2e).
-	// - E2E_WASM_SOURCE_URL: real modsecurity-proxy-wasm .wasm URL for traffic tests.
+	// - Wasm modules are included in the operator image (KO_DATA_PATH / /wasm).
 	// - E2E_SKIP_OPERATOR_INSTALL=true: assume operator already installed (provider tests).
 	// - E2E_SKIP_IMAGE_BUILD=true: skip ko-build + kind load.
 	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
@@ -50,9 +50,9 @@ var (
 //
 //	all            – manager smoke + all available providers (default)
 //	manager        – controller deploy/metrics only
-//	envoy-gateway  – Envoy Gateway WAF attachment
-//	istio          – Istio EnvoyFilter ECDS slot
-//	cilium         – CiliumEnvoyConfig slot
+//	envoy-gateway  – Envoy Gateway WAF attachment + UA traffic smoke
+//	istio          – EnvoyFilter ECDS slot + UA traffic (bootstrap-static ecds)
+//	cilium         – CiliumEnvoyConfig ECDS slot + UA traffic (bootstrap-static ecds)
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Starting kubeWAF e2e suite (E2E_PROVIDER=%s)\n", e2eProvider())
@@ -79,6 +79,17 @@ var _ = BeforeSuite(func() {
 		By("loading the manager(Operator) image on Kind")
 		err = utils.LoadImageToKindClusterWithName(img)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+
+		// Provider helm always deploys subresource-api (metrics/traces query).
+		// Probe-test-server is only needed when probe e2e is in scope.
+		By("loading subresource-api image on Kind")
+		err = utils.LoadImageToKindClusterWithName(probeSubresourceImage())
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image %s into Kind", probeSubresourceImage())
+		if probeE2EEnabled() {
+			By("loading probe-test-server image on Kind")
+			err = utils.LoadImageToKindClusterWithName(probeTestServerImage())
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image %s into Kind", probeTestServerImage())
+		}
 	}
 
 	// CertManager is only required for the legacy manager smoke path that uses

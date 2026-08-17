@@ -1,0 +1,28 @@
+# Path B FTW WAF: structured CRS only (crsEnable: false).
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: demo-waf-eg-path-b
+  namespace: demo
+  labels:
+    e2e: "true"
+    provider: envoy-gateway
+    waf.kubewaf.io/path: "B"
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: demo-gateway
+  ruleRefs:
+    - kind: RuleSet
+      name: ftw-crs-path-b
+      namespace: demo
+      group: waf.kubewaf.io
+      version: v1beta1
+  # No engine includes — CRS from SecRule CRs only.
+  crsEnable: false
+  crs:
+    paranoiaLevel: 4
+    inboundAnomalyThreshold: 1
+    outboundAnomalyThreshold: 1
+  logLevel: 3

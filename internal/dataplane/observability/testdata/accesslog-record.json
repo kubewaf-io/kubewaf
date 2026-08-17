@@ -1,0 +1,10 @@
+{
+  "body": "{\"interrupted\":true,\"action\":\"deny\",\"phase\":\"http_request_headers\",\"config_id\":\"kubewaf/shop/shop-waf\",\"waf_namespace\":\"shop\",\"waf_name\":\"shop-waf\",\"engine\":\"modsecurity\",\"matches\":[{\"event\":\"waf.rule_match\",\"rule_id\":942100,\"phase\":\"http_request_headers\",\"severity\":2,\"msg\":\"SQL Injection Attack\",\"disruptive\":true},{\"event\":\"waf.tx_interrupt\",\"rule_id\":942100,\"phase\":\"http_request_headers\",\"disruptive\":true}]}",
+  "attributes": {
+    "http.request.method": "GET",
+    "url.path": "/search",
+    "http.response.status_code": "403",
+    "waf.request_id": "req-1",
+    "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+  }
+}

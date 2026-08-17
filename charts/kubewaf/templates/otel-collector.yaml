@@ -1,0 +1,250 @@
+{{- if and .Values.observability.managed.enabled .Values.observability.managed.collector.enabled }}
+{{- $name := include "kubewaf.otelCollectorName" . }}
+{{- $useRW := include "kubewaf.useRemoteWriteMetrics" . }}
+{{- $profile := .Values.observability.managed.profile | default "lite" }}
+{{- $fullTraces := and (eq $profile "full") (or .Values.observability.managed.victoriaTraces.enabled .Values.observability.managed.victoriaTraces.endpoint) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  collector.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      filter/waf_metrics:
+        metrics:
+          include:
+            match_type: regexp
+            metric_names:
+              - ^kubewaf\.waf\..*
+              - ^kubewaf_waf[._].*
+              - ^.*modsecurity_proxy_wasm.*
+              - ^.*wasmcustom.*
+      {{- if $fullTraces }}
+      transform/waf_spans:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              # Envoy 1.38 may deliver the FILTER_STATE body as bytes; String() then ParseJSON.
+              - set(cache["raw"], String(body))
+              - set(cache["evt"], ParseJSON(cache["raw"])) where IsMatch(cache["raw"], "interrupted")
+              - set(cache["evt"], body) where IsMap(body)
+              - set(cache["action"], String(cache["evt"]["action"]))
+              - set(cache["interrupted"], cache["evt"]["interrupted"])
+              - set(cache["phase"], String(cache["evt"]["phase"]))
+              - set(cache["ns"], String(cache["evt"]["waf_namespace"]))
+              - set(cache["name"], String(cache["evt"]["waf_name"]))
+              - set(cache["engine"], String(cache["evt"]["engine"]))
+              - set(cache["cfg"], String(cache["evt"]["config_id"]))
+              - set(cache["method"], String(attributes["http.request.method"]))
+              - set(cache["path"], String(attributes["url.path"]))
+              - set(cache["status"], String(attributes["http.response.status_code"]))
+              - set(cache["rid"], String(attributes["waf.request_id"]))
+              - set(cache["tp"], Split(String(attributes["traceparent"]), "-"))
+              - set(cache["seed"], Concat([cache["rid"], String(UnixNano(Now())), cache["ns"], cache["name"]], "|"))
+              - set(cache["hash"], SHA256(cache["seed"]))
+              - set(cache["tid"], Substring(cache["hash"], 0, 32))
+              - set(cache["sid"], Substring(cache["hash"], 32, 16))
+              - set(cache["parent"], "0000000000000000")
+              - set(cache["tid"], cache["tp"][1]) where Len(cache["tp"]) >= 4 and Len(cache["tp"][1]) == 32
+              - set(cache["parent"], cache["tp"][2]) where Len(cache["tp"]) >= 4 and Len(cache["tp"][2]) == 16
+              - set(cache["sid"], Substring(SHA256(Concat([cache["sid"], cache["rid"], String(UnixNano(Now()))], "|")), 0, 16))
+              - set(cache["code"], "1")
+              - set(cache["code"], "2") where cache["interrupted"] == true
+              - set(cache["interrupted_s"], "false")
+              - set(cache["interrupted_s"], "true") where cache["interrupted"] == true
+              - set(cache["start"], String(UnixNano(Now())))
+              - set(cache["end"], cache["start"])
+              - replace_pattern(cache["action"], "\\\\", "\\\\\\\\") where IsString(cache["action"])
+              - replace_pattern(cache["action"], "\"", "\\\\\"") where IsString(cache["action"])
+              - replace_pattern(cache["action"], "\n", "\\\\n") where IsString(cache["action"])
+              - replace_pattern(cache["action"], "\r", "\\\\r") where IsString(cache["action"])
+              - replace_pattern(cache["action"], "\t", "\\\\t") where IsString(cache["action"])
+              - replace_pattern(cache["path"], "\\\\", "\\\\\\\\") where IsString(cache["path"])
+              - replace_pattern(cache["path"], "\"", "\\\\\"") where IsString(cache["path"])
+              - replace_pattern(cache["path"], "\n", "\\\\n") where IsString(cache["path"])
+              - replace_pattern(cache["path"], "\r", "\\\\r") where IsString(cache["path"])
+              - replace_pattern(cache["path"], "\t", "\\\\t") where IsString(cache["path"])
+              - replace_pattern(cache["method"], "\\\\", "\\\\\\\\") where IsString(cache["method"])
+              - replace_pattern(cache["method"], "\"", "\\\\\"") where IsString(cache["method"])
+              - replace_pattern(cache["phase"], "\\\\", "\\\\\\\\") where IsString(cache["phase"])
+              - replace_pattern(cache["phase"], "\"", "\\\\\"") where IsString(cache["phase"])
+              - replace_pattern(cache["ns"], "\\\\", "\\\\\\\\") where IsString(cache["ns"])
+              - replace_pattern(cache["name"], "\\\\", "\\\\\\\\") where IsString(cache["name"])
+              - replace_pattern(cache["engine"], "\\\\", "\\\\\\\\") where IsString(cache["engine"])
+              - replace_pattern(cache["cfg"], "\\\\", "\\\\\\\\") where IsString(cache["cfg"])
+              - replace_pattern(cache["rid"], "\\\\", "\\\\\\\\") where IsString(cache["rid"])
+              - replace_pattern(cache["status"], "\\\\", "\\\\\\\\") where IsString(cache["status"])
+              - set(cache["evparts"], "")
+{{- range $i := until 16 }}
+              - set(cache["m{{ $i }}"], cache["evt"]["matches"][{{ $i }}]) where IsMap(cache["evt"])
+              - set(cache["e{{ $i }}_name"], "waf.rule_match")
+              - set(cache["e{{ $i }}_name"], "waf.tx_interrupt") where cache["m{{ $i }}"]["event"] == "waf.tx_interrupt" or cache["m{{ $i }}"]["disruptive"] == true
+              - set(cache["e{{ $i }}_rid"], String(cache["m{{ $i }}"]["rule_id"]))
+              - set(cache["e{{ $i }}_phase"], String(cache["m{{ $i }}"]["phase"]))
+              - set(cache["e{{ $i }}_sev"], String(cache["m{{ $i }}"]["severity"]))
+              - set(cache["e{{ $i }}_dis"], "false")
+              - set(cache["e{{ $i }}_dis"], "true") where cache["m{{ $i }}"]["disruptive"] == true
+              - set(cache["e{{ $i }}_msg"], String(cache["m{{ $i }}"]["msg"]))
+              - set(cache["e{{ $i }}_data"], String(cache["m{{ $i }}"]["data"]))
+              - replace_pattern(cache["e{{ $i }}_msg"], "\\\\", "\\\\\\\\")
+              - replace_pattern(cache["e{{ $i }}_msg"], "\"", "\\\\\"")
+              - replace_pattern(cache["e{{ $i }}_msg"], "\n", "\\\\n")
+              - replace_pattern(cache["e{{ $i }}_msg"], "\r", "\\\\r")
+              - replace_pattern(cache["e{{ $i }}_msg"], "\t", "\\\\t")
+              - replace_pattern(cache["e{{ $i }}_data"], "\\\\", "\\\\\\\\")
+              - replace_pattern(cache["e{{ $i }}_data"], "\"", "\\\\\"")
+              - replace_pattern(cache["e{{ $i }}_data"], "\n", "\\\\n")
+              - replace_pattern(cache["e{{ $i }}_data"], "\r", "\\\\r")
+              - replace_pattern(cache["e{{ $i }}_data"], "\t", "\\\\t")
+              - set(cache["e{{ $i }}"], Concat(["{\"name\":\"", cache["e{{ $i }}_name"], "\",\"attributes\":[{\"key\":\"rule_id\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_rid"], "\"}},{\"key\":\"phase\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_phase"], "\"}},{\"key\":\"severity\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_sev"], "\"}},{\"key\":\"disruptive\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_dis"], "\"}},{\"key\":\"msg\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_msg"], "\"}},{\"key\":\"data\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_data"], "\"}}]}"], "")) where IsMap(cache["m{{ $i }}"])
+              - set(cache["evparts"], Concat([cache["evparts"], ",", cache["e{{ $i }}"]], "")) where IsString(cache["e{{ $i }}"]) and cache["evparts"] != ""
+              - set(cache["evparts"], cache["e{{ $i }}"]) where IsString(cache["e{{ $i }}"]) and cache["evparts"] == ""
+{{- end }}
+              - set(cache["events"], Concat(["[", cache["evparts"], "]"], ""))
+              - set(body, Concat(["{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"kubewaf\"}},{\"key\":\"service.namespace\",\"value\":{\"stringValue\":\"", cache["ns"], "\"}},{\"key\":\"waf.namespace\",\"value\":{\"stringValue\":\"", cache["ns"], "\"}},{\"key\":\"waf.name\",\"value\":{\"stringValue\":\"", cache["name"], "\"}},{\"key\":\"waf.engine\",\"value\":{\"stringValue\":\"", cache["engine"], "\"}},{\"key\":\"waf.config_id\",\"value\":{\"stringValue\":\"", cache["cfg"], "\"}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"kubewaf\"},\"spans\":[{\"name\":\"waf.eval\",\"kind\":1,\"traceId\":\"", cache["tid"], "\",\"spanId\":\"", cache["sid"], "\",\"parentSpanId\":\"", cache["parent"], "\",\"startTimeUnixNano\":\"", cache["start"], "\",\"endTimeUnixNano\":\"", cache["end"], "\",\"status\":{\"code\":", cache["code"], "},\"attributes\":[{\"key\":\"waf.interrupted\",\"value\":{\"stringValue\":\"", cache["interrupted_s"], "\"}},{\"key\":\"waf.action\",\"value\":{\"stringValue\":\"", cache["action"], "\"}},{\"key\":\"waf.phase\",\"value\":{\"stringValue\":\"", cache["phase"], "\"}},{\"key\":\"http.request.method\",\"value\":{\"stringValue\":\"", cache["method"], "\"}},{\"key\":\"url.path\",\"value\":{\"stringValue\":\"", cache["path"], "\"}},{\"key\":\"http.response.status_code\",\"value\":{\"stringValue\":\"", cache["status"], "\"}},{\"key\":\"waf.request_id\",\"value\":{\"stringValue\":\"", cache["rid"], "\"}}],\"events\":", cache["events"], "}]}]}]}"], "")) where IsMap(cache["evt"])
+      filter/span_json:
+        error_mode: ignore
+        logs:
+          log_record:
+            - 'not IsMatch(body, "resourceSpans")'
+      {{- end }}
+    {{- if $fullTraces }}
+    connectors:
+      otlpjson: {}
+    {{- end }}
+    exporters:
+      {{- if $useRW }}
+      prometheusremotewrite:
+        endpoint: {{ include "kubewaf.metricsExportURL" . | quote }}
+        tls:
+          insecure: true
+      {{- else }}
+      otlphttp/vm:
+        metrics_endpoint: {{ include "kubewaf.metricsExportURL" . | quote }}
+        encoding: proto
+        tls:
+          insecure: true
+      {{- end }}
+      {{- if $fullTraces }}
+      otlphttp/vt:
+        traces_endpoint: {{ include "kubewaf.tracesExportURL" . | quote }}
+        tls:
+          insecure: true
+      {{- end }}
+      nop: {}
+    service:
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [filter/waf_metrics]
+          {{- if $useRW }}
+          exporters: [prometheusremotewrite]
+          {{- else }}
+          exporters: [otlphttp/vm]
+          {{- end }}
+        logs:
+          receivers: [otlp]
+          {{- if $fullTraces }}
+          processors: [transform/waf_spans, filter/span_json]
+          exporters: [otlpjson, nop]
+          {{- else }}
+          exporters: [nop]
+          {{- end }}
+        {{- if $fullTraces }}
+        traces:
+          receivers: [otlpjson]
+          exporters: [otlphttp/vt]
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  type: ClusterIP
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: metrics
+      port: 8888
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "helm.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "helm.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  template:
+    metadata:
+      labels:
+        {{- include "helm.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-collector
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: otel-collector
+          image: "{{ .Values.observability.managed.collector.image.registry }}/{{ .Values.observability.managed.collector.image.repository }}:{{ .Values.observability.managed.collector.image.tag }}"
+          imagePullPolicy: {{ .Values.observability.managed.collector.image.pullPolicy }}
+          args: ["--config=/etc/otelcol/collector.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: metrics
+              containerPort: 8888
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.observability.managed.collector.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,167 @@
+# Shared Envoy OTel stats sink (EG JSONPatch, Istio override, Cilium remesh).
+# Tag extractors: tag before phase so (_tag=…)_phase= matches.
+name: envoy.stat_sinks.open_telemetry
+typed_config:
+  "@type": type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig
+  grpc_service:
+    envoy_grpc:
+      cluster_name: kubewaf_otel
+  emit_tags_as_attributes: true
+  use_tag_extracted_name: true
+  prefix: ""
+  custom_metric_conversions:
+    matcher_list:
+      matchers:
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.tx.total
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.tx.total
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.tx.allowed
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.tx.allowed
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.tx.interruptions_ruleid=
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.tx.interruptions_by_rule
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.tx.interruptions
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.tx.interruptions
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.rule.matches_disruptive
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.rule.matches_disruptive
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.rule.matches_ruleid=
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.rule.matches_by_rule
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.rule.matches_tag=
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.rule.matches_by_tag
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.rule.matches_phase=
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.rule.matches_by_phase
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.rule.matches
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.rule.matches
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: kubewaf_waf.memory.wasm_heap_bytes
+        on_match:
+          action:
+            name: convert
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.ConversionAction
+              metric_name: kubewaf.waf.memory.wasm_heap_bytes
+      - predicate:
+          single_predicate:
+            input:
+              name: envoy.matching.inputs.stat_full_name
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.matching.common_inputs.stats.v3.StatFullNameMatchInput
+            value_match:
+              contains: modsecurity_proxy_wasm
+        on_match:
+          action:
+            name: drop
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig.DropAction
