@@ -946,10 +946,14 @@ REGISTRY_USERNAME   ?= dummy
 ko-login: ko
 	@$(KO) login $(REGISTRY) --username $(REGISTRY_USERNAME) --password $(REGISTRY_PASSWORD)
 
+# peak-scale make-ko-publish captures ALL stdout as the image digest
+# (`digest=$(make ko-publish-controller)`). Staging/login/recursive-make
+# banners must stay on stderr so only `ko build`'s image ref is emitted.
 .PHONY: ko-publish-controller
-ko-publish-controller: ko-login wasm-stage-kodata
+ko-publish-controller:
+	@$(MAKE) --no-print-directory ko ko-login wasm-stage-kodata >&2
 	@LD_FLAGS=$(LD_FLAGS) KOCACHE=$(KOCACHE) KO_DOCKER_REPO=$(CONTROLLER_IMG) \
-		$(KO) build ./cmd --bare --tags=$(KO_TAGS)
+		$(KO) build ./cmd --bare --tags=$(KO_TAGS) | tail -n1
 
 .PHONY: ko-publish-all
 ko-publish-all: ko-publish-controller

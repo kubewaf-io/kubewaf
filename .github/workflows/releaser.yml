@@ -12,9 +12,13 @@ concurrency:
 
 jobs:
   # Full multi-provider e2e must pass before publishing artifacts.
+  # The called workflow requests contents:read; a caller with permissions:{}
+  # is treated as contents:none and GitHub refuses to start the run.
   e2e-release:
     name: Full e2e (release gate)
     uses: ./.github/workflows/test-e2e-release.yml
+    permissions:
+      contents: read
     with:
       ftw_include: "^913"
       run_path_b: true
