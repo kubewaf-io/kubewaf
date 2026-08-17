@@ -358,7 +358,7 @@ observability:
       image:
         registry: docker.io
         repository: otel/opentelemetry-collector-contrib
-        tag: "0.128.0"
+        tag: "0.158.0"
         pullPolicy: IfNotPresent
       resources:
         requests:
