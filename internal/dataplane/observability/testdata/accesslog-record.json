@@ -1,5 +1,5 @@
 {
-  "body": "{\"interrupted\":true,\"action\":\"deny\",\"phase\":\"http_request_headers\",\"config_id\":\"kubewaf/shop/shop-waf\",\"waf_namespace\":\"shop\",\"waf_name\":\"shop-waf\",\"engine\":\"modsecurity\",\"client.address\":\"10.244.0.15:45678\",\"matches\":[{\"event\":\"waf.rule_match\",\"rule_id\":942100,\"phase\":\"http_request_headers\",\"severity\":2,\"msg\":\"SQL Injection Attack\",\"disruptive\":true},{\"event\":\"waf.tx_interrupt\",\"rule_id\":942100,\"phase\":\"http_request_headers\",\"disruptive\":true}]}",
+  "body": "{\"interrupted\":true,\"action\":\"deny\",\"phase\":\"http_request_headers\",\"config_id\":\"kubewaf/shop/shop-waf\",\"waf_namespace\":\"shop\",\"waf_name\":\"shop-waf\",\"engine\":\"modsecurity\",\"client.address\":\"10.244.0.15:45678\",\"anomaly_score\":5,\"matches\":[{\"event\":\"waf.rule_match\",\"rule_id\":942100,\"phase\":\"http_request_headers\",\"severity\":2,\"anomaly_score\":5,\"msg\":\"SQL Injection Attack\",\"disruptive\":true},{\"event\":\"waf.tx_interrupt\",\"rule_id\":942100,\"phase\":\"http_request_headers\",\"disruptive\":true}]}",
   "attributes": {
     "http.request.method": "GET",
     "url.path": "/search",

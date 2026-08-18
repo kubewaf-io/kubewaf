@@ -53,6 +53,8 @@ data:
               # key is looked up as a single map key (not nested client.address).
               - set(cache["cip"], "")
               - set(cache["cip"], String(cache["evt"]["client.address"])) where IsString(cache["evt"]["client.address"])
+              - set(cache["ascore"], "")
+              - set(cache["ascore"], String(cache["evt"]["anomaly_score"])) where cache["evt"]["anomaly_score"] != nil
               - set(cache["tp"], Split(String(attributes["traceparent"]), "-"))
               - set(cache["seed"], Concat([cache["rid"], String(UnixNano(Now())), cache["ns"], cache["name"]], "|"))
               - set(cache["hash"], SHA256(cache["seed"]))
@@ -95,6 +97,10 @@ data:
               - replace_pattern(cache["cip"], "\t", "\\\\t") where IsString(cache["cip"])
               - set(cache["cip_attr"], "")
               - set(cache["cip_attr"], Concat([",{\"key\":\"client.address\",\"value\":{\"stringValue\":\"", cache["cip"], "\"}}"], "")) where cache["cip"] != ""
+              - replace_pattern(cache["ascore"], "\\\\", "\\\\\\\\") where IsString(cache["ascore"])
+              - replace_pattern(cache["ascore"], "\"", "\\\"") where IsString(cache["ascore"])
+              - set(cache["ascore_attr"], "")
+              - set(cache["ascore_attr"], Concat([",{\"key\":\"waf.anomaly_score\",\"value\":{\"stringValue\":\"", cache["ascore"], "\"}}"], "")) where cache["ascore"] != "" and cache["ascore"] != "0"
               - set(cache["evparts"], "")
 {{- range $i := until 16 }}
               - set(cache["m{{ $i }}"], cache["evt"]["matches"][{{ $i }}]) where IsMap(cache["evt"])
@@ -107,6 +113,13 @@ data:
               - set(cache["e{{ $i }}_dis"], "true") where cache["m{{ $i }}"]["disruptive"] == true
               - set(cache["e{{ $i }}_msg"], String(cache["m{{ $i }}"]["msg"]))
               - set(cache["e{{ $i }}_data"], String(cache["m{{ $i }}"]["data"]))
+              - set(cache["e{{ $i }}_score"], "")
+              - set(cache["e{{ $i }}_score"], String(cache["m{{ $i }}"]["anomaly_score"])) where cache["m{{ $i }}"]["anomaly_score"] != nil
+              # CRS default severity→score when wasm has not emitted a TX delta yet.
+              - set(cache["e{{ $i }}_score"], "5") where cache["e{{ $i }}_score"] == "" and (cache["m{{ $i }}"]["severity"] == 2 or String(cache["m{{ $i }}"]["severity"]) == "2")
+              - set(cache["e{{ $i }}_score"], "4") where cache["e{{ $i }}_score"] == "" and (cache["m{{ $i }}"]["severity"] == 3 or String(cache["m{{ $i }}"]["severity"]) == "3")
+              - set(cache["e{{ $i }}_score"], "3") where cache["e{{ $i }}_score"] == "" and (cache["m{{ $i }}"]["severity"] == 4 or String(cache["m{{ $i }}"]["severity"]) == "4")
+              - set(cache["e{{ $i }}_score"], "2") where cache["e{{ $i }}_score"] == "" and (cache["m{{ $i }}"]["severity"] == 5 or String(cache["m{{ $i }}"]["severity"]) == "5")
               - replace_pattern(cache["e{{ $i }}_msg"], "\\\\", "\\\\\\\\")
               - replace_pattern(cache["e{{ $i }}_msg"], "\"", "\\\"")
               - replace_pattern(cache["e{{ $i }}_msg"], "\n", "\\\\n")
@@ -117,12 +130,12 @@ data:
               - replace_pattern(cache["e{{ $i }}_data"], "\n", "\\\\n")
               - replace_pattern(cache["e{{ $i }}_data"], "\r", "\\\\r")
               - replace_pattern(cache["e{{ $i }}_data"], "\t", "\\\\t")
-              - set(cache["e{{ $i }}"], Concat(["{\"name\":\"", cache["e{{ $i }}_name"], "\",\"attributes\":[{\"key\":\"rule_id\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_rid"], "\"}},{\"key\":\"phase\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_phase"], "\"}},{\"key\":\"severity\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_sev"], "\"}},{\"key\":\"disruptive\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_dis"], "\"}},{\"key\":\"msg\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_msg"], "\"}},{\"key\":\"data\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_data"], "\"}}]}"], "")) where IsMap(cache["m{{ $i }}"])
+              - set(cache["e{{ $i }}"], Concat(["{\"name\":\"", cache["e{{ $i }}_name"], "\",\"attributes\":[{\"key\":\"rule_id\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_rid"], "\"}},{\"key\":\"phase\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_phase"], "\"}},{\"key\":\"severity\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_sev"], "\"}},{\"key\":\"anomaly_score\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_score"], "\"}},{\"key\":\"disruptive\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_dis"], "\"}},{\"key\":\"msg\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_msg"], "\"}},{\"key\":\"data\",\"value\":{\"stringValue\":\"", cache["e{{ $i }}_data"], "\"}}]}"], "")) where IsMap(cache["m{{ $i }}"])
               - set(cache["evparts"], Concat([cache["evparts"], ",", cache["e{{ $i }}"]], "")) where IsString(cache["e{{ $i }}"]) and cache["evparts"] != ""
               - set(cache["evparts"], cache["e{{ $i }}"]) where IsString(cache["e{{ $i }}"]) and cache["evparts"] == ""
 {{- end }}
               - set(cache["events"], Concat(["[", cache["evparts"], "]"], ""))
-              - set(body, Concat(["{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"kubewaf\"}},{\"key\":\"service.namespace\",\"value\":{\"stringValue\":\"", cache["ns"], "\"}},{\"key\":\"waf.namespace\",\"value\":{\"stringValue\":\"", cache["ns"], "\"}},{\"key\":\"waf.name\",\"value\":{\"stringValue\":\"", cache["name"], "\"}},{\"key\":\"waf.engine\",\"value\":{\"stringValue\":\"", cache["engine"], "\"}},{\"key\":\"waf.config_id\",\"value\":{\"stringValue\":\"", cache["cfg"], "\"}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"kubewaf\"},\"spans\":[{\"name\":\"waf.eval\",\"kind\":1,\"traceId\":\"", cache["tid"], "\",\"spanId\":\"", cache["sid"], "\",\"parentSpanId\":\"", cache["parent"], "\",\"startTimeUnixNano\":\"", cache["start"], "\",\"endTimeUnixNano\":\"", cache["end"], "\",\"status\":{\"code\":", cache["code"], "},\"attributes\":[{\"key\":\"waf.namespace\",\"value\":{\"stringValue\":\"", cache["ns"], "\"}},{\"key\":\"waf.name\",\"value\":{\"stringValue\":\"", cache["name"], "\"}},{\"key\":\"waf.interrupted\",\"value\":{\"stringValue\":\"", cache["interrupted_s"], "\"}},{\"key\":\"waf.action\",\"value\":{\"stringValue\":\"", cache["action"], "\"}},{\"key\":\"waf.phase\",\"value\":{\"stringValue\":\"", cache["phase"], "\"}},{\"key\":\"http.request.method\",\"value\":{\"stringValue\":\"", cache["method"], "\"}},{\"key\":\"url.path\",\"value\":{\"stringValue\":\"", cache["path"], "\"}},{\"key\":\"http.response.status_code\",\"value\":{\"stringValue\":\"", cache["status"], "\"}},{\"key\":\"waf.request_id\",\"value\":{\"stringValue\":\"", cache["rid"], "\"}}", cache["cip_attr"], "],\"events\":", cache["events"], "}]}]}]}"], "")) where IsMap(cache["evt"])
+              - set(body, Concat(["{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"kubewaf\"}},{\"key\":\"service.namespace\",\"value\":{\"stringValue\":\"", cache["ns"], "\"}},{\"key\":\"waf.namespace\",\"value\":{\"stringValue\":\"", cache["ns"], "\"}},{\"key\":\"waf.name\",\"value\":{\"stringValue\":\"", cache["name"], "\"}},{\"key\":\"waf.engine\",\"value\":{\"stringValue\":\"", cache["engine"], "\"}},{\"key\":\"waf.config_id\",\"value\":{\"stringValue\":\"", cache["cfg"], "\"}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"kubewaf\"},\"spans\":[{\"name\":\"waf.eval\",\"kind\":1,\"traceId\":\"", cache["tid"], "\",\"spanId\":\"", cache["sid"], "\",\"parentSpanId\":\"", cache["parent"], "\",\"startTimeUnixNano\":\"", cache["start"], "\",\"endTimeUnixNano\":\"", cache["end"], "\",\"status\":{\"code\":", cache["code"], "},\"attributes\":[{\"key\":\"waf.namespace\",\"value\":{\"stringValue\":\"", cache["ns"], "\"}},{\"key\":\"waf.name\",\"value\":{\"stringValue\":\"", cache["name"], "\"}},{\"key\":\"waf.interrupted\",\"value\":{\"stringValue\":\"", cache["interrupted_s"], "\"}},{\"key\":\"waf.action\",\"value\":{\"stringValue\":\"", cache["action"], "\"}},{\"key\":\"waf.phase\",\"value\":{\"stringValue\":\"", cache["phase"], "\"}},{\"key\":\"http.request.method\",\"value\":{\"stringValue\":\"", cache["method"], "\"}},{\"key\":\"url.path\",\"value\":{\"stringValue\":\"", cache["path"], "\"}},{\"key\":\"http.response.status_code\",\"value\":{\"stringValue\":\"", cache["status"], "\"}},{\"key\":\"waf.request_id\",\"value\":{\"stringValue\":\"", cache["rid"], "\"}}", cache["cip_attr"], cache["ascore_attr"], "],\"events\":", cache["events"], "}]}]}]}"], "")) where IsMap(cache["evt"])
       filter/span_json:
         error_mode: ignore
         logs:
@@ -219,6 +232,10 @@ spec:
       labels:
         {{- include "helm.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: otel-collector
+      annotations:
+        # ConfigMap mounts do not restart the process. Hash the rendered
+        # collector.yaml so helm upgrades roll this pod.
+        checksum/config: {{ include "kubewaf.otelCollectorChecksum" . }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:

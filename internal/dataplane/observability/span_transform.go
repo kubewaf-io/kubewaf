@@ -89,6 +89,9 @@ func EncodeEvalOTLPJSON(span EvalSpan, ids EvalIDs) ([]byte, error) {
 			otlpStr("severity", strconv.Itoa(ev.Severity)),
 			otlpStr("disruptive", strconv.FormatBool(ev.Disruptive)),
 		}
+		if ev.AnomalyScore > 0 {
+			attrs = append(attrs, otlpStr("anomaly_score", strconv.FormatInt(ev.AnomalyScore, 10)))
+		}
 		if ev.Msg != "" {
 			attrs = append(attrs, otlpStr("msg", ev.Msg))
 		}
@@ -179,18 +182,20 @@ type EventRollup struct {
 	WAFName      string       `json:"waf_name,omitempty"`
 	Engine       string       `json:"engine,omitempty"`
 	ClientAddr   string       `json:"client.address,omitempty"`
+	AnomalyScore int64        `json:"anomaly_score,omitempty"`
 	Matches      []MatchEvent `json:"matches"`
 }
 
 // MatchEvent is one span event (cap 16 + interrupting rule).
 type MatchEvent struct {
-	Event      string `json:"event"`
-	RuleID     int64  `json:"rule_id,omitempty"`
-	Phase      string `json:"phase,omitempty"`
-	Severity   int    `json:"severity,omitempty"`
-	Msg        string `json:"msg,omitempty"`
-	Data       string `json:"data,omitempty"`
-	Disruptive bool   `json:"disruptive,omitempty"`
+	Event        string `json:"event"`
+	RuleID       int64  `json:"rule_id,omitempty"`
+	Phase        string `json:"phase,omitempty"`
+	Severity     int    `json:"severity,omitempty"`
+	AnomalyScore int64  `json:"anomaly_score,omitempty"`
+	Msg          string `json:"msg,omitempty"`
+	Data         string `json:"data,omitempty"`
+	Disruptive   bool   `json:"disruptive,omitempty"`
 }
 
 // EvalSpan is the product query surface (Collector transform contract; not a live otelcol path).
@@ -230,6 +235,9 @@ func LogToEvalSpan(rec AccessLogRecord) (EvalSpan, error) {
 	}
 	if roll.ClientAddr != "" {
 		attrs["client.address"] = roll.ClientAddr
+	}
+	if roll.AnomalyScore > 0 {
+		attrs["waf.anomaly_score"] = strconv.FormatInt(roll.AnomalyScore, 10)
 	}
 	res := map[string]string{
 		"service.name":      "kubewaf",

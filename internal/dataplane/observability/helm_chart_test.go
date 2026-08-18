@@ -165,6 +165,14 @@ func TestHelmManagedFullRendersVictoriaTraces(t *testing.T) {
 		!strings.Contains(s, `"key\":\"client.address\"`) {
 		t.Fatal("collector must copy wasm client.address onto span attributes when present")
 	}
+	if !strings.Contains(s, `cache["m0"]["anomaly_score"]`) ||
+		!strings.Contains(s, `"key\":\"anomaly_score\"`) ||
+		!strings.Contains(s, `"key\":\"waf.anomaly_score\"`) {
+		t.Fatal("collector must copy per-rule and request anomaly_score onto the span")
+	}
+	if !strings.Contains(s, "checksum/config:") {
+		t.Fatal("collector Deployment must checksum the config so helm upgrades roll the pod")
+	}
 	// OTTL sees the replacement as a Go string. "\\\\\"") is \\ " and
 	// produces \\" in the OTLP JSON, which terminates the stringValue
 	// on ModSecurity msgs like Matched "Operator `Ge'.

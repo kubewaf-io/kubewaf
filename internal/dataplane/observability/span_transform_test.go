@@ -40,6 +40,19 @@ func TestLogToEvalSpan_Golden(t *testing.T) {
 	if span.Attributes["client.address"] != "10.244.0.15:45678" {
 		t.Fatalf("client.address=%q", span.Attributes["client.address"])
 	}
+	if span.Attributes["waf.anomaly_score"] != "5" {
+		t.Fatalf("waf.anomaly_score=%q", span.Attributes["waf.anomaly_score"])
+	}
+	if span.Events[0].AnomalyScore != 5 {
+		t.Fatalf("match anomaly_score=%d", span.Events[0].AnomalyScore)
+	}
+	enc, err := EncodeEvalOTLPJSON(span, MintEvalIDs("req-1", rec.Attributes["traceparent"], time.Unix(1, 0).UTC()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(enc), `"key":"anomaly_score"`) || !strings.Contains(string(enc), `"stringValue":"5"`) {
+		t.Fatalf("encoded span missing per-rule anomaly_score: %s", enc)
+	}
 	if len(span.Events) != 2 {
 		t.Fatalf("events=%d", len(span.Events))
 	}

@@ -5,6 +5,12 @@ Managed observability helpers. Product path: Envoy OTLP → kubewaf_otel.
 {{- printf "%s-otel-collector" (include "helm.fullname" .) -}}
 {{- end -}}
 
+{{/* Stable pod-roll hash. Bump the suffix when transform statements change. */}}
+{{- define "kubewaf.otelCollectorChecksum" -}}
+{{- $m := .Values.observability.managed -}}
+{{- printf "%s|%s|%v|ascore-v1" ($m.profile | default "lite") (include "kubewaf.tracesExportURL" .) $m.victoriaTraces.enabled | sha256sum -}}
+{{- end -}}
+
 {{- define "kubewaf.otelHost" -}}
 {{- $ep := .Values.observability.managed.otlp.endpoint | default "" -}}
 {{- if $ep -}}
