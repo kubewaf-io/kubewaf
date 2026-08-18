@@ -13,6 +13,7 @@ SecRule files under `files/crs/`, plus optimized RuleSets and extras).
 | `crs-request-*.yaml` / `crs-response-*.yaml` | Multi-doc SecRules (one CR per rule) |
 | **`phraselists/crs-data-phraselists.yaml`** | Stock CRS PhraseLists (`@pmFromFile` data pack, 21 files) |
 | `ruleset.yaml` / `crs-ruleset.yaml` | Full CRS (all files) |
+| **`crs-setup.yaml`** | Path B crs-setup.conf: PL4 + anomaly threshold 5 + `tx.crs_setup_version` |
 | **`optimized-rulesets.yaml`** | Stack-optimized RuleSets |
 | `waf.yaml` / `waf-api.yaml` | Example WAF attachments |
 
@@ -63,6 +64,10 @@ All profiles set `waf.kubewaf.io/optimized=true` and `waf.kubewaf.io/profile=<na
 
 ### Attach to a WAF (Path B — no `crsEnable`)
 
+Reference `crs-setup` **before** an attack RuleSet so 901001 does not
+deny every request (`CRS is deployed without configuration`). Or set
+`spec.crs` (emits SecAction 900990 ahead of RuleSet SecLang):
+
 ```yaml
 apiVersion: waf.kubewaf.io/v1beta1
 kind: WAF
@@ -72,13 +77,18 @@ spec:
   crsEnable: false
   # Tuning without engine includes (setup before rules, exclusions after):
   crs:
-    paranoiaLevel: 1
+    paranoiaLevel: 4
     inboundAnomalyThreshold: 5
+    outboundAnomalyThreshold: 5
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: my-app
   ruleRefs:
+    - kind: RuleSet
+      name: crs-setup
+      group: waf.kubewaf.io
+      version: v1beta1
     - kind: RuleSet
       name: ruleset-api   # or ruleset-php, ruleset-java, ruleset-golang, ...
       group: waf.kubewaf.io

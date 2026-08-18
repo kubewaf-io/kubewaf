@@ -54,6 +54,16 @@ func TestStampOnly900990(t *testing.T) {
 	}
 }
 
+func TestScanPmFromFileBasenames_CommentPrefixedCRSBlob(t *testing.T) {
+	blob := `# -=[ Restricted File Access ]=-
+#
+SecRule REQUEST_FILENAME "@pmFromFile restricted-files.data" "id:930130,phase:1,block"`
+	got := ScanPmFromFileBasenames([]string{blob})
+	if len(got) != 1 || got[0] != "restricted-files.data" {
+		t.Fatalf("comment-prefixed CRS blob: got %v, want [restricted-files.data]", got)
+	}
+}
+
 func TestScanPmFromFileBasenames(t *testing.T) {
 	dirs := []string{
 		`SecRule REQUEST_HEADERS:User-Agent "@pmFromFile scanners-user-agents.data" "id:1,phase:1,pass"`,

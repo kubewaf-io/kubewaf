@@ -1,4 +1,7 @@
+# GoReleaser v2. Default dist/ would wipe tracked dist/wasm examples on --clean.
+version: 2
 project_name: kubewaf
+dist: dist/goreleaser
 env:
   - COSIGN_EXPERIMENTAL=true
   - GO111MODULE=on

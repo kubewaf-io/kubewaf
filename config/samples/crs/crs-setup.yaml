@@ -1,0 +1,80 @@
+# CRS setup (Path B stand-in for crs-setup.conf).
+#
+# Rule 901001 denies every request when tx.crs_setup_version is unset.
+# This SecAction stamps CRS v4.27 (427), enables the highest paranoia
+# level (PL4), and sets inbound/outbound anomaly thresholds to 5
+# (one critical-severity match is enough to block).
+#
+# Attach first on a Path B WAF (WAF may only reference RuleSets):
+#   spec:
+#     crsEnable: false
+#     ruleRefs:
+#       - kind: RuleSet
+#         name: crs-setup
+#         namespace: kubewaf-system
+#         group: waf.kubewaf.io
+#         version: v1beta1
+#       - kind: RuleSet
+#         name: ruleset-backend
+#         ...
+# Equivalent first-class tuning (emits SecAction 900990 before RuleSet SecLang):
+#   spec.crs.paranoiaLevel: 4
+#   spec.crs.inboundAnomalyThreshold: 5
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecAction
+metadata:
+  name: crs-setup-pl4
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    seclang.kubewaf.io/id: "900000"
+    seclang.kubewaf.io/order: "900000"
+    waf.kubewaf.io/role: crs-setup
+    waf.kubewaf.io/crs-setup: "true"
+spec:
+  metadata:
+    comment: |
+      -=[ CRS setup ]=-
+      Path B equivalent of crs-setup.conf: stamp setup version, paranoia, thresholds.
+    id: 900000
+    phase: "1"
+    message: CRS setup PL4 anomaly-threshold 5
+    tags:
+      - kubewaf-crs-setup
+  transformations:
+    - none
+  disruptive:
+    disruptiveActionType: pass
+  non-disruptive:
+    - nonDisruptiveActionType: nolog
+    - nonDisruptiveActionType: setvar
+      value: tx.crs_setup_version=427
+    - nonDisruptiveActionType: setvar
+      value: tx.detection_paranoia_level=4
+    - nonDisruptiveActionType: setvar
+      value: tx.blocking_paranoia_level=4
+    - nonDisruptiveActionType: setvar
+      value: tx.inbound_anomaly_score_threshold=5
+    - nonDisruptiveActionType: setvar
+      value: tx.outbound_anomaly_score_threshold=5
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: crs-setup
+  labels:
+    app.kubernetes.io/part-of: coreruleset
+    coreruleset/version: "4.27.0"
+    waf.kubewaf.io/profile: setup
+    waf.kubewaf.io/crs-setup: "true"
+spec:
+  allowedRules:
+    from: Same
+  ruleRefs:
+    - kind: SecAction
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          waf.kubewaf.io/role: crs-setup

@@ -1202,8 +1202,7 @@ POW_PROXY_WASM_DIR ?= $(ENGINES_DIR)/pow-proxy-wasm
 # Monorepo copy of the engine extract helper (so wasm-fetch works without submodules).
 WASM_EXTRACT_SCRIPT ?= hack/scripts/extract-wasm-from-image.sh
 
-# Pinned product WAF engine release (GHCR). Also used as DefaultImage for challenge
-# until a dedicated challenge-proxy-wasm image is published.
+# Pinned product WAF engine release (GHCR).
 #
 # Dual catalog publish (engine release tags):
 #   path-b (first-class, default)  :$(VERSION) and :$(VERSION)-path-b
@@ -1211,9 +1210,13 @@ WASM_EXTRACT_SCRIPT ?= hack/scripts/extract-wasm-from-image.sh
 # Operator e2e and ko embed always use path-b. Path A (crsEnable) needs -full.
 # Must include data_files / @pmFromFile runtime inject (PhraseList/IPList Path B).
 # alpha8 and earlier lack parseDataFiles → custom pmFromFile configure fails → HTTP 500.
-MODSECURITY_PROXY_WASM_VERSION ?= 0.1.0-alpha15
+MODSECURITY_PROXY_WASM_VERSION ?= 0.1.0-alpha16
 MODSECURITY_PROXY_WASM_IMAGE ?= ghcr.io/kubewaf-io/modsecurity-proxy-wasm:$(MODSECURITY_PROXY_WASM_VERSION)
 MODSECURITY_PROXY_WASM_IMAGE_FULL ?= ghcr.io/kubewaf-io/modsecurity-proxy-wasm:$(MODSECURITY_PROXY_WASM_VERSION)-full
+# Pinned PoW / challenge filter (separate GHCR package — not the ModSecurity image).
+# https://github.com/kubewaf-io/pow-proxy-wasm/pkgs/container/pow-proxy-wasm
+POW_PROXY_WASM_VERSION ?= 0.1.0-alpha1
+POW_PROXY_WASM_IMAGE ?= ghcr.io/kubewaf-io/pow-proxy-wasm:$(POW_PROXY_WASM_VERSION)
 # Catalog for local engine builds staged into dist/wasm (path-b | full).
 WASM_CATALOG_MODE ?= path-b
 
@@ -1251,10 +1254,9 @@ wasm-build: ## Build path-b modsecurity-proxy-wasm + challenge-proxy-wasm → di
 	fi
 	@if [ -f $(POW_PROXY_WASM_DIR)/build/main.wasm ]; then \
 		cp -f $(POW_PROXY_WASM_DIR)/build/main.wasm dist/wasm/challenge-proxy-wasm.wasm; \
-	elif [ -f dist/wasm/modsecurity-proxy-wasm.wasm ]; then \
-		echo "WARN: challenge wasm not built; PoW image not published yet — leaving challenge optional"; \
 	else \
-		echo "WARN: challenge wasm not found"; \
+		echo "Local pow-proxy-wasm build missing; extracting $(POW_PROXY_WASM_IMAGE)..."; \
+		$(MAKE) wasm-fetch-pow; \
 	fi
 	@ls -la dist/wasm/ || true
 
@@ -1293,6 +1295,18 @@ wasm-fetch-modsecurity: ## Pull pinned path-b modsecurity-proxy-wasm image → d
 	@test -f dist/wasm/modsecurity-proxy-wasm.wasm
 	@echo "Staged dist/wasm/modsecurity-proxy-wasm.wasm ($(MODSECURITY_PROXY_WASM_VERSION), path-b)"
 
+.PHONY: wasm-fetch-pow
+wasm-fetch-pow: ## Pull pinned pow-proxy-wasm image → dist/wasm/challenge-proxy-wasm.wasm
+	@mkdir -p dist/wasm
+	@echo "Pulling $(POW_PROXY_WASM_IMAGE)..."
+	@$(CONTAINER_TOOL) pull $(POW_PROXY_WASM_IMAGE)
+	@cid=$$($(CONTAINER_TOOL) create --entrypoint=/plugin.wasm $(POW_PROXY_WASM_IMAGE) 2>/dev/null \
+		|| $(CONTAINER_TOOL) create $(POW_PROXY_WASM_IMAGE)); \
+	$(CONTAINER_TOOL) cp "$$cid:/plugin.wasm" dist/wasm/challenge-proxy-wasm.wasm; \
+	$(CONTAINER_TOOL) rm -f "$$cid" >/dev/null; \
+	test -f dist/wasm/challenge-proxy-wasm.wasm
+	@echo "Staged dist/wasm/challenge-proxy-wasm.wasm ($(POW_PROXY_WASM_VERSION))"
+
 .PHONY: wasm-fetch-modsecurity-full
 wasm-fetch-modsecurity-full: ## Pull pinned full-catalog wasm (Path A, second-class) → dist/wasm/
 	@mkdir -p dist/wasm
@@ -1327,7 +1341,8 @@ wasm-stage-kodata: ## Stage wasm into cmd/kodata/wasm/ for ko image embedding
 		if [ -f $(POW_PROXY_WASM_DIR)/build/main.wasm ]; then \
 			cp -f $(POW_PROXY_WASM_DIR)/build/main.wasm cmd/kodata/wasm/challenge-proxy-wasm.wasm; \
 		else \
-			echo "WARN: challenge-proxy-wasm.wasm not staged (optional until published)"; \
+			$(MAKE) wasm-fetch-pow; \
+			cp -f dist/wasm/challenge-proxy-wasm.wasm cmd/kodata/wasm/; \
 		fi; \
 	fi
 	@ls -la cmd/kodata/wasm/

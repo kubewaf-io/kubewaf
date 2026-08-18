@@ -62,7 +62,7 @@ var Catalog = map[ModuleID]Module{
 		DisplayName:     "ModSecurity",
 		HTTPPath:        "/wasm/modsecurity-proxy-wasm.wasm",
 		DefaultFile:     DefaultModSecurityFile,
-		DefaultImage:    "ghcr.io/kubewaf-io/modsecurity-proxy-wasm:0.1.0-alpha15",
+		DefaultImage:    "ghcr.io/kubewaf-io/modsecurity-proxy-wasm:0.1.0-alpha16",
 		DefaultWasmName: "kubewaf.modsecurity",
 	},
 	ModuleChallenge: {
@@ -70,7 +70,7 @@ var Catalog = map[ModuleID]Module{
 		DisplayName:     "Challenge (PoW)",
 		HTTPPath:        "/wasm/challenge-proxy-wasm.wasm",
 		DefaultFile:     DefaultChallengeFile,
-		DefaultImage:    "ghcr.io/kubewaf-io/modsecurity-proxy-wasm:0.1.0-alpha15",
+		DefaultImage:    "ghcr.io/kubewaf-io/pow-proxy-wasm:0.1.0-alpha1",
 		DefaultWasmName: "kubewaf.challenge",
 	},
 }

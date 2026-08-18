@@ -410,13 +410,17 @@ func truncateForLog(s string, n int) string {
 
 // waitForGatewayHTTPCode polls the gateway until one of want codes is returned.
 // Persistent HTTP 000 (connect failure) after 45s bounces the Envoy Gateway
-// proxy once — Path B wasm reloads have wedged the listener on Kind.
+// proxy once — Path B wasm / exclusive-WAF ECDS swaps have wedged the listener on Kind.
 func waitForGatewayHTTPCode(ns, svc, host, urlPath, userAgent string, want []string, timeout time.Duration, msg string) {
+	waitForGatewayHTTPCodeWithHeaders(ns, svc, host, urlPath, userAgent, nil, want, timeout, msg)
+}
+
+func waitForGatewayHTTPCodeWithHeaders(ns, svc, host, urlPath, userAgent string, headers map[string]string, want []string, timeout time.Duration, msg string) {
 	GinkgoHelper()
 	bounced := false
 	start := time.Now()
 	Eventually(func(g Gomega) {
-		code, body := curlGatewayHTTPDetail(ns, svc, host, urlPath, userAgent, nil)
+		code, body := curlGatewayHTTPDetail(ns, svc, host, urlPath, userAgent, headers)
 		if code == "000" && !bounced && time.Since(start) > 45*time.Second && ns == "envoy-gateway-system" {
 			bounceEnvoyGatewayPods()
 			bounced = true

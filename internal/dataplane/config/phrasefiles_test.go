@@ -75,6 +75,68 @@ func TestStockCRSPhraseListLabelConstant(t *testing.T) {
 	}
 }
 
+func TestScanPmFromFileBasenames_CommentPrefixedCRSBlob(t *testing.T) {
+	// GetSecLang / BuildDirectives pass one ConvertToSecLangString blob per
+	// SecRule. CRS metadata.comment makes that blob start with '#', which must
+	// not hide the @pmFromFile line (juice-shop 930130 / restricted-files.data).
+	blob := `# -=[ Restricted File Access ]=-
+#
+# Detects attempts to retrieve application source code, metadata,
+# credentials and version control history possibly reachable in a web root.
+#
+SecRule REQUEST_FILENAME "@pmFromFile restricted-files.data" "id:930130,phase:1,block"`
+	got := ScanPmFromFileBasenames([]string{blob})
+	if len(got) != 1 || got[0] != "restricted-files.data" {
+		t.Fatalf("comment-prefixed CRS blob: got %v, want [restricted-files.data]", got)
+	}
+}
+
+func TestScanPmFromFileBasenames_FromConverterOutput_UnsplitCommentBlob(t *testing.T) {
+	// Production path: RenderSecRule → one multi-line string, not pre-split lines.
+	sr := seclangv1beta1.SecRule{
+		Spec: seclangv1beta1.SecRuleSpec{
+			Metadata: &seclangv1beta1.SecRuleMetadata{
+				OnlyPhaseMetadata: seclangv1beta1.OnlyPhaseMetadata{
+					CommentMetadata: seclangv1beta1.CommentMetadata{
+						Comment: "-=[ Restricted File Access ]=-\n\nDetects attempts to retrieve application source code.",
+					},
+					Phase: "1",
+				},
+				Id:  930130,
+				Msg: "Restricted File Access Attempt",
+			},
+			Match: []seclangv1beta1.Match{{
+				Variables: []seclangv1beta1.Variable{{Name: seclangv1beta1.REQUEST_FILENAME}},
+				Operator: seclangv1beta1.Operator{
+					Name:  seclangv1beta1.PmFromFile,
+					Value: "restricted-files.data",
+				},
+			}},
+			Actions: &seclangv1beta1.SecRuleActions{
+				DisruptiveAction: &seclangv1beta1.DisruptiveAction{Type: seclangv1beta1.Block},
+			},
+		},
+	}
+	dirs, err := convert.ConvertSecRule(sr)
+	if err != nil {
+		t.Fatalf("ConvertSecRule: %v", err)
+	}
+	blob := convert.ConvertToSecLangString(dirs)
+	if blob == "" {
+		t.Fatal("empty SecLang")
+	}
+	if !strings.HasPrefix(strings.TrimSpace(blob), "#") {
+		t.Fatalf("expected CRS-style comment prefix, got:\n%s", blob)
+	}
+	if !strings.Contains(blob, "@pmFromFile restricted-files.data") {
+		t.Fatalf("missing @pmFromFile in SecLang:\n%s", blob)
+	}
+	got := ScanPmFromFileBasenames([]string{blob})
+	if len(got) != 1 || got[0] != "restricted-files.data" {
+		t.Fatalf("unsplit converter blob: got %v, want [restricted-files.data]\nSecLang:\n%s", got, blob)
+	}
+}
+
 func TestScanPmFromFileBasenames_FromConverterOutput(t *testing.T) {
 	// Converter must emit SecLang that the inject scanner can discover for
 	// PhraseList (@pmFromFile) and IPList (@ipMatchFromFile) basenames.

@@ -3,6 +3,8 @@
 stats_config:
   stats_tags:
     # Non-greedy captures: stat names embed phase/severity/tag before metric_labels.
+    - tag_name: tag
+      regex: "(_tag=([0-9a-zA-Z.-]+))"
     - tag_name: phase
       regex: "(_phase=(http_request_headers|http_request_body|http_response_headers|http_response_body|http_logging|unknown))"
     - tag_name: rule_id
@@ -13,8 +15,12 @@ stats_config:
       regex: "(_identifier=([0-9a-z.:_-]+))"
     - tag_name: severity
       regex: "(_severity=([0-9]+))"
-    - tag_name: tag
-      regex: "(_tag=([0-9a-zA-Z.-]+?))_phase="
+    - tag_name: waf_namespace
+      regex: "(_waf_namespace=([0-9A-Za-z.-]+))"
+    - tag_name: waf_name
+      regex: "(_waf_name=([0-9A-Za-z.-]+))"
+    - tag_name: engine
+      regex: "(_engine=([0-9A-Za-z.-]+))"
 # Run with: docker run --rm -v $(pwd)/dist/modsecurity-proxy-wasm.wasm:/etc/modsecurity-proxy-wasm.wasm:ro \
 #   -v $(pwd)/test/fixtures/envoy.yaml:/etc/envoy.yaml:ro -p 8080:8080 \
 #   envoyproxy/envoy:v1.38-latest
@@ -64,8 +70,8 @@ static_resources:
                   code:
                     local:
                       filename: "/etc/modsecurity-proxy-wasm.wasm"
-                # JSON WAF config: directives_map resolves virtual includes baked in at build
-                # (@demo-conf, @crs-setup-conf, @owasp_crs/*.conf = full OWASP CRS).
+                # Path B: helpers from catalog (@demo-conf); detection rules as inline SecLang
+                # (same shape as structured SecRule CRs from the operator — no embedded CRS confs).
                 configuration:
                   "@type": "type.googleapis.com/google.protobuf.StringValue"
                   value: |
@@ -75,9 +81,8 @@ static_resources:
                           "Include @demo-conf",
                           "SecDebugLogLevel 9",
                           "SecRuleEngine On",
-                          "Include @crs-setup-conf",
-                          "Include @owasp_crs/REQUEST-901-INITIALIZATION.conf",
-                          "Include @owasp_crs/*.conf"
+                          "SecRule ARGS|ARGS_NAMES|REQUEST_COOKIES|REQUEST_COOKIES_NAMES|REQUEST_HEADERS|REQUEST_HEADERS_NAMES \"@rx (?i)(?:<script|javascript:|onerror\\s*=)\" \"id:100001,phase:2,block,deny,status:403,log,msg:'path-b smoke XSS',tag:'attack-xss'\"",
+                          "SecRule ARGS|ARGS_NAMES|REQUEST_COOKIES|REQUEST_BODY \"@rx (?i)(?:union\\s+select|select.+from|insert\\s+into|drop\\s+table)\" \"id:100002,phase:2,block,deny,status:403,log,msg:'path-b smoke SQLi',tag:'attack-sqli'\""
                         ]
                       },
                       "default_directives": "default",

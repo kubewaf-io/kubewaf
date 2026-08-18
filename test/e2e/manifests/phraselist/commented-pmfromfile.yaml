@@ -1,0 +1,150 @@
+# Reproduces juice-shop Path B fail-closed: a comment-less @pmFromFile rule
+# is injected, but a CRS-style SecRule whose rendered SecLang starts with
+# "# <metadata.comment>" is skipped by ScanPmFromFileBasenames. Envoy then
+# loads the second rule, cannot open the .data file, and fail-closes.
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: PhraseList
+metadata:
+  name: e2e-scanners-commented
+  namespace: demo
+  labels:
+    e2e: "true"
+    seclang.kubewaf.io/phrase-list: "true"
+spec:
+  fileName: e2e-scanners-commented.data
+  content: |
+    kubewaf-e2e-commented-scanner
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: PhraseList
+metadata:
+  name: e2e-restricted-commented
+  namespace: demo
+  labels:
+    e2e: "true"
+    seclang.kubewaf.io/phrase-list: "true"
+spec:
+  fileName: e2e-restricted-commented.data
+  content: |
+    e2e-commented-restricted-token
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: block-e2e-commentless-pmfromfile
+  namespace: demo
+  labels:
+    app: e2e-commented-pmfromfile
+    e2e: "true"
+spec:
+  match:
+    - collections:
+        - name: REQUEST_HEADERS
+          arguments: [User-Agent]
+      operator:
+        name: pmFromFile
+        value: e2e-scanners-commented.data
+  metadata:
+    id: 100911
+    phase: "1"
+    message: "e2e comment-less pmFromFile UA"
+    severity: "ERROR"
+    tags:
+      - "e2e"
+      - "phraselist"
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "403"
+    non-disruptive:
+      - nonDisruptiveActionType: log
+---
+apiVersion: seclang.kubewaf.io/v1beta1
+kind: SecRule
+metadata:
+  name: block-e2e-commented-pmfromfile
+  namespace: demo
+  labels:
+    app: e2e-commented-pmfromfile
+    e2e: "true"
+spec:
+  match:
+    - variables:
+        - name: REQUEST_FILENAME
+      operator:
+        name: pmFromFile
+        value: e2e-restricted-commented.data
+      transformations:
+        - none
+        - utf8toUnicode
+        - urlDecodeUni
+        - normalisePathWin
+  metadata:
+    # CRS 930130-shaped comment: converter prefixes SecLang with "# ...",
+    # which must not hide @pmFromFile from data_files inject.
+    comment: |
+      -=[ Restricted File Access ]=-
+
+      Detects attempts to retrieve application source code, metadata,
+      credentials and version control history possibly reachable in a web root.
+    id: 100912
+    phase: "1"
+    message: "e2e commented pmFromFile restricted path"
+    severity: "CRITICAL"
+    tags:
+      - "e2e"
+      - "phraselist"
+      - "attack-lfi"
+  actions:
+    disruptive:
+      disruptiveActionType: deny
+    data:
+      - dataActionType: status
+        value: "403"
+    non-disruptive:
+      - nonDisruptiveActionType: log
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: RuleSet
+metadata:
+  name: e2e-commented-pmfromfile-rules
+  namespace: demo
+  labels:
+    e2e: "true"
+spec:
+  ruleRefs:
+    - kind: SecRule
+      group: seclang.kubewaf.io
+      version: v1beta1
+      selector:
+        matchLabels:
+          app: e2e-commented-pmfromfile
+  phraseListRefs:
+    - name: e2e-scanners-commented
+    - name: e2e-restricted-commented
+---
+apiVersion: waf.kubewaf.io/v1beta1
+kind: WAF
+metadata:
+  name: demo-waf-commented-pmfromfile
+  namespace: demo
+  labels:
+    e2e: "true"
+    provider: envoy-gateway
+spec:
+  phraseListPolicy: FailClosed
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: demo-gateway
+  ruleRefs:
+    - kind: RuleSet
+      name: e2e-commented-pmfromfile-rules
+      namespace: demo
+      group: waf.kubewaf.io
+      version: v1beta1
+  crsEnable: false
+  logLevel: 3

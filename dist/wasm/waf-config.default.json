@@ -4,9 +4,8 @@
       "Include @demo-conf",
       "SecDebugLogLevel 9",
       "SecRuleEngine On",
-      "Include @crs-setup-conf",
-      "Include @owasp_crs/REQUEST-901-INITIALIZATION.conf",
-      "Include @owasp_crs/*.conf"
+      "SecRule ARGS|ARGS_NAMES|REQUEST_COOKIES|REQUEST_COOKIES_NAMES|REQUEST_HEADERS|REQUEST_HEADERS_NAMES \"@rx (?i)(?:<script|javascript:|onerror\\s*=)\" \"id:100001,phase:2,block,deny,status:403,log,msg:'path-b smoke XSS',tag:'attack-xss'\"",
+      "SecRule ARGS|ARGS_NAMES|REQUEST_COOKIES|REQUEST_BODY \"@rx (?i)(?:union\\s+select|select.+from|insert\\s+into|drop\\s+table)\" \"id:100002,phase:2,block,deny,status:403,log,msg:'path-b smoke SQLi',tag:'attack-sqli'\""
     ]
   },
   "default_directives": "default",

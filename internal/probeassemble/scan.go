@@ -37,25 +37,29 @@ var fromFileRe = regexp.MustCompile(`(?i)@(?:pmFromFile|pmf|ipMatchFromFile|ipMa
 func ScanPmFromFileBasenames(directives []string) []string {
 	seen := map[string]struct{}{}
 	var out []string
-	for _, line := range directives {
-		trim := strings.TrimSpace(line)
-		if trim == "" || strings.HasPrefix(trim, "#") {
-			continue
-		}
-		for _, m := range fromFileRe.FindAllStringSubmatch(line, -1) {
-			if len(m) < 2 {
+	for _, raw := range directives {
+		// Flatten multi-line SecLang blobs (comment + rule). A leading '#'
+		// is CRS metadata.comment, not a reason to skip the whole rule.
+		for _, line := range strings.Split(raw, "\n") {
+			trim := strings.TrimSpace(line)
+			if trim == "" || strings.HasPrefix(trim, "#") {
 				continue
 			}
-			for _, tok := range strings.Fields(m[1]) {
-				base := path.Base(strings.Trim(tok, `"'`))
-				if base == "" || base == "." {
+			for _, m := range fromFileRe.FindAllStringSubmatch(line, -1) {
+				if len(m) < 2 {
 					continue
 				}
-				if _, ok := seen[base]; ok {
-					continue
+				for _, tok := range strings.Fields(m[1]) {
+					base := path.Base(strings.Trim(tok, `"'`))
+					if base == "" || base == "." {
+						continue
+					}
+					if _, ok := seen[base]; ok {
+						continue
+					}
+					seen[base] = struct{}{}
+					out = append(out, base)
 				}
-				seen[base] = struct{}{}
-				out = append(out, base)
 			}
 		}
 	}

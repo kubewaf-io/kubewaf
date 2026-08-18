@@ -13,6 +13,8 @@ cmd/kodata/
 
 # Built/fetched Proxy-Wasm binaries (use `make wasm-build` / wasm-fetch; do not commit)
 dist/wasm/*.wasm
+# GoReleaser --clean output (must not share dist/ with tracked wasm examples)
+dist/goreleaser/
 
 # Test binary, built with `go test -c`
 *.test
