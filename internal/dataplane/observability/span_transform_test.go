@@ -31,8 +31,14 @@ func TestLogToEvalSpan_Golden(t *testing.T) {
 	if span.Attributes["waf.action"] != "deny" || span.Attributes["waf.interrupted"] != "true" {
 		t.Fatalf("attrs=%v", span.Attributes)
 	}
+	if span.Attributes["waf.namespace"] != "shop" || span.Attributes["waf.name"] != "shop-waf" {
+		t.Fatalf("identity must be span tags for Jaeger search: attrs=%v", span.Attributes)
+	}
 	if span.Attributes["http.request.method"] != "GET" || span.Attributes["url.path"] != "/search" {
 		t.Fatalf("http attrs=%v", span.Attributes)
+	}
+	if span.Attributes["client.address"] != "10.244.0.15:45678" {
+		t.Fatalf("client.address=%q", span.Attributes["client.address"])
 	}
 	if len(span.Events) != 2 {
 		t.Fatalf("events=%d", len(span.Events))

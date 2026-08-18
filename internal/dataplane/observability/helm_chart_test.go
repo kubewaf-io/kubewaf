@@ -134,6 +134,12 @@ func TestHelmManagedFullRendersVictoriaTraces(t *testing.T) {
 	if !strings.Contains(s, `"events"`) {
 		t.Fatal("collector transform must emit span events")
 	}
+	// VictoriaTraces Jaeger /api/traces?tags= matches span attributes only.
+	// Resource-only waf.name/waf.namespace makes the traces subresource return [].
+	if !strings.Contains(s, `"attributes":[{"key":"waf.namespace"`) &&
+		!strings.Contains(s, `\"attributes\":[{\"key\":\"waf.namespace\"`) {
+		t.Fatal("collector must copy waf.namespace/waf.name onto span attributes")
+	}
 	if strings.Contains(s, "replace_all_patterns(") {
 		t.Fatal("cache fields are strings; collector 0.128 replace_all_patterns needs a map + mode")
 	}
@@ -149,8 +155,24 @@ func TestHelmManagedFullRendersVictoriaTraces(t *testing.T) {
 	if !strings.Contains(s, `replace_pattern(cache["e0_msg"]`) ||
 		!strings.Contains(s, `replace_pattern(cache["path"]`) ||
 		!strings.Contains(s, `replace_pattern(cache["action"]`) ||
-		!strings.Contains(s, `replace_pattern(cache["e0_data"]`) {
-		t.Fatal("collector must JSON-escape msg/data/path/action")
+		!strings.Contains(s, `replace_pattern(cache["e0_data"]`) ||
+		!strings.Contains(s, `replace_pattern(cache["cip"]`) {
+		t.Fatal("collector must JSON-escape msg/data/path/action/client.address")
+	}
+	// Jaeger /api/traces?tags= matches span attributes. Resource-only
+	// client.address is invisible to the traces subresource.
+	if !strings.Contains(s, `cache["evt"]["client.address"]`) ||
+		!strings.Contains(s, `"key\":\"client.address\"`) {
+		t.Fatal("collector must copy wasm client.address onto span attributes when present")
+	}
+	// OTTL sees the replacement as a Go string. "\\\\\"") is \\ " and
+	// produces \\" in the OTLP JSON, which terminates the stringValue
+	// on ModSecurity msgs like Matched "Operator `Ge'.
+	if strings.Contains(s, `replace_pattern(cache["e0_msg"], "\"", "\\\\\""`) {
+		t.Fatal(`quote escape must be \" not \\" or otlpjson rejects interrupt msgs`)
+	}
+	if !strings.Contains(s, `replace_pattern(cache["e0_msg"], "\"", "\\\""`) {
+		t.Fatal("quote escape replacement must be \\\"")
 	}
 	if !strings.Contains(s, "metricsQueryService:") || !strings.Contains(s, "evalIds: \"v1\"") {
 		t.Fatal("managed CM must record query service keys and evalIds")

@@ -217,6 +217,8 @@ func LogToEvalSpan(rec AccessLogRecord) (EvalSpan, error) {
 		status = "Error"
 	}
 	attrs := map[string]string{
+		"waf.namespace":   roll.WAFNamespace,
+		"waf.name":        roll.WAFName,
 		"waf.interrupted": strconv.FormatBool(roll.Interrupted),
 		"waf.action":      roll.Action,
 		"waf.phase":       roll.Phase,

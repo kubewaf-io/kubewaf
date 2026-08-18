@@ -36,6 +36,10 @@ const (
 	maxQueryRangeSec     = 24 * 3600
 	minQueryStepSec      = 15
 	maxQueryPoints       = 120
+	// defaultMetricsSelector is used when ?query= is omitted: all series for
+	// the requested WAF (or SAR-authorized WAFs on clustermetrics). ScopePromQL
+	// injects waf_namespace/waf_name into the empty selector.
+	defaultMetricsSelector = "{}"
 )
 
 func (s *Server) handleWAFMetrics(w http.ResponseWriter, r *http.Request) {
@@ -63,8 +67,7 @@ func (s *Server) handleWAFMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("query"))
 	if q == "" {
-		WriteStatus(w, &MappedError{HTTPStatus: 400, Reason: ReasonBadRequest, Message: "query is required"})
-		return
+		q = defaultMetricsSelector
 	}
 	if len(q) > maxPromQLBytes {
 		WriteStatus(w, &MappedError{HTTPStatus: 400, Reason: ReasonBadRequest, Message: "query exceeds size limit"})
@@ -163,8 +166,7 @@ func (s *Server) handleClusterMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("query"))
 	if q == "" {
-		WriteStatus(w, &MappedError{HTTPStatus: 400, Reason: ReasonBadRequest, Message: "query is required"})
-		return
+		q = defaultMetricsSelector
 	}
 	if len(q) > maxPromQLBytes {
 		WriteStatus(w, &MappedError{HTTPStatus: 400, Reason: ReasonBadRequest, Message: "query exceeds size limit"})

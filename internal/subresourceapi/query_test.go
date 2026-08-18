@@ -181,16 +181,23 @@ func TestWAFMetricsRejectsRegexIdentity(t *testing.T) {
 }
 
 func TestWAFMetricsEmptyQueryAndRange(t *testing.T) {
-	called := false
-	vm := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	var gotQuery string
+	vm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("query")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	}))
 	defer vm.Close()
 	s := NewServer(Config{Auth: AuthInsecureDev, SAR: AllowAllSAR{}, Query: NewQueryBackend(vm.URL, "")})
 	req := httptest.NewRequest(http.MethodGet,
 		"/apis/subresources.kubewaf.io/v1alpha1/namespaces/shop/wafs/shop-waf/metrics", nil)
 	rr := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, req)
-	if rr.Code != 400 || called {
-		t.Fatalf("empty query %d called=%v %s", rr.Code, called, rr.Body.String())
+	if rr.Code != 200 {
+		t.Fatalf("empty query %d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(gotQuery, `waf_namespace="shop"`) || !strings.Contains(gotQuery, `waf_name="shop-waf"`) {
+		t.Fatalf("default selector not scoped: %s", gotQuery)
 	}
 	req = httptest.NewRequest(http.MethodGet,
 		"/apis/subresources.kubewaf.io/v1alpha1/namespaces/shop/wafs/shop-waf/metrics?query=up&start=1", nil)
@@ -198,6 +205,61 @@ func TestWAFMetricsEmptyQueryAndRange(t *testing.T) {
 	s.Handler().ServeHTTP(rr, req)
 	if rr.Code != 400 || !strings.Contains(rr.Body.String(), "query_range") {
 		t.Fatalf("partial range %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestClusterMetricsEmptyQueryUnionsAuthorizedWAFs(t *testing.T) {
+	var gotQuery string
+	vm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("query")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	}))
+	defer vm.Close()
+	scheme := testScheme(t)
+	w1 := &wafv1beta1.WAF{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "a"}}
+	w2 := &wafv1beta1.WAF{ObjectMeta: metav1.ObjectMeta{Name: "two", Namespace: "b"}}
+	w1.SetGroupVersionKind(wafv1beta1.GroupVersion.WithKind("WAF"))
+	w2.SetGroupVersionKind(wafv1beta1.GroupVersion.WithKind("WAF"))
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w1, w2).Build()
+	s := NewServer(Config{
+		Client: cl, Auth: AuthInsecureDev, SAR: AllowAllSAR{},
+		Query: NewQueryBackend(vm.URL, ""),
+	})
+	req := httptest.NewRequest(http.MethodGet,
+		"/apis/subresources.kubewaf.io/v1alpha1/clustermetrics", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status %d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(gotQuery, `waf_name="one"`) || !strings.Contains(gotQuery, `waf_name="two"`) {
+		t.Fatalf("cluster default query=%s", gotQuery)
+	}
+}
+
+func TestClusterMetricsEmptyQueryDenyAllVectorZero(t *testing.T) {
+	var gotQuery string
+	vm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("query")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	}))
+	defer vm.Close()
+	scheme := testScheme(t)
+	w1 := &wafv1beta1.WAF{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "a"}}
+	w1.SetGroupVersionKind(wafv1beta1.GroupVersion.WithKind("WAF"))
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w1).Build()
+	s := NewServer(Config{Client: cl, Auth: AuthInsecureDev, SAR: DenyAllSAR{}, Query: NewQueryBackend(vm.URL, "")})
+	req := httptest.NewRequest(http.MethodGet,
+		"/apis/subresources.kubewaf.io/v1alpha1/clustermetrics", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status %d %s", rr.Code, rr.Body.String())
+	}
+	if gotQuery != "vector(0)" {
+		t.Fatalf("want vector(0) got %q", gotQuery)
 	}
 }
 
