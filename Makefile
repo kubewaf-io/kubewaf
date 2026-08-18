@@ -949,14 +949,27 @@ ko-login: ko
 # peak-scale make-ko-publish captures ALL stdout as the image digest
 # (`digest=$(make ko-publish-controller)`). Staging/login/recursive-make
 # banners must stay on stderr so only `ko build`'s image ref is emitted.
+# Publish uses .ko.yaml defaultPlatforms (no --platform) for multi-arch.
 .PHONY: ko-publish-controller
 ko-publish-controller:
 	@$(MAKE) --no-print-directory ko ko-login wasm-stage-kodata >&2
 	@LD_FLAGS=$(LD_FLAGS) KOCACHE=$(KOCACHE) KO_DOCKER_REPO=$(CONTROLLER_IMG) \
 		$(KO) build ./cmd --bare --tags=$(KO_TAGS) | tail -n1
 
+.PHONY: ko-publish-subresource-api
+ko-publish-subresource-api:
+	@$(MAKE) --no-print-directory ko ko-login >&2
+	@LD_FLAGS=$(LD_FLAGS) KOCACHE=$(KOCACHE) KO_DOCKER_REPO=$(CONTROLLER_IMG)-subresource-api \
+		$(KO) build ./cmd/subresource-api --bare --tags=$(KO_TAGS) | tail -n1
+
+.PHONY: ko-publish-probe-test-server
+ko-publish-probe-test-server:
+	@$(MAKE) --no-print-directory ko ko-login >&2
+	@LD_FLAGS=$(LD_FLAGS) KOCACHE=$(KOCACHE) KO_DOCKER_REPO=$(CONTROLLER_IMG)-probe-test-server \
+		$(KO) build ./cmd/probe-test-server --bare --tags=$(KO_TAGS) | tail -n1
+
 .PHONY: ko-publish-all
-ko-publish-all: ko-publish-controller
+ko-publish-all: ko-publish-controller ko-publish-subresource-api ko-publish-probe-test-server ## Publish controller + subresource-api + probe-test-server
 
 ####################
 # -- Helm

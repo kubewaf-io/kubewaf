@@ -288,7 +288,7 @@ monitoring:
 # ---------------------------------------------------------------------------
 subresourceApi:
   # -- Deploy the Subresource API Server + APIService
-  enabled: false
+  enabled: true
   probes:
     # -- Register /probes (requires probeTestServer.enabled)
     enabled: true
@@ -345,7 +345,7 @@ subresourceApi:
 observability:
   managed:
     # -- Enable the managed OTLP plane (Collector + metrics backend)
-    enabled: false
+    enabled: true
     # -- lite = metrics only; full = metrics + security traces
     profile: lite
     otlp:
@@ -425,7 +425,7 @@ observability:
 
 probeTestServer:
   # -- Deploy go-coraza Test HTTP Server (required only when subresourceApi.probes.enabled)
-  enabled: false
+  enabled: true
   # -- Replica count (compile cache is per-pod if enabled later)
   replicaCount: 1
   image:
