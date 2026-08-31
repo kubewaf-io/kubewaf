@@ -375,7 +375,7 @@ observability:
       image:
         registry: docker.io
         repository: victoriametrics/victoria-metrics
-        tag: "v1.117.1"
+        tag: "v1.150.0"
         pullPolicy: IfNotPresent
       retentionPeriod: "14d"
       resources:
