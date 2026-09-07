@@ -1151,7 +1151,7 @@ egctl: $(LOCALBIN) ## Download egctl (Envoy Gateway CLI) into bin/ if missing or
 	"$(EGCTL)" version 2>/dev/null | head -1 || true
 
 KO           := $(LOCALBIN)/ko
-KO_VERSION   := v0.18.1
+KO_VERSION   := v0.19.0
 KO_LOOKUP    := google/ko
 ko:
 	@test -s $(KO) && $(KO) -h | grep -q $(KO_VERSION) || \
