@@ -395,7 +395,7 @@ observability:
       image:
         registry: docker.io
         repository: victoriametrics/victoria-traces
-        tag: "v0.4.0"
+        tag: "v0.11.0"
         pullPolicy: IfNotPresent
       resources:
         requests:
