@@ -1564,7 +1564,7 @@ This is a break. There is no conversion webhook and no v1beta1 storage.
 
 Steps for an existing cluster:
 
-1. `kubectl get secrules,secactions -A -o yaml` and save it. `status.secLang` on each object is the SecLang the old operator already rendered. That text is the migration source.
+1. `kubectl get secrules,secactions -A -o yaml` and save it. On v1beta1 the rendered text is `status.secRuleString`. That string is the migration source. The new API stores the same kind of text in `status.secLang`.
 2. Uninstall the `0.1.x` Helm release.
 3. Delete CRDs `secrules`, `secactions`, `phraselists`, `iplists`, `secruleidpools.seclang.kubewaf.io` and `rulesets`, `wafs.waf.kubewaf.io`.
 4. Install the new chart. Install Envoy Gateway v1.10 if the cluster is still on an older Gateway that cannot load dynamic modules.
@@ -1622,7 +1622,7 @@ M1 through M3 are the rewrite the owner asked for. M4 is the cleanup that makes 
 
 **13.3 Policy combination (blocks M2).** With two `EnvoyExtensionPolicy` objects, one targeting the Gateway and one the HTTPRoute, observe whether Envoy installs two Coraza filters. The plan assumes it does and rejects that combination. If Envoy Gateway replaces rather than appends, the rejection can be relaxed. Also confirm `Gateway.spec.infrastructure.parametersRef` is the field Envoy Gateway v1.10 honors (the task text also says `spec.envoyProxy`, which is not a Gateway API field; the implementation uses `infrastructure.parametersRef`).
 
-**13.4 Migration helper (does not block M3).** Decide whether to ship a CLI that reads a v1beta1 YAML dump and emits v1alpha1 from `status.secLang`. Recommendation: do not block the release on it. The saved `status.secLang` is already the portable form.
+**13.4 Migration helper (does not block M3).** Decide whether to ship a CLI that reads a v1beta1 YAML dump and emits v1alpha1 from `status.secRuleString`. Recommendation: do not block the release on it. The saved `status.secRuleString` is already the portable form.
 
 **13.5 Owner overrides of the recorded decisions.** Any of these can change the plan before M1:
 
