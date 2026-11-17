@@ -71,6 +71,7 @@ spec:
                           - xmlns
                           type: string
                         value:
+                          maxLength: 512
                           type: string
                       required:
                       - type
@@ -79,6 +80,7 @@ spec:
                       - message: status takes an HTTP code and xmlns takes prefix=url
                         rule: (self.type == 'status' && self.value.matches('^[1-5][0-9]{2}$'))
                           || (self.type == 'xmlns' && self.value.matches('^[^=]+=.+$'))
+                    maxItems: 8
                     type: array
                   disruptive:
                     properties:
@@ -97,6 +99,7 @@ spec:
                         description: |-
                           Value is the argument: allow:phase, allow:request, pause:<ms>,
                           proxy:<url>, redirect:<url>. Empty for deny, drop, block, pass.
+                        maxLength: 2048
                         type: string
                     required:
                     - type
@@ -121,6 +124,7 @@ spec:
                           - chain
                           type: string
                         value:
+                          maxLength: 64
                           type: string
                       required:
                       - type
@@ -132,6 +136,7 @@ spec:
                         rule: (self.type == 'skip' && self.value.matches('^[1-9][0-9]*$'))
                           || (self.type == 'skipAfter' && self.value.matches('^[A-Za-z_][A-Za-z0-9_-]*$'))
                           || self.type == 'chain'
+                    maxItems: 8
                     type: array
                   nonDisruptive:
                     items:
@@ -169,10 +174,12 @@ spec:
                           - setvar
                           type: string
                         value:
+                          maxLength: 2048
                           type: string
                       required:
                       - type
                       type: object
+                    maxItems: 32
                     type: array
                 type: object
                 x-kubernetes-validations:
@@ -202,6 +209,7 @@ spec:
                   maturity:
                     type: string
                   message:
+                    maxLength: 2048
                     type: string
                   phase:
                     description: |-
@@ -218,6 +226,7 @@ spec:
                   tags:
                     items:
                       type: string
+                    maxItems: 32
                     type: array
                   version:
                     type: string

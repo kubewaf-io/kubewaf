@@ -1,0 +1,55 @@
+# Platform-owned EnvoyProxy. kubeWAF does not apply this.
+# The init image must contain cp. The Composer image is scratch and cannot.
+# Build composer-cp:0.13.0 with:
+#   FROM ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0 AS src
+#   FROM busybox:1.36
+#   COPY --from=src /libcomposer.so /libcomposer.so
+#   ENTRYPOINT ["cp", "/libcomposer.so", "/modules/libcomposer.so"]
+# Point Gateway spec.infrastructure.parametersRef at this object with a merge
+# patch. Applying a full Gateway here would drop the listeners the platform
+# already configured.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: platform
+  namespace: default
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        initContainers:
+          - name: install-composer
+            image: composer-cp:0.13.0
+            command: ["cp", "/libcomposer.so", "/modules/libcomposer.so"]
+            volumeMounts:
+              - name: dynamic-modules
+                mountPath: /modules
+        pod:
+          volumes:
+            - name: dynamic-modules
+              emptyDir: {}
+            - name: kubewaf-seclang
+              configMap:
+                name: kubewaf-seclang
+                optional: true
+        container:
+          image: docker.io/envoyproxy/envoy:distroless-v1.40.2
+          env:
+            - name: GODEBUG
+              value: cgocheck=0
+          volumeMounts:
+            - name: dynamic-modules
+              mountPath: /etc/envoy/dynamic-modules
+              readOnly: true
+            - name: kubewaf-seclang
+              mountPath: /etc/kubewaf/seclang
+              readOnly: true
+  dynamicModules:
+    - name: composer
+      source:
+        type: Local
+        local:
+          path: /etc/envoy/dynamic-modules/libcomposer.so
+      doNotClose: true
+      loadGlobally: false

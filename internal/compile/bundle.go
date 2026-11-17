@@ -167,7 +167,12 @@ func Build(in Input) (Bundle, error) {
 	})
 
 	var before, after []string
+	seenPhase := map[int]struct{}{}
 	for _, d := range in.Policy.Spec.DefaultActions {
+		if _, ok := seenPhase[d.Phase]; ok {
+			return Bundle{}, fmt.Errorf("default action phase %d is repeated", d.Phase)
+		}
+		seenPhase[d.Phase] = struct{}{}
 		if d.Phase < 1 || d.Phase > 5 {
 			return Bundle{}, fmt.Errorf("default action phase %d is out of range", d.Phase)
 		}

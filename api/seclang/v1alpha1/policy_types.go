@@ -30,8 +30,7 @@ import (
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="self.spec.targetRefs.all(t, t.group == 'gateway.networking.k8s.io' && t.kind in ['Gateway', 'HTTPRoute'])",message="targetRefs must be a Gateway or HTTPRoute in gateway.networking.k8s.io"
 // +kubebuilder:validation:XValidation:rule="self.spec.rules.all(r, (has(r.name) && size(r.name) > 0 && !has(r.selector)) || ((!has(r.name) || size(r.name) == 0) && has(r.selector)))",message="each rule selector sets name or selector, not both"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.dataFiles) || self.spec.dataFiles.all(f, (has(f.content) && !has(f.configMapRef)) || ((!has(f.content) || size(f.content) == 0) && has(f.configMapRef)))",message="each data file sets content or configMapRef, not both"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.defaultActions) || self.spec.defaultActions.all(a, self.spec.defaultActions.filter(b, b.phase == a.phase).size() == 1)",message="defaultActions phases must be unique"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.dataFiles) || self.spec.dataFiles.all(f, (has(f.content) && !has(f.configMapRef)) || (!has(f.content) && has(f.configMapRef)))",message="each data file sets content or configMapRef, not both"
 type SecPolicy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -83,8 +82,9 @@ type SecPolicySpec struct {
 	DataFiles []DataFile `json:"dataFiles,omitempty"`
 
 	// DefaultActions emits one SecDefaultAction per phase, before user rules.
-	// Leave empty to keep the module and CRS defaults.
+	// Leave empty to keep the module and CRS defaults. Phases must be unique.
 	// +optional
+	// +kubebuilder:validation:MaxItems=5
 	DefaultActions []DefaultAction `json:"defaultActions,omitempty"`
 
 	// PostDirectives are SecLang lines written at the end of the after file.
@@ -132,6 +132,7 @@ type DefaultAction struct {
 	// +kubebuilder:validation:Maximum=5
 	Phase int `json:"phase"`
 	// Actions is a raw SecLang action list, for example "log,auditlog,deny,status:403".
+	// +kubebuilder:validation:MaxLength=1024
 	Actions string `json:"actions"`
 }
 
