@@ -17,4 +17,4 @@ Values that exist: `image`, `replicaCount`, `proxyNamespace` (default `envoy-gat
 
 The Deployment runs `/operator` from `cmd/operator`. It does not listen on 18001, 18002, or 5005.
 
-The operator publishes the ConfigMap and the EnvoyExtensionPolicy together. The SecMarker is the bundle hash. The first publish is immediate. If the envoy log shows the Include file was missing, the operator appends `rN` and publishes again, at most once every few seconds, until a publish is not NACKed. Envoy Gateway does not copy that rejection onto the Gateway status while the previous listener is still serving, so the operator reads the envoy container log in `proxyNamespace`.
+The operator writes `kubewaf-seclang` (rule files plus a `kubewaf-version` key) before it writes the EnvoyExtensionPolicy. A DaemonSet in `proxyNamespace` runs the same image with `--projection-agent`, mounts that ConfigMap, and records the projected version in `kubewaf-seclang-seen`. The SecMarker is published only after every Ready Envoy pod that mounts the volume is on a node reporting that version. `Programmed` follows the EnvoyExtensionPolicy status. The chart does not grant `pods/log`.

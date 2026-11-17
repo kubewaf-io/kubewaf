@@ -1394,7 +1394,7 @@ A Gateway `EnvoyExtensionPolicy` and an HTTPRoute `EnvoyExtensionPolicy` are bot
 2. Policy reconciler rewrites the ConfigMap key and the `SecMarker` hash inside `EnvoyExtensionPolicy.spec.dynamicModule[].config`.
 3. Envoy Gateway pushes a new filter config. The module initializes again and `Include`s the mounted files.
 4. A ConfigMap update that does not change the policy spec is invisible to Envoy. The hash exists so step 2 always happens together with step 1.
-5. If that load is rejected because an Include file is not on disk yet, the operator appends `rN` to the marker and publishes again. Envoy Gateway logs the rejection and keeps the previous listener, so the signal is the envoy container log, or a Gateway / EnvoyExtensionPolicy condition message when one is set. There is no fixed delay before the first publish.
+5. The operator writes the files and a `kubewaf-version` key first. A per-node agent mounts that ConfigMap and records the bytes it sees. The operator publishes the `EnvoyExtensionPolicy` only after every Ready Envoy pod that mounts the volume is on a node that reports those bytes. It does not read Envoy logs. `Programmed` is the EnvoyExtensionPolicy Accepted condition, and a Programmed condition when Envoy Gateway sets one. The filter is not published until a Ready Envoy pod has the SecLang volume, which means the platform init container has finished copying `libcomposer.so`.
 
 Adding a policy adds keys to the existing ConfigMap. The platform pod template does not change, so Envoy does not roll. The `.so` mount is already there because the platform put it on the `EnvoyProxy` before any SecPolicy existed.
 

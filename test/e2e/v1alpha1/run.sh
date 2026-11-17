@@ -177,7 +177,21 @@ GW_AFTER="$(kubectl get gateway eg -n default -o jsonpath='{.spec.infrastructure
 [[ "$PROXY_BEFORE" == "$PROXY_AFTER" ]] || die "EnvoyProxy spec changed"
 [[ "$GW_BEFORE" == "$GW_AFTER" ]] || die "Gateway parametersRef changed"
 
-log "delete SecPolicy and expect sqlmap to be allowed"
+log "edit the rule and expect the new match without restarting Envoy"
+kubectl patch secrule block-sqlmap -n default --type=json \
+  -p '[{"op":"replace","path":"/spec/chain/0/operator/value","value":"(?i)badbot"}]'
+EDITED_SQL=""
+EDITED_BOT=""
+for _ in $(seq 1 40); do
+  EDITED_SQL="$(probe -H 'User-Agent: sqlmap/1.0')"
+  EDITED_BOT="$(probe -H 'User-Agent: badbot/1.0')"
+  log "probe after edit sqlmap=$EDITED_SQL badbot=$EDITED_BOT"
+  [[ "$EDITED_SQL" == "200" && "$EDITED_BOT" == "403" ]] && break
+  sleep 5
+done
+[[ "$EDITED_SQL" == "200" && "$EDITED_BOT" == "403" ]] || die "want sqlmap 200 and badbot 403 after edit, got $EDITED_SQL and $EDITED_BOT"
+
+log "delete SecPolicy and expect the edited rule to stop blocking"
 kubectl delete secpolicy edge -n default --wait=true
 for _ in $(seq 1 30); do
   if ! kubectl get envoyextensionpolicy kubewaf-edge -n default >/dev/null 2>&1; then
@@ -188,12 +202,12 @@ done
 kubectl get envoyextensionpolicy kubewaf-edge -n default >/dev/null 2>&1 && die "EnvoyExtensionPolicy was not deleted"
 AFTER_DELETE=""
 for _ in $(seq 1 30); do
-  AFTER_DELETE="$(probe -H 'User-Agent: sqlmap/1.0')"
-  log "probe after delete sqlmap=$AFTER_DELETE"
+  AFTER_DELETE="$(probe -H 'User-Agent: badbot/1.0')"
+  log "probe after delete badbot=$AFTER_DELETE"
   [[ "$AFTER_DELETE" == "200" ]] && break
   sleep 5
 done
-[[ "$AFTER_DELETE" == "200" ]] || die "want sqlmap 200 after delete, got $AFTER_DELETE"
+[[ "$AFTER_DELETE" == "200" ]] || die "want badbot 200 after delete, got $AFTER_DELETE"
 
 if [[ "${E2E_CRS:-false}" == "true" ]]; then
   log "nightly CRS includes"
@@ -210,4 +224,4 @@ if [[ "${E2E_CRS:-false}" == "true" ]]; then
   [[ "$CRS" == "403" ]] || die "want CRS 403, got $CRS"
 fi
 
-log "PASS clean=$CLEAN sqlmap=$SQLMAP after_delete=$AFTER_DELETE"
+log "PASS clean=$CLEAN sqlmap=$SQLMAP after_edit sqlmap=$EDITED_SQL badbot=$EDITED_BOT after_delete=$AFTER_DELETE"
