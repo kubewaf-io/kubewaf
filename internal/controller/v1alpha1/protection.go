@@ -394,7 +394,7 @@ func (r *ProtectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&seclangv1alpha1.SecAction{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&seclangv1alpha1.Include{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&seclangv1alpha1.SecPolicy{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
-		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.requestsForSecLang)).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&gatewayv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
@@ -406,6 +406,16 @@ func (r *ProtectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 	}
 	return b.Complete(r)
+}
+
+func (r *ProtectionReconciler) requestsForSecLang(ctx context.Context, obj client.Object) []ctrl.Request {
+	if obj.GetNamespace() != r.ProxyNamespace {
+		return nil
+	}
+	if obj.GetName() != compile.ConfigMapName && obj.GetName() != compile.SeenConfigMapName {
+		return nil
+	}
+	return r.requestsAll(ctx, obj)
 }
 
 func (r *ProtectionReconciler) requestsAll(ctx context.Context, _ client.Object) []ctrl.Request {
