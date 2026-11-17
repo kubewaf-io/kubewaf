@@ -19,8 +19,10 @@ package envoygateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	egv1a1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	"github.com/kubewaf-io/kubewaf/internal/compile"
@@ -41,6 +43,7 @@ func TestApplyWritesOnlyConfigMapAndExtensionPolicy(t *testing.T) {
 	beforeGW := gw.Spec.DeepCopy()
 	c := fakeClient(t, proxy, gw)
 	p := New("envoy-gateway-system")
+	p.SetImmediate()
 	ctx := context.Background()
 
 	view, err := p.CheckEngine(ctx, c, []provider.GatewayRef{{Namespace: "default", Name: "eg"}}, "composer", "envoy-gateway-system")
@@ -120,6 +123,7 @@ func TestRoutePolicyTargetsTheRoute(t *testing.T) {
 	beforeGW := gw.Spec.DeepCopy()
 	c := fakeClient(t, proxy, gw)
 	p := New("envoy-gateway-system")
+	p.SetImmediate()
 	ctx := context.Background()
 	if err := p.Apply(ctx, c, sampleBundle("default", "edge", "KUBEWAF0123456789abcdef", "x\n"), gatewayRef(), "envoy-gateway-system"); err != nil {
 		t.Fatal(err)
@@ -147,6 +151,7 @@ func TestRoutePolicyTargetsTheRoute(t *testing.T) {
 func TestEngineNotReady(t *testing.T) {
 	ctx := context.Background()
 	p := New("envoy-gateway-system")
+	p.SetImmediate()
 	missing := platformProxy(false, true)
 	c := fakeClient(t, missing, platformGateway())
 	view, err := p.CheckEngine(ctx, c, []provider.GatewayRef{{Namespace: "default", Name: "eg"}}, "composer", "envoy-gateway-system")
@@ -197,6 +202,7 @@ func TestDeleteRemovesKeysAndPolicyOnly(t *testing.T) {
 	beforeProxy := proxy.Spec.DeepCopy()
 	c := fakeClient(t, proxy, gw)
 	p := New("envoy-gateway-system")
+	p.SetImmediate()
 	ctx := context.Background()
 	if err := p.Apply(ctx, c, sampleBundle("default", "edge", "KUBEWAF0123456789abcdef", "x\n"), gatewayRef(), "envoy-gateway-system"); err != nil {
 		t.Fatal(err)
@@ -232,6 +238,7 @@ func TestDeleteRemovesKeysAndPolicyOnly(t *testing.T) {
 func TestDataFileConflictAndSize(t *testing.T) {
 	c := fakeClient(t)
 	p := New("envoy-gateway-system")
+	p.SetImmediate()
 	ctx := context.Background()
 	first := sampleBundle("default", "edge", "KUBEWAF0123456789abcdef", "x\n")
 	if err := p.Apply(ctx, c, first, gatewayRef(), "envoy-gateway-system"); err != nil {
@@ -246,6 +253,36 @@ func TestDataFileConflictAndSize(t *testing.T) {
 	huge.Files = map[string]string{"default_big-before.conf": strings.Repeat("a", 900*1024)}
 	if err := p.Apply(ctx, c, huge, gatewayRef(), "envoy-gateway-system"); err == nil {
 		t.Fatal("expected size error")
+	}
+}
+
+func TestApplyWaitsUntilTheVolumeCanRefresh(t *testing.T) {
+	c := fakeClient(t)
+	p := New("envoy-gateway-system")
+	start := time.Date(2026, 11, 17, 16, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return start }
+	ctx := context.Background()
+	b := sampleBundle("default", "edge", "KUBEWAF0123456789abcdef", "x\n")
+	if err := p.Apply(ctx, c, b, gatewayRef(), "envoy-gateway-system"); !errors.Is(err, provider.ErrMountSettling) {
+		t.Fatalf("first apply: %v", err)
+	}
+	ext := &egv1a1.EnvoyExtensionPolicy{}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-edge"}, ext); err == nil {
+		t.Fatal("extension policy was written before the volume could refresh")
+	}
+	cm := &corev1.ConfigMap{}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "envoy-gateway-system", Name: compile.ConfigMapName}, cm); err != nil {
+		t.Fatal(err)
+	}
+	if cm.Data["default_edge-before.conf"] != "x\n" {
+		t.Fatalf("configmap keys missing: %#v", cm.Data)
+	}
+	p.now = func() time.Time { return start.Add(firstMountSettle) }
+	if err := p.Apply(ctx, c, b, gatewayRef(), "envoy-gateway-system"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-edge"}, ext); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -308,7 +308,7 @@ func TestNameAndLabelIndex(t *testing.T) {
 }
 
 func newPolicyReconciler(c client.Client) *SecPolicyReconciler {
-	return &SecPolicyReconciler{Client: c, Registry: registry.New("envoy-gateway-system"), ProxyNamespace: "envoy-gateway-system"}
+	return &SecPolicyReconciler{Client: c, Registry: registry.NewImmediate("envoy-gateway-system"), ProxyNamespace: "envoy-gateway-system"}
 }
 
 func req(ns, name string) ctrl.Request {

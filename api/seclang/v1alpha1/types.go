@@ -92,11 +92,13 @@ type Metadata struct {
 	Phase int `json:"phase"`
 
 	// +optional
+	// +kubebuilder:validation:MaxLength=2048
 	Message string `json:"message,omitempty"`
 	// +optional
 	// +kubebuilder:validation:Pattern=`^([0-7]|EMERGENCY|ALERT|CRITICAL|ERROR|WARNING|NOTICE|INFO|DEBUG)$`
 	Severity string `json:"severity,omitempty"`
 	// +optional
+	// +kubebuilder:validation:MaxItems=32
 	Tags []string `json:"tags,omitempty"`
 	// +optional
 	Revision string `json:"revision,omitempty"`
@@ -111,11 +113,13 @@ type Metadata struct {
 // ChainLink is one SecRule line in a chain.
 type ChainLink struct {
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
 	Targets []Target `json:"targets"`
 
 	Operator Operator `json:"operator"`
 
 	// +optional
+	// +kubebuilder:validation:MaxItems=16
 	Transformations []Transformation `json:"transformations,omitempty"`
 
 	// Actions on link 0 may include one disruptive action.
@@ -143,6 +147,7 @@ type Operator struct {
 	Negate bool         `json:"negate,omitempty"`
 	Name   OperatorName `json:"name"`
 	// +optional
+	// +kubebuilder:validation:MaxLength=4096
 	Value string `json:"value,omitempty"`
 }
 
@@ -154,10 +159,13 @@ type Actions struct {
 	// +optional
 	Disruptive *DisruptiveAction `json:"disruptive,omitempty"`
 	// +optional
+	// +kubebuilder:validation:MaxItems=8
 	Flow []FlowAction `json:"flow,omitempty"`
 	// +optional
+	// +kubebuilder:validation:MaxItems=8
 	Data []DataAction `json:"data,omitempty"`
 	// +optional
+	// +kubebuilder:validation:MaxItems=32
 	NonDisruptive []NonDisruptiveAction `json:"nonDisruptive,omitempty"`
 }
 
@@ -167,26 +175,30 @@ type DisruptiveAction struct {
 	// Value is the argument: allow:phase, allow:request, pause:<ms>,
 	// proxy:<url>, redirect:<url>. Empty for deny, drop, block, pass.
 	// +optional
+	// +kubebuilder:validation:MaxLength=2048
 	Value string `json:"value,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="(self.type == 'skip' && self.value.matches('^[1-9][0-9]*$')) || (self.type == 'skipAfter' && self.value.matches('^[A-Za-z_][A-Za-z0-9_-]*$')) || self.type == 'chain'",message="skip takes a positive integer and skipAfter takes a marker name"
 type FlowAction struct {
 	// chain is rejected. skip and skipAfter are the accepted types.
-	Type  FlowActionType `json:"type"`
-	Value string         `json:"value"`
+	Type FlowActionType `json:"type"`
+	// +kubebuilder:validation:MaxLength=64
+	Value string `json:"value"`
 }
 
 // +kubebuilder:validation:XValidation:rule="(self.type == 'status' && self.value.matches('^[1-5][0-9]{2}$')) || (self.type == 'xmlns' && self.value.matches('^[^=]+=.+$'))",message="status takes an HTTP code and xmlns takes prefix=url"
 type DataAction struct {
 	Type DataActionType `json:"type"`
 	// +optional
+	// +kubebuilder:validation:MaxLength=512
 	Value string `json:"value,omitempty"`
 }
 
 type NonDisruptiveAction struct {
 	Type NonDisruptiveActionType `json:"type"`
 	// +optional
+	// +kubebuilder:validation:MaxLength=2048
 	Value string `json:"value,omitempty"`
 }
 

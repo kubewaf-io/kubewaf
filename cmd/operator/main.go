@@ -15,7 +15,8 @@ limitations under the License.
 */
 
 // Command operator runs the v1alpha1 SecLang controllers.
-// The chart still starts cmd/main. This binary does not serve ECDS or Wasm.
+// charts/kubewaf-v1alpha1 starts this binary. charts/kubewaf still starts cmd/main.
+// This binary does not serve ECDS or Wasm.
 package main
 
 import (

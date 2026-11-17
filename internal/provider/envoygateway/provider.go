@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	egv1a1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	"github.com/kubewaf-io/kubewaf/internal/compile"
@@ -43,12 +44,19 @@ const (
 	managedByValue        = "kubewaf"
 	policyLabel           = "seclang.kubewaf.io/policy"
 	ownersAnnotation      = "seclang.kubewaf.io/key-owners"
+	settleAnnotation      = "seclang.kubewaf.io/settle"
 	maxConfigMapBytes     = 900 * 1024
+	// firstMountSettle covers kubelet's ~1m poll when kubewaf-seclang did not
+	// exist at pod start. Later edits are watched, so updateMountSettle is short.
+	firstMountSettle  = 75 * time.Second
+	updateMountSettle = 5 * time.Second
 )
 
 // Envoy is the Envoy Gateway provider.
 type Envoy struct {
 	proxyNamespace string
+	now            func() time.Time
+	immediate      bool
 }
 
 // New returns the provider. An empty proxy namespace uses envoy-gateway-system.
@@ -56,8 +64,12 @@ func New(proxyNamespace string) *Envoy {
 	if proxyNamespace == "" {
 		proxyNamespace = defaultProxyNamespace
 	}
-	return &Envoy{proxyNamespace: proxyNamespace}
+	return &Envoy{proxyNamespace: proxyNamespace, now: time.Now}
 }
+
+// SetImmediate publishes the extension policy in the same call as the ConfigMap.
+// Tests use it. The process default waits so kubelet can project the files.
+func (e *Envoy) SetImmediate() { e.immediate = true }
 
 // Name is the registry key.
 func (e *Envoy) Name() string { return provider.NameEnvoyGateway }
@@ -237,13 +249,17 @@ func (e *Envoy) Apply(ctx context.Context, c client.Client, b compile.Bundle, re
 	if proxyNamespace == "" {
 		proxyNamespace = e.proxyNamespace
 	}
-	if err := e.writeConfigMap(ctx, c, b, proxyNamespace); err != nil {
+	settled, err := e.writeConfigMap(ctx, c, b, proxyNamespace)
+	if err != nil {
 		return err
+	}
+	if !settled {
+		return provider.ErrMountSettling
 	}
 	return e.writeExtension(ctx, c, b, refs)
 }
 
-func (e *Envoy) writeConfigMap(ctx context.Context, c client.Client, b compile.Bundle, proxyNamespace string) error {
+func (e *Envoy) writeConfigMap(ctx context.Context, c client.Client, b compile.Bundle, proxyNamespace string) (bool, error) {
 	owner := b.Namespace + "/" + b.Name
 	cm := &corev1.ConfigMap{}
 	key := types.NamespacedName{Namespace: proxyNamespace, Name: compile.ConfigMapName}
@@ -253,7 +269,7 @@ func (e *Envoy) writeConfigMap(ctx context.Context, c client.Client, b compile.B
 		err = nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if cm.Data == nil {
 		cm.Data = map[string]string{}
@@ -267,7 +283,7 @@ func (e *Envoy) writeConfigMap(ctx context.Context, c client.Client, b compile.B
 	}
 	for k := range b.Files {
 		if prev, ok := owners[k]; ok && prev != owner {
-			return fmt.Errorf("%w: %s", provider.ErrDataFileConflict, k)
+			return false, fmt.Errorf("%w: %s", provider.ErrDataFileConflict, k)
 		}
 	}
 	for k, v := range b.Files {
@@ -275,24 +291,61 @@ func (e *Envoy) writeConfigMap(ctx context.Context, c client.Client, b compile.B
 		owners[k] = owner
 	}
 	if configMapSize(cm.Data) > maxConfigMapBytes {
-		return provider.ErrConfigMapTooLarge
+		return false, provider.ErrConfigMapTooLarge
 	}
 	if cm.Annotations == nil {
 		cm.Annotations = map[string]string{}
 	}
 	raw, err := json.Marshal(owners)
 	if err != nil {
-		return err
+		return false, err
 	}
 	cm.Annotations[ownersAnnotation] = string(raw)
+	marks := decodeSettle(cm.Annotations[settleAnnotation])
+	mark := marks[owner]
+	delay := e.settleFor(cm)
+	changed := mark.Hash != b.Hash
+	if changed {
+		mark.Hash = b.Hash
+		mark.At = e.now().UTC().Format(time.RFC3339Nano)
+		marks[owner] = mark
+	}
+	settleRaw, err := json.Marshal(marks)
+	if err != nil {
+		return false, err
+	}
+	cm.Annotations[settleAnnotation] = string(settleRaw)
 	if cm.Labels == nil {
 		cm.Labels = map[string]string{}
 	}
 	cm.Labels[managedByLabel] = managedByValue
 	if cm.ResourceVersion == "" {
-		return c.Create(ctx, cm)
+		err = c.Create(ctx, cm)
+	} else {
+		err = c.Update(ctx, cm)
 	}
-	return c.Update(ctx, cm)
+	if err != nil {
+		return false, err
+	}
+	if changed && delay > 0 {
+		return false, nil
+	}
+	at, err := time.Parse(time.RFC3339Nano, mark.At)
+	if err != nil || e.now().Sub(at) < delay {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (e *Envoy) settleFor(cm *corev1.ConfigMap) time.Duration {
+	if e.immediate {
+		return 0
+	}
+	created := cm.CreationTimestamp.Time
+	if created.IsZero() || e.now().Sub(created) < firstMountSettle {
+		return firstMountSettle
+	}
+	return updateMountSettle
 }
 
 func (e *Envoy) writeExtension(ctx context.Context, c client.Client, b compile.Bundle, refs []gatewayv1.LocalPolicyTargetReference) error {
@@ -425,6 +478,8 @@ func (e *Envoy) deleteKeys(ctx context.Context, c client.Client, policyNamespace
 		delete(cm.Data, k)
 		delete(owners, k)
 	}
+	marks := decodeSettle(cm.Annotations[settleAnnotation])
+	delete(marks, owner)
 	if len(cm.Data) == 0 {
 		return c.Delete(ctx, cm)
 	}
@@ -436,6 +491,11 @@ func (e *Envoy) deleteKeys(ctx context.Context, c client.Client, policyNamespace
 		return err
 	}
 	cm.Annotations[ownersAnnotation] = string(raw)
+	settleRaw, err := json.Marshal(marks)
+	if err != nil {
+		return err
+	}
+	cm.Annotations[settleAnnotation] = string(settleRaw)
 	return c.Update(ctx, cm)
 }
 
@@ -463,6 +523,23 @@ func (e *Envoy) Programmed(ctx context.Context, c client.Client, policyNamespace
 		}
 	}
 	return provider.ProgramView{Found: true, Reason: "Pending", Message: "Envoy Gateway has not reported Accepted"}, nil
+}
+
+type settleMark struct {
+	Hash string `json:"hash"`
+	At   string `json:"at"`
+}
+
+func decodeSettle(raw string) map[string]settleMark {
+	out := map[string]settleMark{}
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(raw), &out)
+	if out == nil {
+		out = map[string]settleMark{}
+	}
+	return out
 }
 
 func decodeOwners(raw string) map[string]string {

@@ -1,14 +1,18 @@
-# v1alpha1 operator RBAC. Not installed by the chart or config/rbac/kustomization.yaml.
-# M3 binds this when the chart switches to cmd/operator.
+# v1alpha1 operator RBAC. The chart templates in charts/kubewaf-v1alpha1
+# carry the same rules. This file is not installed by kustomization.yaml.
 # envoyproxies and gateways are get, list, and watch only.
+# secpolicies includes update and patch because the finalizer is a full-object update.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: kubewaf-v1alpha1
 rules:
   - apiGroups: ["seclang.kubewaf.io"]
-    resources: ["secrules", "secactions", "includes", "secpolicies"]
+    resources: ["secrules", "secactions", "includes"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["seclang.kubewaf.io"]
+    resources: ["secpolicies"]
+    verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["seclang.kubewaf.io"]
     resources: ["secrules/status", "secactions/status", "includes/status", "secpolicies/status"]
     verbs: ["get", "update", "patch"]

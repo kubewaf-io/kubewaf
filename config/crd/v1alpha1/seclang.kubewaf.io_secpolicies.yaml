@@ -90,13 +90,14 @@ spec:
               defaultActions:
                 description: |-
                   DefaultActions emits one SecDefaultAction per phase, before user rules.
-                  Leave empty to keep the module and CRS defaults.
+                  Leave empty to keep the module and CRS defaults. Phases must be unique.
                 items:
                   description: DefaultAction is one SecDefaultAction phase.
                   properties:
                     actions:
                       description: Actions is a raw SecLang action list, for example
                         "log,auditlog,deny,status:403".
+                      maxLength: 1024
                       type: string
                     phase:
                       maximum: 5
@@ -106,6 +107,7 @@ spec:
                   - actions
                   - phase
                   type: object
+                maxItems: 5
                 type: array
               engine:
                 default: "On"
@@ -365,11 +367,7 @@ spec:
             || ((!has(r.name) || size(r.name) == 0) && has(r.selector)))
         - message: each data file sets content or configMapRef, not both
           rule: '!has(self.spec.dataFiles) || self.spec.dataFiles.all(f, (has(f.content)
-            && !has(f.configMapRef)) || ((!has(f.content) || size(f.content) == 0)
-            && has(f.configMapRef)))'
-        - message: defaultActions phases must be unique
-          rule: '!has(self.spec.defaultActions) || self.spec.defaultActions.all(a,
-            self.spec.defaultActions.filter(b, b.phase == a.phase).size() == 1)'
+            && !has(f.configMapRef)) || (!has(f.content) && has(f.configMapRef)))'
     served: true
     storage: true
     subresources:

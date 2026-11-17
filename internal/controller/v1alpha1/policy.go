@@ -123,7 +123,7 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	input, resolved, reason, message := r.resolve(ctx, policy)
 	if !resolved {
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionRulesResolved, metav1.ConditionFalse, reason, message)
-		return ctrl.Result{}, r.Status().Update(ctx, policy)
+		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
 	setCondition(&policy.Status.Conditions, policy.Generation, conditionRulesResolved, metav1.ConditionTrue, reasonReady, "rules are ready")
 
@@ -135,7 +135,7 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionAccepted, metav1.ConditionFalse, reasonDualAttachment, message)
 		_ = p.Retract(ctx, r.Client, policy.Namespace, policy.Name)
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reasonDualAttachment, message)
-		return ctrl.Result{}, r.Status().Update(ctx, policy)
+		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
 
 	gateways, reason, message, err := r.gatewaysFor(ctx, policy)
@@ -144,7 +144,7 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	if reason != "" {
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionAccepted, metav1.ConditionFalse, reason, message)
-		return ctrl.Result{}, r.Status().Update(ctx, policy)
+		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
 	setCondition(&policy.Status.Conditions, policy.Generation, conditionAccepted, metav1.ConditionTrue, reasonReady, "targets are owned by this policy")
 
@@ -165,20 +165,27 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, engine.Reason, "extension policy removed because the engine is not ready")
-		return ctrl.Result{}, r.Status().Update(ctx, policy)
+		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
 	setCondition(&policy.Status.Conditions, policy.Generation, conditionEngineReady, metav1.ConditionTrue, reasonReady, engine.Message)
 
 	bundle, err := compile.Build(input)
 	if err != nil {
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reasonParseError, err.Error())
-		return ctrl.Result{}, r.Status().Update(ctx, policy)
+		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
 	if err := compile.ParseFiles(bundle.Before+"\n"+bundle.After, bundle.Files); err != nil {
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reasonParseError, err.Error())
-		return ctrl.Result{}, r.Status().Update(ctx, policy)
+		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
 	if err := p.Apply(ctx, r.Client, bundle, policy.Spec.TargetRefs, r.ProxyNamespace); err != nil {
+		if errors.Is(err, provider.ErrMountSettling) {
+			setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reasonPending, "waiting for the SecLang volume to refresh")
+			if err := r.writeStatus(ctx, policy); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 		reason := reasonParseError
 		if errors.Is(err, provider.ErrDataFileConflict) {
 			reason = reasonDataFileConflict
@@ -187,7 +194,7 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			reason = reasonConfigMapTooLarge
 		}
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reason, err.Error())
-		return ctrl.Result{}, r.Status().Update(ctx, policy)
+		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
 
 	policy.Status.SecLangHash = bundle.Hash
@@ -203,7 +210,7 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	if view.Accepted {
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionTrue, reasonReady, "EnvoyExtensionPolicy is accepted")
-		if err := r.Status().Update(ctx, policy); err != nil {
+		if err := r.writeStatus(ctx, policy); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -213,10 +220,24 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		reason = reasonPending
 	}
 	setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reason, view.Message)
-	if err := r.Status().Update(ctx, policy); err != nil {
+	if err := r.writeStatus(ctx, policy); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// writeStatus sets Ready from the four attachment conditions, then writes status.
+func (r *SecPolicyReconciler) writeStatus(ctx context.Context, policy *seclangv1alpha1.SecPolicy) error {
+	ready := apimeta.IsStatusConditionTrue(policy.Status.Conditions, conditionRulesResolved) &&
+		apimeta.IsStatusConditionTrue(policy.Status.Conditions, conditionAccepted) &&
+		apimeta.IsStatusConditionTrue(policy.Status.Conditions, conditionEngineReady) &&
+		apimeta.IsStatusConditionTrue(policy.Status.Conditions, conditionProgrammed)
+	if ready {
+		setCondition(&policy.Status.Conditions, policy.Generation, conditionReady, metav1.ConditionTrue, reasonReady, "rules are programmed on a ready engine")
+	} else {
+		setCondition(&policy.Status.Conditions, policy.Generation, conditionReady, metav1.ConditionFalse, reasonPending, "not all attachment conditions are True")
+	}
+	return r.Status().Update(ctx, policy)
 }
 
 func (r *SecPolicyReconciler) resolve(ctx context.Context, policy *seclangv1alpha1.SecPolicy) (compile.Input, bool, string, string) {

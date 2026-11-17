@@ -1545,7 +1545,7 @@ test/e2e/
 
 `PROJECT` stays kubebuilder multi-group. Phase 2 adds `api/waf/v1alpha1` when Protection is implemented. It is not scaffolded in the first implementation, so an empty group does not ship.
 
-v1alpha1 CRDs are generated into `config/crd/v1alpha1/`. They are not merged into `charts/kubewaf/crds`. `secrules.seclang.kubewaf.io` cannot serve v1beta1 and v1alpha1 together without a conversion webhook, and this rewrite does not ship one. The chart keeps serving v1beta1 until M4 deletes it and installs the v1alpha1 CRDs in its place.
+v1alpha1 CRDs are generated into `config/crd/v1alpha1/` and copied into `charts/kubewaf-v1alpha1/crds`. They are not merged into `charts/kubewaf/crds`. `secrules.seclang.kubewaf.io` cannot serve v1beta1 and v1alpha1 together without a conversion webhook, and this rewrite does not ship one. `charts/kubewaf-v1alpha1` is the clean replacement. Uninstall 0.1.x and delete the v1beta1 CRDs before installing it. `charts/kubewaf` stays until M4 so the old operator tests still have a chart.
 
 ### Helm chart `charts/kubewaf`
 
