@@ -4,6 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+mkdir -p "$ROOT/bin"
 CLUSTER="${KIND_CLUSTER:-kubewaf-v1a1}"
 NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.34.0}"
 OPERATOR_IMAGE="${OPERATOR_IMAGE:-kubewaf-operator:dev}"
