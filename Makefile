@@ -69,11 +69,16 @@ help: ## Display this help.
 # APIService endpoints, not etcd-backed CRDs (would create a Local APIService
 # that conflicts with aggregation).
 CONTROLLER_GEN_OBJECT_PATHS ?= ./api/...
-CONTROLLER_GEN_CRD_PATHS ?= ./api/seclang/...;./api/waf/...
+# v1alpha1 is generated on its own. Serving it in the same CRD as v1beta1
+# would require a conversion webhook, which this rewrite does not ship.
+# M4 replaces the chart CRDs when v1beta1 is removed.
+CONTROLLER_GEN_CRD_PATHS ?= ./api/seclang/v1beta1/...;./api/waf/...
+CONTROLLER_GEN_V1ALPHA1_CRD_PATHS ?= ./api/seclang/v1alpha1/...
 
 .PHONY: manifests
 manifests: controller-gen ## Generate CustomResourceDefinition objects.
 	"$(CONTROLLER_GEN)" crd paths="$(CONTROLLER_GEN_CRD_PATHS)" output:crd:artifacts:config=charts/kubewaf/crds
+	"$(CONTROLLER_GEN)" crd paths="$(CONTROLLER_GEN_V1ALPHA1_CRD_PATHS)" output:crd:artifacts:config=config/crd/v1alpha1
 	@rm -f charts/kubewaf/crds/subresources.kubewaf.io_*.yaml config/crd/bases/subresources.kubewaf.io_*.yaml 2>/dev/null || true
 
 .PHONY: generate

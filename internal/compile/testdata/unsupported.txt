@@ -1,0 +1,71 @@
+enum/action/append.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "append"
+enum/action/deprecatevar.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "deprecatevar"
+enum/action/exec.seclang	invalid WAF config from string: failed to compile the directive "secrule": unexpected arguments
+enum/action/prepend.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "prepend"
+enum/action/sanitiseArg.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitisearg"
+enum/action/sanitiseMatched.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitisematched"
+enum/action/sanitiseMatchedBytes.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitisematchedbytes"
+enum/action/sanitiseRequestHeader.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitiserequestheader"
+enum/action/sanitiseResponseHeader.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitiseresponseheader"
+enum/action/sanitizeArg.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitisearg"
+enum/action/sanitizeMatched.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitisematched"
+enum/action/sanitizeMatchedBytes.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitisematchedbytes"
+enum/action/sanitizeRequestHeader.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitiserequestheader"
+enum/action/sanitizeResponseHeader.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "sanitiseresponseheader"
+enum/action/setrsc.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "setrsc"
+enum/action/setsid.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "setsid"
+enum/action/setuid.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "setuid"
+enum/data/xmlns.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "xmlns"
+enum/disruptive/pause.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "pause"
+enum/disruptive/proxy.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid action "proxy"
+enum/operator/containsWord.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator containsWord not found
+enum/operator/fuzzyHash.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator fuzzyHash not found
+enum/operator/gsbLookup.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator gsbLookup not found
+enum/operator/rsub.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator rsub not found
+enum/operator/rxGlobal.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator rxGlobal not found
+enum/operator/validateDTD.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator validateDTD not found
+enum/operator/validateHash.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator validateHash not found
+enum/operator/validateSchema.seclang	invalid WAF config from string: failed to compile the directive "secrule": unsupported schema type: , only JSON is supported
+enum/operator/verifyCC.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator verifyCC not found
+enum/operator/verifyCPF.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator verifyCPF not found
+enum/operator/verifySSN.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator verifySSN not found
+enum/operator/verifySVNR.seclang	invalid WAF config from string: failed to compile the directive "secrule": operator verifySVNR not found
+enum/transformation/parityEven7bit.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid transformation name "parityEven7bit"
+enum/transformation/parityOdd7bit.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid transformation name "parityOdd7bit"
+enum/transformation/parityZero7bit.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid transformation name "parityZero7bit"
+enum/transformation/sqlHexDecode.seclang	invalid WAF config from string: failed to compile the directive "secrule": invalid transformation name "sqlHexDecode"
+enum/variable/GLOBAL.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/MODSEC_BUILD.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/MSC_PCRE_ERROR.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/MSC_PCRE_LIMITS_EXCEEDED.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/MULTIPART_SEMICOLON_MISSING.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_ALL.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_COMBINED.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_GC.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_LOGGING.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_PHASE1.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_PHASE2.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_PHASE3.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_PHASE4.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_PHASE5.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_RULES.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_SREAD.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/PERF_SWRITE.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/REMOTE_USER.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/RESOURCE.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/SCRIPT_BASENAME.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/SCRIPT_FILENAME.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/SCRIPT_GID.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/SCRIPT_GROUPNAME.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/SCRIPT_MODE.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/SCRIPT_UID.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/SCRIPT_USERNAME.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/SDBM_DELETE_ERROR.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/SESSION.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/STATUS.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/STREAM_INPUT_BODY.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/STREAM_OUTPUT_BODY.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/USER.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/USERAGENT_IP.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/WEBAPPID.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
+enum/variable/WEBSERVER_ERROR_LOG.seclang	invalid WAF config from string: failed to compile the directive "secrule": unknown variable
