@@ -11,7 +11,16 @@ OPERATOR_IMAGE="${OPERATOR_IMAGE:-kubewaf-operator:dev}"
 KEEP="${E2E_KEEP:-false}"
 
 log() { printf '== %s\n' "$*"; }
-die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+die() {
+  printf 'FAIL: %s\n' "$*" >&2
+  kubectl get secpolicy,protection,secrule -A -o wide 2>/dev/null || true
+  kubectl get cm -n envoy-gateway-system kubewaf-seclang -o jsonpath='version={.data.kubewaf-version}{"\n"}' 2>/dev/null || true
+  kubectl get cm -n envoy-gateway-system kubewaf-seclang-seen -o yaml 2>/dev/null || true
+  kubectl get cm -n envoy-gateway-system kubewaf-seclang -o jsonpath='{range $k,$v := .data}{"--- "}{$k}{"\n"}{$v}{"\n"}{end}' 2>/dev/null || true
+  kubectl logs -n kubewaf-system -l app.kubernetes.io/name=kubewaf --tail=80 2>/dev/null || true
+  kubectl logs -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=eg -c envoy --tail=30 2>/dev/null || true
+  exit 1
+}
 
 cleanup() {
   if [[ "$KEEP" != "true" ]]; then
@@ -212,6 +221,12 @@ done
 log "restore the sqlmap rule and attach it with Protection"
 kubectl patch secrule block-sqlmap -n default --type=json \
   -p '[{"op":"replace","path":"/spec/chain/0/operator/value","value":"(?i)sqlmap"}]'
+for _ in $(seq 1 30); do
+  lang="$(kubectl get secrule block-sqlmap -n default -o jsonpath='{.status.secLang}' 2>/dev/null || true)"
+  [[ "$lang" == *sqlmap* ]] && break
+  sleep 1
+done
+[[ "$lang" == *sqlmap* ]] || die "SecRule did not compile the restored sqlmap operator"
 kubectl apply -f "$ROOT/test/e2e/v1alpha1/protection.yaml"
 prot_ready=false
 for _ in $(seq 1 48); do

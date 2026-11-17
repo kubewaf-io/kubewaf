@@ -22,7 +22,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -39,8 +39,6 @@ import (
 // Run watches the mounted version file and the ConfigMap, and records the
 // projected bytes for this node. It returns when ctx is cancelled.
 func Run(ctx context.Context, client kubernetes.Interface, namespace, nodeName, mountDir string) error {
-	var mu sync.Mutex
-	var desired string
 	poke := make(chan struct{}, 1)
 	notify := func() {
 		select {
@@ -52,43 +50,49 @@ func Run(ctx context.Context, client kubernetes.Interface, namespace, nodeName, 
 	factory := informers.NewSharedInformerFactoryWithOptions(client, 2*time.Second, informers.WithNamespace(namespace))
 	inf := factory.Core().V1().ConfigMaps().Informer()
 	if _, err := inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj any) { setDesired(&mu, &desired, obj); notify() },
-		UpdateFunc: func(_, obj any) { setDesired(&mu, &desired, obj); notify() },
+		AddFunc: func(obj any) {
+			if isSecLang(obj) {
+				notify()
+			}
+		},
+		UpdateFunc: func(_, obj any) {
+			if isSecLang(obj) {
+				notify()
+			}
+		},
 	}); err != nil {
 		return err
 	}
 	factory.Start(ctx.Done())
 	go func() { _ = watchDir(ctx, mountDir, notify) }()
+	var last string
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-poke:
-			mu.Lock()
-			want := desired
-			mu.Unlock()
-			if want == "" {
-				continue
-			}
 			got, err := os.ReadFile(filepath.Join(mountDir, compile.VersionKey))
-			if err != nil || string(got) != want {
+			if err != nil {
 				continue
 			}
-			if err := report(ctx, client, namespace, nodeName, string(got)); err != nil && ctx.Err() == nil {
-				return err
+			body := strings.TrimSpace(string(got))
+			if body == "" || body == last {
+				continue
 			}
+			if err := report(ctx, client, namespace, nodeName, body); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				continue
+			}
+			last = body
 		}
 	}
 }
 
-func setDesired(mu *sync.Mutex, desired *string, obj any) {
+func isSecLang(obj any) bool {
 	cm, ok := obj.(*corev1.ConfigMap)
-	if !ok || cm.Name != compile.ConfigMapName {
-		return
-	}
-	mu.Lock()
-	*desired = cm.Data[compile.VersionKey]
-	mu.Unlock()
+	return ok && cm.Name == compile.ConfigMapName
 }
 
 func watchDir(ctx context.Context, dir string, notify func()) error {
