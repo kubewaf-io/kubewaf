@@ -231,6 +231,14 @@ func podMounted(pod *egv1a1.KubernetesPodSpec, container *egv1a1.KubernetesConta
 	return false
 }
 
+// Stage writes this policy's files and the version key. It does not publish the filter.
+func (e *Envoy) Stage(ctx context.Context, c client.Client, b compile.Bundle, proxyNamespace string) error {
+	if proxyNamespace == "" {
+		proxyNamespace = e.proxyNamespace
+	}
+	return e.writeConfigMap(ctx, c, b, proxyNamespace)
+}
+
 // Apply merges this policy's keys into kubewaf-seclang and writes one EnvoyExtensionPolicy.
 // It does not write an EnvoyProxy or a Gateway.
 func (e *Envoy) Apply(ctx context.Context, c client.Client, b compile.Bundle, refs []gatewayv1.LocalPolicyTargetReference, proxyNamespace string) error {
@@ -274,6 +282,13 @@ func (e *Envoy) writeConfigMap(ctx context.Context, c client.Client, b compile.B
 		cm.Data[k] = v
 		owners[k] = owner
 	}
+	versions := decodeVersions(cm.Data[compile.VersionKey])
+	versions[owner] = b.Hash
+	versionRaw, err := json.Marshal(versions)
+	if err != nil {
+		return err
+	}
+	cm.Data[compile.VersionKey] = string(versionRaw)
 	if configMapSize(cm.Data) > maxConfigMapBytes {
 		return provider.ErrConfigMapTooLarge
 	}
@@ -425,8 +440,18 @@ func (e *Envoy) deleteKeys(ctx context.Context, c client.Client, policyNamespace
 		delete(cm.Data, k)
 		delete(owners, k)
 	}
-	if len(cm.Data) == 0 {
+	versions := decodeVersions(cm.Data[compile.VersionKey])
+	delete(versions, owner)
+	delete(cm.Data, compile.VersionKey)
+	if !hasPolicyData(cm.Data) {
 		return c.Delete(ctx, cm)
+	}
+	if len(versions) > 0 {
+		versionRaw, err := json.Marshal(versions)
+		if err != nil {
+			return err
+		}
+		cm.Data[compile.VersionKey] = string(versionRaw)
 	}
 	if cm.Annotations == nil {
 		cm.Annotations = map[string]string{}
@@ -449,20 +474,50 @@ func (e *Envoy) Programmed(ctx context.Context, c client.Client, policyNamespace
 	if err != nil {
 		return provider.ProgramView{}, err
 	}
+	var sawAccepted, accepted, sawProgrammed, programmed bool
+	reason, message := "", ""
 	for _, anc := range obj.Status.Ancestors {
 		for _, cond := range anc.Conditions {
-			if cond.Type != string(gatewayv1.PolicyConditionAccepted) {
-				continue
+			switch cond.Type {
+			case string(gatewayv1.PolicyConditionAccepted):
+				sawAccepted = true
+				accepted = cond.Status == metav1.ConditionTrue
+				reason, message = cond.Reason, cond.Message
+			case "Programmed":
+				sawProgrammed = true
+				programmed = cond.Status == metav1.ConditionTrue
+				if !programmed {
+					reason, message = cond.Reason, cond.Message
+				}
 			}
-			return provider.ProgramView{
-				Found:    true,
-				Accepted: cond.Status == metav1.ConditionTrue,
-				Reason:   cond.Reason,
-				Message:  cond.Message,
-			}, nil
 		}
 	}
-	return provider.ProgramView{Found: true, Reason: "Pending", Message: "Envoy Gateway has not reported Accepted"}, nil
+	if !sawAccepted {
+		return provider.ProgramView{Found: true, Reason: "Pending", Message: "Envoy Gateway has not reported Accepted"}, nil
+	}
+	ok := accepted && (!sawProgrammed || programmed)
+	return provider.ProgramView{Found: true, Accepted: ok, Reason: reason, Message: message}, nil
+}
+
+func decodeVersions(raw string) map[string]string {
+	out := map[string]string{}
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(raw), &out)
+	if out == nil {
+		out = map[string]string{}
+	}
+	return out
+}
+
+func hasPolicyData(data map[string]string) bool {
+	for k := range data {
+		if k != compile.VersionKey {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeOwners(raw string) map[string]string {

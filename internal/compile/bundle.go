@@ -33,6 +33,13 @@ const MountDir = "/etc/kubewaf/seclang"
 // ConfigMapName is the one ConfigMap kubeWAF writes in the proxy namespace.
 const ConfigMapName = "kubewaf-seclang"
 
+// VersionKey is the ConfigMap key whose value is the JSON map of policy -> bundle hash.
+// The projection agent reads this file from the mounted volume and reports it.
+const VersionKey = "kubewaf-version"
+
+// SeenConfigMapName records the version file contents each node has projected.
+const SeenConfigMapName = "kubewaf-seclang-seen"
+
 // IncludeInput is one Include plus ConfigMap content the caller already fetched.
 // Content is ignored for virtual paths.
 type IncludeInput struct {

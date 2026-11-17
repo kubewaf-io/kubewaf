@@ -36,6 +36,10 @@ const (
 	ReasonModuleMissing = "ModuleMissing"
 	// ReasonMountMissing means the module is registered but kubewaf-seclang is not mounted.
 	ReasonMountMissing = "MountMissing"
+	// ReasonEnvoyNotReady means no Ready Envoy pod has the SecLang volume yet.
+	ReasonEnvoyNotReady = "EnvoyNotReady"
+	// ReasonProjectionPending means the SecLang files are not in the Envoy pod volume yet.
+	ReasonProjectionPending = "ProjectionPending"
 )
 
 // ErrDataFileConflict means a ConfigMap key this policy needs is owned by another policy.
@@ -77,6 +81,8 @@ type Provider interface {
 	Name() string
 	// CheckEngine reads Gateway parametersRef and the EnvoyProxy. It does not write.
 	CheckEngine(ctx context.Context, c client.Client, refs []GatewayRef, moduleName, proxyNamespace string) (EngineView, error)
+	// Stage writes ConfigMap keys, including the version file, and does not publish the filter.
+	Stage(ctx context.Context, c client.Client, b compile.Bundle, proxyNamespace string) error
 	Apply(ctx context.Context, c client.Client, b compile.Bundle, refs []gatewayv1.LocalPolicyTargetReference, proxyNamespace string) error
 	// Retract removes the EnvoyExtensionPolicy when the engine is not ready.
 	// ConfigMap keys stay, so the last good files are still there. The proxy is not touched.
