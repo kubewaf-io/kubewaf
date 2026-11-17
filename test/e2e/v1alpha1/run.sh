@@ -182,7 +182,7 @@ kubectl patch secrule block-sqlmap -n default --type=json \
   -p '[{"op":"replace","path":"/spec/chain/0/operator/value","value":"(?i)badbot"}]'
 EDITED_SQL=""
 EDITED_BOT=""
-for _ in $(seq 1 40); do
+for _ in $(seq 1 60); do
   EDITED_SQL="$(probe -H 'User-Agent: sqlmap/1.0')"
   EDITED_BOT="$(probe -H 'User-Agent: badbot/1.0')"
   log "probe after edit sqlmap=$EDITED_SQL badbot=$EDITED_BOT"
@@ -209,6 +209,52 @@ for _ in $(seq 1 30); do
 done
 [[ "$AFTER_DELETE" == "200" ]] || die "want badbot 200 after delete, got $AFTER_DELETE"
 
+log "restore the sqlmap rule and attach it with Protection"
+kubectl patch secrule block-sqlmap -n default --type=json \
+  -p '[{"op":"replace","path":"/spec/chain/0/operator/value","value":"(?i)sqlmap"}]'
+kubectl apply -f "$ROOT/test/e2e/v1alpha1/protection.yaml"
+prot_ready=false
+for _ in $(seq 1 48); do
+  line="$(kubectl get protection edge -n default -o jsonpath='{range .status.conditions[*]}{.type}={.status}/{.reason} {.message}{" | "}{end}' 2>/dev/null || true)"
+  log "protection $line"
+  if [[ " $line" == *" Ready=True/"* ]]; then
+    prot_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$prot_ready" != "true" ]]; then
+  kubectl get protection edge -n default -o yaml || true
+  kubectl logs -n kubewaf-system -l app.kubernetes.io/name=kubewaf --tail=160 || true
+  die "protection edge did not become Ready"
+fi
+PROT_CLEAN=""
+PROT_ATTACK=""
+for _ in $(seq 1 30); do
+  PROT_CLEAN="$(probe)"
+  PROT_ATTACK="$(probe -H 'User-Agent: sqlmap/1.0')"
+  log "probe protection clean=$PROT_CLEAN sqlmap=$PROT_ATTACK"
+  [[ "$PROT_CLEAN" == "200" && "$PROT_ATTACK" == "403" ]] && break
+  sleep 5
+done
+[[ "$PROT_CLEAN" == "200" && "$PROT_ATTACK" == "403" ]] || die "want protection clean 200 and sqlmap 403, got $PROT_CLEAN and $PROT_ATTACK"
+kubectl delete protection edge -n default --wait=true
+for _ in $(seq 1 30); do
+  if ! kubectl get envoyextensionpolicy kubewaf-p-edge -n default >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+kubectl get envoyextensionpolicy kubewaf-p-edge -n default >/dev/null 2>&1 && die "Protection EnvoyExtensionPolicy was not deleted"
+PROT_AFTER=""
+for _ in $(seq 1 30); do
+  PROT_AFTER="$(probe -H 'User-Agent: sqlmap/1.0')"
+  log "probe after protection delete sqlmap=$PROT_AFTER"
+  [[ "$PROT_AFTER" == "200" ]] && break
+  sleep 5
+done
+[[ "$PROT_AFTER" == "200" ]] || die "want sqlmap 200 after protection delete, got $PROT_AFTER"
+
 if [[ "${E2E_CRS:-false}" == "true" ]]; then
   log "nightly CRS includes"
   kubectl apply -f "$ROOT/test/e2e/v1alpha1/crs-includes.yaml"
@@ -224,4 +270,4 @@ if [[ "${E2E_CRS:-false}" == "true" ]]; then
   [[ "$CRS" == "403" ]] || die "want CRS 403, got $CRS"
 fi
 
-log "PASS clean=$CLEAN sqlmap=$SQLMAP after_edit sqlmap=$EDITED_SQL badbot=$EDITED_BOT after_delete=$AFTER_DELETE"
+log "PASS clean=$CLEAN sqlmap=$SQLMAP after_edit sqlmap=$EDITED_SQL badbot=$EDITED_BOT after_delete=$AFTER_DELETE protection clean=$PROT_CLEAN sqlmap=$PROT_ATTACK after_delete=$PROT_AFTER"

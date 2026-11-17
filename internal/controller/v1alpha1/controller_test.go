@@ -23,6 +23,7 @@ import (
 
 	egv1a1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
+	wafv1alpha1 "github.com/kubewaf-io/kubewaf/api/waf/v1alpha1"
 	"github.com/kubewaf-io/kubewaf/internal/compile"
 	"github.com/kubewaf-io/kubewaf/internal/provider"
 	"github.com/kubewaf-io/kubewaf/internal/provider/registry"
@@ -431,11 +432,11 @@ func testClient(t *testing.T, objs ...client.Object) client.Client {
 	if err := egv1a1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
-	if err := AddProtectionScheme(s); err != nil {
+	if err := wafv1alpha1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
 	return fake.NewClientBuilder().WithScheme(s).
-		WithStatusSubresource(&seclangv1alpha1.SecRule{}, &seclangv1alpha1.SecAction{}, &seclangv1alpha1.Include{}, &seclangv1alpha1.SecPolicy{}, &egv1a1.EnvoyExtensionPolicy{}).
+		WithStatusSubresource(&seclangv1alpha1.SecRule{}, &seclangv1alpha1.SecAction{}, &seclangv1alpha1.Include{}, &seclangv1alpha1.SecPolicy{}, &wafv1alpha1.Protection{}, &egv1a1.EnvoyExtensionPolicy{}, &egv1a1.BackendTrafficPolicy{}).
 		WithObjects(objs...).
 		Build()
 }
