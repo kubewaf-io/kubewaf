@@ -1,152 +1,111 @@
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "helm.fullname" . }}-controller
+  name: {{ include "kubewaf.fullname" . }}
   labels:
-    {{- include "helm.labels" . | nindent 4 }}
+    {{- include "kubewaf.labels" . | nindent 4 }}
 rules:
-- apiGroups:
-    - ""
-  resources:
-    - secrets
-  verbs:
-    - "*"
-# Cluster-wide ConfigMap read for PhraseList/IPList configMapRef / parts (app namespaces).
-- apiGroups:
-    - ""
-  resources:
-    - configmaps
-  verbs:
-    - get
-    - list
-    - watch
-- apiGroups:
-    - ""
-  resources:
-    - namespaces
-  verbs:
-    - "list"
-    - "watch"
-    - "get"
-- apiGroups:
-    - ""
-  resources:
-    - events
-  verbs:
-    - list
-    - update
-    - create
-    - patch
-- apiGroups:
-  - "seclang.kubewaf.io"
-  resources:
-  - "secrules"
-  - "secrules/status"
-  - "secactions"
-  - "secactions/status"
-  - "secruleidpools"
-  - "secruleidpools/status"
-  - "phraselists"
-  - "phraselists/status"
-  - "phraselists/finalizers"
-  - "iplists"
-  - "iplists/status"
-  - "iplists/finalizers"
-  verbs:
-  - "*"
-- apiGroups:
-  - "waf.kubewaf.io"
-  resources:
-  - "rulesets"
-  - "rulesets/status"
-  - "wafs"
-  - "wafs/status"
-  - "wafs/finalizers"
-  verbs:
-  - "*"
-- apiGroups:
-  - "networking.istio.io"
-  resources:
-  - "envoyfilters"
-  verbs:
-  - "*"
-- apiGroups:
-  - "cilium.io"
-  resources:
-  - "ciliumenvoyconfigs"
-  verbs:
-  - "*"
-- apiGroups:
-  - "gateway.networking.k8s.io"
-  resources:
-  - "gateways"
-  - "gatewayclasses"
-  - "httproutes"
-  verbs:
-  - get
-  - list
-  - watch
+  - apiGroups: ["seclang.kubewaf.io"]
+    resources: ["secrules", "secactions", "includes"]
+    verbs: ["get", "list", "watch"]
+  # The finalizer is written with a full-object update. The apiserver authorizes
+  # that against secpolicies, not the finalizers subresource.
+  - apiGroups: ["seclang.kubewaf.io"]
+    resources: ["secpolicies"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["seclang.kubewaf.io"]
+    resources: ["secrules/status", "secactions/status", "includes/status", "secpolicies/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["seclang.kubewaf.io"]
+    resources: ["secpolicies/finalizers"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.envoyproxy.io"]
+    resources: ["envoyextensionpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gateway.envoyproxy.io"]
+    resources: ["envoyproxies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways", "gatewayclasses", "httproutes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "helm.fullname" . }}-controller
+  name: {{ include "kubewaf.fullname" . }}
   labels:
-    {{- include "helm.labels" . | nindent 4 }}
+    {{- include "kubewaf.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "helm.fullname" . }}-controller
+  name: {{ include "kubewaf.fullname" . }}
 subjects:
-  - name: {{ include "helm.serviceAccountName" . }}
-    kind: ServiceAccount
-    namespace: {{ .Release.Namespace | quote }}
+  - kind: ServiceAccount
+    name: {{ include "kubewaf.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "helm.fullname" . }}
+  name: {{ include "kubewaf.fullname" . }}-leader-election
   labels:
-    {{- include "helm.labels" . | nindent 4 }}
+    {{- include "kubewaf.labels" . | nindent 4 }}
 rules:
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - patch
-  - delete
-- apiGroups:
-  - coordination.k8s.io
-  resources:
-  - leases
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - patch
-  - delete
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "helm.fullname" . }}
+  name: {{ include "kubewaf.fullname" . }}-leader-election
   labels:
-    {{- include "helm.labels" . | nindent 4 }}
-  namespace: {{ .Release.Namespace | quote }}
+    {{- include "kubewaf.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "helm.fullname" . }}
+  name: {{ include "kubewaf.fullname" . }}-leader-election
 subjects:
-  - name: {{ include "helm.serviceAccountName" . }}
-    kind: ServiceAccount
-    namespace: {{ .Release.Namespace | quote }}
+  - kind: ServiceAccount
+    name: {{ include "kubewaf.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kubewaf.fullname" . }}
+  namespace: {{ .Values.proxyNamespace }}
+  labels:
+    {{- include "kubewaf.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kubewaf.fullname" . }}
+  namespace: {{ .Values.proxyNamespace }}
+  labels:
+    {{- include "kubewaf.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kubewaf.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubewaf.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

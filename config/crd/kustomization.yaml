@@ -2,14 +2,10 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-- bases/seclang.kubewaf.io_secrules.yaml
-- bases/seclang.kubewaf.io_secruleidpools.yaml
-- bases/waf.kubewaf.io_rulesets.yaml
-- bases/seclang.kubewaf.io_secactions.yaml
-- bases/seclang.kubewaf.io_phraselists.yaml
-- bases/seclang.kubewaf.io_iplists.yaml
-- bases/waf.kubewaf.io_wafs.yaml
-# +kubebuilder:scaffold:crdkustomizeresource
+- v1alpha1/seclang.kubewaf.io_secrules.yaml
+- v1alpha1/seclang.kubewaf.io_secactions.yaml
+- v1alpha1/seclang.kubewaf.io_includes.yaml
+- v1alpha1/seclang.kubewaf.io_secpolicies.yaml
 
 # patches:
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.

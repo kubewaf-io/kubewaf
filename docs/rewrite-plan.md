@@ -1394,6 +1394,7 @@ A Gateway `EnvoyExtensionPolicy` and an HTTPRoute `EnvoyExtensionPolicy` are bot
 2. Policy reconciler rewrites the ConfigMap key and the `SecMarker` hash inside `EnvoyExtensionPolicy.spec.dynamicModule[].config`.
 3. Envoy Gateway pushes a new filter config. The module initializes again and `Include`s the mounted files.
 4. A ConfigMap update that does not change the policy spec is invisible to Envoy. The hash exists so step 2 always happens together with step 1.
+5. If that load is rejected because an Include file is not on disk yet, the operator appends `rN` to the marker and publishes again. Envoy Gateway logs the rejection and keeps the previous listener, so the signal is the envoy container log, or a Gateway / EnvoyExtensionPolicy condition message when one is set. There is no fixed delay before the first publish.
 
 Adding a policy adds keys to the existing ConfigMap. The platform pod template does not change, so Envoy does not roll. The `.so` mount is already there because the platform put it on the `EnvoyProxy` before any SecPolicy existed.
 
@@ -1545,7 +1546,7 @@ test/e2e/
 
 `PROJECT` stays kubebuilder multi-group. Phase 2 adds `api/waf/v1alpha1` when Protection is implemented. It is not scaffolded in the first implementation, so an empty group does not ship.
 
-v1alpha1 CRDs are generated into `config/crd/v1alpha1/` and copied into `charts/kubewaf-v1alpha1/crds`. They are not merged into `charts/kubewaf/crds`. `secrules.seclang.kubewaf.io` cannot serve v1beta1 and v1alpha1 together without a conversion webhook, and this rewrite does not ship one. `charts/kubewaf-v1alpha1` is the clean replacement. Uninstall 0.1.x and delete the v1beta1 CRDs before installing it. `charts/kubewaf` stays until M4 so the old operator tests still have a chart.
+v1alpha1 CRDs are generated into `config/crd/v1alpha1/` and copied into `charts/kubewaf/crds`. v1beta1 is not served. Uninstall a 0.1.x release and delete the v1beta1 CRDs before installing this chart. There is no conversion webhook.
 
 ### Helm chart `charts/kubewaf`
 

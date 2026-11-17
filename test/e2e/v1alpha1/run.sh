@@ -99,7 +99,7 @@ kubectl patch svc "$SVC" -n envoy-gateway-system --subresource=status --type mer
   -p '{"status":{"loadBalancer":{"ingress":[{"ip":"'"$NODE_IP"'"}]}}}' || true
 
 log "install kubeWAF v1alpha1 chart"
-helm upgrade --install kubewaf "$ROOT/charts/kubewaf-v1alpha1" \
+helm upgrade --install kubewaf "$ROOT/charts/kubewaf" \
   --namespace kubewaf-system --create-namespace \
   --set image.repository="${OPERATOR_IMAGE%:*}" \
   --set image.tag="${OPERATOR_IMAGE##*:}" \

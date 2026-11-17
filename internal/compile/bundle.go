@@ -137,14 +137,14 @@ func Build(in Input) (Bundle, error) {
 		abs := MountDir + "/" + key
 		path, err := includePath(&inc.Include, "")
 		if err != nil {
-			return Bundle{}, fmt.Errorf("Include %s: %w", inc.Include.Name, err)
+			return Bundle{}, fmt.Errorf("include %s: %w", inc.Include.Name, err)
 		}
 		if inc.Include.Spec.ConfigMapRef != nil {
 			if inc.Content == "" && inc.Include.Spec.ConfigMapRef != nil {
-				return Bundle{}, fmt.Errorf("Include %s: configMap content is not resolved", inc.Include.Name)
+				return Bundle{}, fmt.Errorf("include %s: configMap content is not resolved", inc.Include.Name)
 			}
 			if _, exists := b.Files[key]; exists {
-				return Bundle{}, fmt.Errorf("Include file key %s collides", key)
+				return Bundle{}, fmt.Errorf("include file key %s collides", key)
 			}
 			b.Files[key] = inc.Content
 			path = abs

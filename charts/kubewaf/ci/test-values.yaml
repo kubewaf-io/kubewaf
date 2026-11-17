@@ -1,5 +1,0 @@
-replicaCount: 2
-image:
-  # kind has the image preloaded by `make helm-load-image` (no registry pull).
-  pullPolicy: Never
-  # Empty → chart defaults to .Chart.AppVersion, which helm-load-image tags.

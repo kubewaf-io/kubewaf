@@ -109,7 +109,7 @@ func newMemFile(name, content string) *memFile {
 }
 
 func (m *memFile) Stat() (fs.FileInfo, error) {
-	return memInfo{name: m.name, size: int64(m.r.Size())}, nil
+	return memInfo{name: m.name, size: m.r.Size()}, nil
 }
 func (m *memFile) Read(p []byte) (int, error) { return m.r.Read(p) }
 func (m *memFile) Close() error               { return nil }
