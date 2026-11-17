@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	egv1a1 "github.com/envoyproxy/gateway/api/v1alpha1"
@@ -145,35 +146,27 @@ func TestSecPolicyProgramsAndLeavesTheProxyAlone(t *testing.T) {
 	}
 }
 
-func TestSecPolicyWaitsForProjectionBeforePublishing(t *testing.T) {
+func TestSecPolicyPublishesRulesInline(t *testing.T) {
 	c := testClient(t, readyRule(), platformProxy(), platformGateway())
 	ctx := context.Background()
 	if err := c.Create(ctx, policy("edge", "block-sqlmap")); err != nil {
 		t.Fatal(err)
 	}
 	r := newPolicyReconciler(c)
-	r.WaitForProjection = true
 	if _, err := r.Reconcile(ctx, req("default", "edge")); err != nil {
 		t.Fatal(err)
 	}
 	ext := &egv1a1.EnvoyExtensionPolicy{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-edge"}, ext); err == nil {
-		t.Fatal("filter was published before the version file was projected")
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-edge"}, ext); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(ext.Spec.DynamicModule)
+	if !strings.Contains(string(raw), "SecRule ") || strings.Contains(string(raw), "/etc/kubewaf/seclang/") {
+		t.Fatalf("rules were not inlined: %s", raw)
 	}
 	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "envoy-gateway-system", Name: compile.ConfigMapName}, cm); err != nil {
-		t.Fatal(err)
-	}
-	if cm.Data[compile.VersionKey] == "" {
-		t.Fatal("version key was not staged")
-	}
-	got := &seclangv1alpha1.SecPolicy{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "edge"}, got); err != nil {
-		t.Fatal(err)
-	}
-	cond := meta.FindStatusCondition(got.Status.Conditions, conditionProgrammed)
-	if cond == nil || cond.Reason != provider.ReasonEnvoyNotReady {
-		t.Fatalf("programmed %+v", cond)
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "envoy-gateway-system", Name: compile.ConfigMapName}, cm); err == nil {
+		t.Fatal("rule-only policy wrote a ConfigMap")
 	}
 }
 

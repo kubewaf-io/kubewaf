@@ -187,6 +187,7 @@ GW_AFTER="$(kubectl get gateway eg -n default -o jsonpath='{.spec.infrastructure
 [[ "$GW_BEFORE" == "$GW_AFTER" ]] || die "Gateway parametersRef changed"
 
 log "edit the rule and expect the new match without restarting Envoy"
+edit_started=$(date +%s)
 kubectl patch secrule block-sqlmap -n default --type=json \
   -p '[{"op":"replace","path":"/spec/chain/0/operator/value","value":"(?i)badbot"}]'
 EDITED_SQL=""
@@ -196,8 +197,10 @@ for _ in $(seq 1 60); do
   EDITED_BOT="$(probe -H 'User-Agent: badbot/1.0')"
   log "probe after edit sqlmap=$EDITED_SQL badbot=$EDITED_BOT"
   [[ "$EDITED_SQL" == "200" && "$EDITED_BOT" == "403" ]] && break
-  sleep 5
+  sleep 2
 done
+edit_seconds=$(( $(date +%s) - edit_started ))
+log "edit applied in ${edit_seconds}s"
 [[ "$EDITED_SQL" == "200" && "$EDITED_BOT" == "403" ]] || die "want sqlmap 200 and badbot 403 after edit, got $EDITED_SQL and $EDITED_BOT"
 
 log "delete SecPolicy and expect the edited rule to stop blocking"

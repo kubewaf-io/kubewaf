@@ -33,13 +33,6 @@ const MountDir = "/etc/kubewaf/seclang"
 // ConfigMapName is the one ConfigMap kubeWAF writes in the proxy namespace.
 const ConfigMapName = "kubewaf-seclang"
 
-// VersionKey is the ConfigMap key whose value is the JSON map of policy -> bundle hash.
-// The projection agent reads this file from the mounted volume and reports it.
-const VersionKey = "kubewaf-version"
-
-// SeenConfigMapName records the version file contents each node has projected.
-const SeenConfigMapName = "kubewaf-seclang-seen"
-
 // IncludeInput is one Include plus ConfigMap content the caller already fetched.
 // Content is ignored for virtual paths.
 type IncludeInput struct {
@@ -140,27 +133,23 @@ func Build(in Input) (Bundle, error) {
 		pieces = append(pieces, piece{action.Spec.Order, action.Name, "action", place(action.Spec.Placement), text})
 	}
 	for _, inc := range in.Includes {
-		key := includeKey(b.Namespace, b.Name, inc.Include.Name)
-		abs := MountDir + "/" + key
 		path, err := includePath(&inc.Include, "")
 		if err != nil {
 			return Bundle{}, fmt.Errorf("include %s: %w", inc.Include.Name, err)
 		}
+		var text string
 		if inc.Include.Spec.ConfigMapRef != nil {
-			if inc.Content == "" && inc.Include.Spec.ConfigMapRef != nil {
+			if strings.TrimSpace(inc.Content) == "" {
 				return Bundle{}, fmt.Errorf("include %s: configMap content is not resolved", inc.Include.Name)
 			}
-			if _, exists := b.Files[key]; exists {
-				return Bundle{}, fmt.Errorf("include file key %s collides", key)
-			}
-			b.Files[key] = inc.Content
-			path = abs
+			text = strings.TrimRight(inc.Content, "\n")
+		} else {
+			text = "Include " + path
 		}
 		if err := checkMarker(inc.Include.Spec.MarkerAfter); err != nil {
 			return Bundle{}, err
 		}
-		text := withMarker("Include "+path, inc.Include.Spec.MarkerAfter)
-		pieces = append(pieces, piece{inc.Include.Spec.Order, inc.Include.Name, "include", place(inc.Include.Spec.Placement), text})
+		pieces = append(pieces, piece{inc.Include.Spec.Order, inc.Include.Name, "include", place(inc.Include.Spec.Placement), withMarker(text, inc.Include.Spec.MarkerAfter)})
 	}
 
 	slices.SortStableFunc(pieces, func(a, c piece) int {
@@ -204,14 +193,30 @@ func Build(in Input) (Bundle, error) {
 
 	b.Before = strings.Join(before, "\n")
 	b.After = strings.Join(after, "\n")
-	beforeKey := fileKey(b.Namespace, b.Name, "before")
-	afterKey := fileKey(b.Namespace, b.Name, "after")
-	b.Files[beforeKey] = fileBody(b.Before)
-	b.Files[afterKey] = fileBody(b.After)
-	sum := hashFiles(b.Files)
+	sum := hashBundle(b)
 	b.Hash = sum
 	b.Marker = "KUBEWAF" + sum[:16]
 	return b, nil
+}
+
+func hashBundle(b Bundle) string {
+	h := sha256.New()
+	h.Write([]byte(b.Before))
+	h.Write([]byte{0})
+	h.Write([]byte(b.After))
+	h.Write([]byte{0})
+	keys := make([]string, 0, len(b.Files))
+	for k := range b.Files {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write([]byte(b.Files[k]))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func dataFiles(b *Bundle, in Input) (map[string]string, error) {
@@ -251,36 +256,6 @@ func dataFiles(b *Bundle, in Input) (map[string]string, error) {
 
 func fileKey(ns, name, which string) string {
 	return fmt.Sprintf("%s_%s-%s.conf", ns, name, which)
-}
-
-func includeKey(ns, policy, includeName string) string {
-	return fmt.Sprintf("%s_%s_%s.conf", ns, policy, includeName)
-}
-
-func fileBody(text string) string {
-	if text == "" {
-		return ""
-	}
-	if strings.HasSuffix(text, "\n") {
-		return text
-	}
-	return text + "\n"
-}
-
-func hashFiles(files map[string]string) string {
-	keys := make([]string, 0, len(files))
-	for k := range files {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	h := sha256.New()
-	for _, k := range keys {
-		h.Write([]byte(k))
-		h.Write([]byte{0})
-		h.Write([]byte(files[k]))
-		h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 func place(p seclangv1alpha1.Placement) seclangv1alpha1.Placement {

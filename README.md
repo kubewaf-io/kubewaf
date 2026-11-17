@@ -5,14 +5,14 @@
 
 Kubernetes operator that compiles `SecRule`, `SecAction`, and `Include` objects into SecLang and attaches them to Envoy Gateway with a dynamic module.
 
-The platform team owns the Envoy proxy. kubeWAF does not install Composer, patch `EnvoyProxy`, or patch `Gateway.spec.infrastructure.parametersRef`. It writes a `kubewaf-seclang` ConfigMap and one `EnvoyExtensionPolicy` per `SecPolicy`.
+The platform team owns the Envoy proxy. kubeWAF does not install Composer, patch `EnvoyProxy`, or patch `Gateway.spec.infrastructure.parametersRef`. It writes one `EnvoyExtensionPolicy` per `SecPolicy`, with the SecLang inline in the filter config. Data files for `@pmFromFile` still go in ConfigMap `kubewaf-seclang`.
 
 This is a breaking replacement of the 0.1.x / `v1beta1` operator. There is no conversion webhook.
 
 ## Install
 
 1. Install [Envoy Gateway v1.10](https://gateway.envoyproxy.io/).
-2. Apply the platform `EnvoyProxy` and point the Gateway at it. The sample is `config/samples/envoygateway/platform-envoyproxy.yaml`. It registers `composer` from `ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0` (copied by an init container that has `cp`), sets `GODEBUG=cgocheck=0` and `doNotClose: true`, and mounts ConfigMap `kubewaf-seclang` at `/etc/kubewaf/seclang`.
+2. Apply the platform `EnvoyProxy` and point the Gateway at it. The sample is `config/samples/envoygateway/platform-envoyproxy.yaml`. It registers `composer` from `ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0` (copied by an init container that has `cp`) and sets `GODEBUG=cgocheck=0` and `doNotClose: true`. Mount ConfigMap `kubewaf-seclang` at `/etc/kubewaf/seclang` only when a policy uses `@pmFromFile` or `@ipMatchFromFile`.
 3. Install this chart:
 
 ```bash

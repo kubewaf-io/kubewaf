@@ -5,7 +5,6 @@ go 1.26.5
 require (
 	github.com/corazawaf/coraza/v3 v3.7.0
 	github.com/envoyproxy/gateway v1.8.3
-	github.com/fsnotify/fsnotify v1.10.1
 	github.com/onsi/ginkgo/v2 v2.32.0
 	k8s.io/api v0.36.3
 	k8s.io/apiextensions-apiserver v0.36.3
@@ -13,6 +12,7 @@ require (
 	k8s.io/client-go v0.36.3
 	sigs.k8s.io/controller-runtime v0.24.1
 	sigs.k8s.io/gateway-api v1.6.1
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
@@ -24,6 +24,7 @@ require (
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/evanphx/json-patch v5.9.11+incompatible // indirect
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -91,5 +92,4 @@ require (
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )

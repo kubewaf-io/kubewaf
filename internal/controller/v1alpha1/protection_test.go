@@ -18,13 +18,13 @@ package v1alpha1
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	egv1a1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
 	wafv1alpha1 "github.com/kubewaf-io/kubewaf/api/waf/v1alpha1"
-	"github.com/kubewaf-io/kubewaf/internal/compile"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -47,6 +47,10 @@ func TestProtectionCompilesCRSAndRateLimit(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-p-edge"}, ext); err != nil {
 		t.Fatal(err)
 	}
+	raw, _ := json.Marshal(ext.Spec.DynamicModule)
+	if !strings.Contains(string(raw), "Include @crs-setup.conf") || !strings.Contains(string(raw), "id:100001") {
+		t.Fatalf("protection directives %s", raw)
+	}
 	ext.Status.Ancestors = []gatewayv1.PolicyAncestorStatus{{
 		ControllerName: "gateway.envoyproxy.io/gatewayclass-controller",
 		Conditions:     []metav1.Condition{{Type: string(gatewayv1.PolicyConditionAccepted), Status: metav1.ConditionTrue, Reason: "Accepted"}},
@@ -56,14 +60,6 @@ func TestProtectionCompilesCRSAndRateLimit(t *testing.T) {
 	}
 	if _, err := r.Reconcile(ctx, req("default", "edge")); err != nil {
 		t.Fatal(err)
-	}
-	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "envoy-gateway-system", Name: compile.ConfigMapName}, cm); err != nil {
-		t.Fatal(err)
-	}
-	before := cm.Data[compile.BeforeKey("default", "p-edge")]
-	if before == "" || cm.Data[compile.VersionKey] == "" {
-		t.Fatalf("configmap %#v", cm.Data)
 	}
 	limit := &egv1a1.BackendTrafficPolicy{}
 	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-ratelimit-edge-login"}, limit); err != nil {
