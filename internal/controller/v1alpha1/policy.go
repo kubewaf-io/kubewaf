@@ -18,10 +18,8 @@ package v1alpha1
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
 	wafv1alpha1 "github.com/kubewaf-io/kubewaf/api/waf/v1alpha1"
@@ -70,11 +68,8 @@ type SecPolicyReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Registry *registry.Registry
-	// ProxyNamespace is where the platform mounts kubewaf-seclang.
+	// ProxyNamespace is where data files are written when a policy has them.
 	ProxyNamespace string
-	// WaitForProjection publishes the filter only after every Ready Envoy pod's
-	// node has the version file on disk. Unit tests leave it false.
-	WaitForProjection bool
 }
 
 // +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secpolicies,verbs=get;list;watch
@@ -177,8 +172,14 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reasonParseError, err.Error())
 		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
-	if handled, err := r.applyBundle(ctx, p, policy, &bundle, gateways); err != nil || handled {
-		return ctrl.Result{}, err
+	if len(bundle.Files) > 0 && !engine.Mounted {
+		setCondition(&policy.Status.Conditions, policy.Generation, conditionEngineReady, metav1.ConditionFalse, provider.ReasonMountMissing, "data files need the kubewaf-seclang volume")
+		_ = p.Retract(ctx, r.Client, policy.Namespace, policy.Name)
+		setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, provider.ReasonMountMissing, "extension policy removed because data files are not mounted")
+		return ctrl.Result{}, r.writeStatus(ctx, policy)
+	}
+	if err := p.Apply(ctx, r.Client, bundle, policy.Spec.TargetRefs, r.ProxyNamespace); err != nil {
+		return ctrl.Result{}, r.failApply(ctx, policy, err)
 	}
 
 	policy.Status.SecLangHash = bundle.Hash
@@ -210,51 +211,6 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-// applyBundle stages SecLang, then publishes the filter once the version file is on the Envoy nodes.
-// handled is true when the caller should return without marking Programmed from Envoy Gateway.
-func (r *SecPolicyReconciler) applyBundle(ctx context.Context, p provider.Provider, policy *seclangv1alpha1.SecPolicy, bundle *compile.Bundle, gateways []provider.GatewayRef) (bool, error) {
-	applied, reason, message, err := stageAndApply(ctx, r.Client, p, r.ProxyNamespace, r.WaitForProjection, bundle, policy.Spec.TargetRefs, gateways)
-	if err != nil {
-		return true, r.failApply(ctx, policy, err)
-	}
-	if applied {
-		return false, nil
-	}
-	if reason == provider.ReasonEnvoyNotReady {
-		setCondition(&policy.Status.Conditions, policy.Generation, conditionEngineReady, metav1.ConditionFalse, reason, "no Ready Envoy pod has the SecLang volume")
-	}
-	setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reason, message)
-	return true, r.writeStatus(ctx, policy)
-}
-
-// stageAndApply writes the bundle files, then the filter once the version file is projected.
-// applied is false when the caller should keep Programmed false for reason.
-func stageAndApply(ctx context.Context, c client.Client, p provider.Provider, proxyNamespace string, wait bool, bundle *compile.Bundle, refs []gatewayv1.LocalPolicyTargetReference, gateways []provider.GatewayRef) (bool, string, string, error) {
-	if err := p.Stage(ctx, c, *bundle, proxyNamespace); err != nil {
-		return false, "", "", err
-	}
-	if wait {
-		ready, err := envoyReady(ctx, c, proxyNamespace, gateways)
-		if err != nil {
-			return false, "", "", err
-		}
-		if !ready {
-			return false, provider.ReasonEnvoyNotReady, "waiting for a Ready Envoy pod before publishing the filter", nil
-		}
-		ok, err := projected(ctx, c, proxyNamespace, bundle.Namespace+"/"+bundle.Name, bundle.Hash)
-		if err != nil {
-			return false, "", "", err
-		}
-		if !ok {
-			return false, provider.ReasonProjectionPending, "SecLang files are not projected into the Envoy pods yet", nil
-		}
-	}
-	if err := p.Apply(ctx, c, *bundle, refs, proxyNamespace); err != nil {
-		return false, "", "", err
-	}
-	return true, "", "", nil
-}
-
 func (r *SecPolicyReconciler) failApply(ctx context.Context, policy *seclangv1alpha1.SecPolicy, err error) error {
 	reason := reasonParseError
 	if errors.Is(err, provider.ErrDataFileConflict) {
@@ -265,95 +221,6 @@ func (r *SecPolicyReconciler) failApply(ctx context.Context, policy *seclangv1al
 	}
 	setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reason, err.Error())
 	return r.writeStatus(ctx, policy)
-}
-
-func envoyReady(ctx context.Context, c client.Client, proxyNamespace string, gateways []provider.GatewayRef) (bool, error) {
-	var pods corev1.PodList
-	if err := c.List(ctx, &pods, client.InNamespace(proxyNamespace)); err != nil {
-		return false, err
-	}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if !podServesGateway(pod, gateways) || !podReady(pod) || !podMountsSecLang(pod) {
-			continue
-		}
-		return true, nil
-	}
-	return false, nil
-}
-
-func podServesGateway(pod *corev1.Pod, gateways []provider.GatewayRef) bool {
-	name := pod.Labels["gateway.envoyproxy.io/owning-gateway-name"]
-	ns := pod.Labels["gateway.envoyproxy.io/owning-gateway-namespace"]
-	for _, gw := range gateways {
-		if name == gw.Name && (ns == "" || ns == gw.Namespace) {
-			return true
-		}
-	}
-	return false
-}
-
-func podReady(pod *corev1.Pod) bool {
-	if pod.DeletionTimestamp != nil {
-		return false
-	}
-	for _, c := range pod.Status.ContainerStatuses {
-		if c.Name == "envoy" && c.Ready {
-			return true
-		}
-	}
-	return false
-}
-
-func podMountsSecLang(pod *corev1.Pod) bool {
-	for _, v := range pod.Spec.Volumes {
-		if v.ConfigMap != nil && v.ConfigMap.Name == compile.ConfigMapName {
-			return true
-		}
-	}
-	return false
-}
-
-func projected(ctx context.Context, c client.Client, proxyNamespace, owner, hash string) (bool, error) {
-	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: proxyNamespace, Name: compile.ConfigMapName}, cm); err != nil {
-		return false, err
-	}
-	var versions map[string]string
-	if err := json.Unmarshal([]byte(cm.Data[compile.VersionKey]), &versions); err != nil {
-		return false, err
-	}
-	if versions[owner] != hash {
-		return false, nil
-	}
-	body := cm.Data[compile.VersionKey]
-	seen := &corev1.ConfigMap{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: proxyNamespace, Name: compile.SeenConfigMapName}, seen); err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	var pods corev1.PodList
-	if err := c.List(ctx, &pods, client.InNamespace(proxyNamespace)); err != nil {
-		return false, err
-	}
-	nodes := map[string]struct{}{}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if podReady(pod) && podMountsSecLang(pod) {
-			nodes[pod.Spec.NodeName] = struct{}{}
-		}
-	}
-	if len(nodes) == 0 {
-		return false, nil
-	}
-	for node := range nodes {
-		if strings.TrimSpace(seen.Data[node]) != strings.TrimSpace(body) {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 // writeStatus sets Ready from the four attachment conditions, then writes status.
@@ -563,7 +430,6 @@ func (r *SecPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&seclangv1alpha1.SecAction{}, handler.EnqueueRequestsFromMapFunc(r.requestsFor("SecAction"))).
 		Watches(&seclangv1alpha1.Include{}, handler.EnqueueRequestsFromMapFunc(r.requestsFor("Include"))).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.requestsForConfigMap)).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.requestsInNamespace)).
 		Watches(&gatewayv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&gatewayv1.HTTPRoute{}, handler.EnqueueRequestsFromMapFunc(r.requestsInNamespace)).
@@ -652,7 +518,7 @@ func (r *SecPolicyReconciler) requestsAll(ctx context.Context, _ client.Object) 
 }
 
 func (r *SecPolicyReconciler) requestsForConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
-	if obj.GetName() == compile.ConfigMapName || obj.GetName() == compile.SeenConfigMapName {
+	if obj.GetName() == compile.ConfigMapName {
 		return r.requestsAll(ctx, obj)
 	}
 	return r.requestsInNamespace(ctx, obj)

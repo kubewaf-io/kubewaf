@@ -26,19 +26,13 @@ import (
 	egv1a1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
 	wafv1alpha1 "github.com/kubewaf-io/kubewaf/api/waf/v1alpha1"
-	"github.com/kubewaf-io/kubewaf/internal/compile"
 	v1alpha1 "github.com/kubewaf-io/kubewaf/internal/controller/v1alpha1"
-	"github.com/kubewaf-io/kubewaf/internal/projection"
 	"github.com/kubewaf-io/kubewaf/internal/provider/registry"
 	kubewafwebhook "github.com/kubewaf-io/kubewaf/internal/webhook"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -61,35 +55,18 @@ func init() {
 
 func main() {
 	var metricsAddr, probeAddr, webhookCertPath, proxyNamespace string
-	var enableLeaderElection, enableWebhooks, projectionAgent bool
+	var enableLeaderElection, enableWebhooks bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "metrics bind address")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health probe bind address")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "run reconcilers only on the leader")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", false, "register validating webhooks")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "directory with tls.crt and tls.key")
 	flag.StringVar(&proxyNamespace, "proxy-namespace", "envoy-gateway-system",
-		"namespace of the Envoy pods and kubewaf-seclang")
-	flag.BoolVar(&projectionAgent, "projection-agent", false, "report the mounted SecLang version for this node")
+		"namespace for data-file ConfigMaps")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-	if projectionAgent {
-		cs, err := kubernetes.NewForConfig(ctrl.GetConfigOrDie())
-		if err != nil {
-			setupLog.Error(err, "kube client")
-			os.Exit(1)
-		}
-		ns := os.Getenv("POD_NAMESPACE")
-		if ns == "" {
-			ns = proxyNamespace
-		}
-		if err := projection.Run(ctrl.SetupSignalHandler(), cs, ns, os.Getenv("NODE_NAME"), compile.MountDir); err != nil {
-			setupLog.Error(err, "projection agent")
-			os.Exit(1)
-		}
-		return
-	}
 
 	hook := webhook.NewServer(webhook.Options{TLSOpts: []func(*tls.Config){}})
 	if webhookCertPath != "" {
@@ -102,9 +79,6 @@ func main() {
 		WebhookServer:          hook,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "seclang.kubewaf.io",
-		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
-			&corev1.Pod{}: {Namespaces: map[string]cache.Config{proxyNamespace: {}}},
-		}},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -128,14 +102,14 @@ func main() {
 	}
 	if err := (&v1alpha1.SecPolicyReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Registry: reg,
-		ProxyNamespace: proxyNamespace, WaitForProjection: true,
+		ProxyNamespace: proxyNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "SecPolicy")
 		os.Exit(1)
 	}
 	if err := (&v1alpha1.ProtectionReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Registry: reg,
-		ProxyNamespace: proxyNamespace, WaitForProjection: true,
+		ProxyNamespace: proxyNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Protection")
 		os.Exit(1)

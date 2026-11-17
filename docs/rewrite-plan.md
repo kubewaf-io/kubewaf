@@ -46,7 +46,7 @@ These are the defaults an implementer should follow. Section 13 lists the ones t
 | CRS default | Bundled virtual includes inside the Coraza module. Generated CRDs are an opt-in converter output, not a default Helm install. |
 | Attachment namespace | `SecPolicy`, its Gateway or HTTPRoute, and the `EnvoyExtensionPolicy` are the same namespace. Rule selectors are the same namespace. The SecLang ConfigMap lives in the Envoy proxy namespace, because that is where the pod runs. |
 | EnvoyProxy | Platform-owned. kubeWAF never creates, patches, or merges an `EnvoyProxy`, and never sets `Gateway.spec.infrastructure.parametersRef` or `GatewayClass.spec.parametersRef`. |
-| Rule delivery | One well-known ConfigMap, `kubewaf-seclang`, in the Envoy proxy namespace (default `envoy-gateway-system`). The platform `EnvoyProxy` mounts it at `/etc/kubewaf/seclang`. The `EnvoyExtensionPolicy` `Include`s those files. Inline directives are not the delivery path. |
+| Rule delivery | SecLang lines are inline in `EnvoyExtensionPolicy` `directives`. CRS stays `Include @crs-setup.conf` and `Include @owasp_crs/*.conf`. `@pmFromFile` bodies still use ConfigMap `kubewaf-seclang`. |
 | Module delivery | The platform loads `composer:0.13.0`. The Composer image is scratch, so `cp` cannot be the init command on that image. M0 used a busybox wrapper. An image volume was not run. kubeWAF has no image and no delivery setting. |
 | Engine | Upstream Coraza filter inside Tetrate Built-on-Envoy `libcomposer.so`, filter name `coraza-waf`. This repo does not fork the engine. |
 
@@ -1234,11 +1234,13 @@ kubeWAF writes these and nothing else in the data plane:
 
 The platform owns `EnvoyProxy` and `Gateway.spec.infrastructure.parametersRef`. kubeWAF does not create them, patch them, merge into them, or set an annotation on the Gateway. There is no `ForeignEnvoyProxy` condition and no managed-parameters-ref annotation, because the operator never has a proxy of its own to reconcile against.
 
-#### Why a well-known ConfigMap, not inline directives
+#### Inline directives
 
-Envoy's pods do not run in the Gateway's namespace. They run in the Envoy Gateway workload namespace. A ConfigMap next to the Gateway cannot be mounted. Putting the SecLang into `EnvoyExtensionPolicy.spec.dynamicModule[].config.directives` would avoid the mount, and it would fit the Kind test, but `@pmFromFile` and `@ipMatchFromFile` still need a file the process can open, and an opt-in generated CRS blows the same 1 MiB object limit the ConfigMap already has. One mounted file set serves both.
+The Composer Coraza module takes a `directives` array and compiles it with Coraza. The operator already put `SecRuleEngine`, `SecMarker`, and `Include` lines there. Rule text is the same kind of line, so it is placed in that array. A rule edit changes the EnvoyExtensionPolicy, Envoy Gateway pushes it over xDS, and the filter is rebuilt. There is no ConfigMap projection and no per-node agent.
 
-The mount is a fixed name, so the platform snippet does not change when rules change. kubeWAF updates keys in `kubewaf-seclang`. The `EnvoyExtensionPolicy` `Include`s `/etc/kubewaf/seclang/<key>` and carries the `SecMarker` hash so Envoy re-reads the files. The platform does not edit the `EnvoyProxy` for a rule change.
+`Include` objects that point at a ConfigMap are read by the operator and their bytes are placed in `directives`. Virtual paths stay as `Include @crs-setup.conf` and `Include @owasp_crs/*.conf`.
+
+`@pmFromFile` and `@ipMatchFromFile` still need a file the process can open. Those bodies are the only keys written to ConfigMap `kubewaf-seclang`. The platform mounts that ConfigMap only when a policy uses them. The inline document and the data-file ConfigMap are each refused above 900 KiB.
 
 The operator flag `--proxy-namespace` (chart value `proxyNamespace`, default `envoy-gateway-system`) is the namespace the platform already chose for Envoy pods. It is not a module image and it is not a delivery switch.
 

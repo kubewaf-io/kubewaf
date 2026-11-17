@@ -137,14 +137,10 @@ func (e *Envoy) checkOne(ctx context.Context, c client.Client, ref provider.Gate
 		view.Message = fmt.Sprintf("EnvoyProxy %s/%s has no dynamic module %q", ns, name, moduleName)
 		return view, nil
 	}
-	if !mountPresent(proxy) {
-		view.Reason = provider.ReasonMountMissing
-		view.Message = fmt.Sprintf("EnvoyProxy %s/%s does not mount ConfigMap %s at %s", ns, name, compile.ConfigMapName, compile.MountDir)
-		return view, nil
-	}
+	view.Mounted = mountPresent(proxy)
 	view.Ready = true
 	view.Reason = "Ready"
-	view.Message = "platform module is registered and the SecLang ConfigMap is mounted"
+	view.Message = "platform module is registered"
 	_ = proxyNamespace
 	return view, nil
 }
@@ -231,16 +227,8 @@ func podMounted(pod *egv1a1.KubernetesPodSpec, container *egv1a1.KubernetesConta
 	return false
 }
 
-// Stage writes this policy's files and the version key. It does not publish the filter.
-func (e *Envoy) Stage(ctx context.Context, c client.Client, b compile.Bundle, proxyNamespace string) error {
-	if proxyNamespace == "" {
-		proxyNamespace = e.proxyNamespace
-	}
-	return e.writeConfigMap(ctx, c, b, proxyNamespace)
-}
-
-// Apply merges this policy's keys into kubewaf-seclang and writes one EnvoyExtensionPolicy.
-// It does not write an EnvoyProxy or a Gateway.
+// Apply writes data files, when the bundle has any, and one EnvoyExtensionPolicy.
+// Rule text is inline in the filter config. It does not write an EnvoyProxy or a Gateway.
 func (e *Envoy) Apply(ctx context.Context, c client.Client, b compile.Bundle, refs []gatewayv1.LocalPolicyTargetReference, proxyNamespace string) error {
 	if proxyNamespace == "" {
 		proxyNamespace = e.proxyNamespace
@@ -282,13 +270,6 @@ func (e *Envoy) writeConfigMap(ctx context.Context, c client.Client, b compile.B
 		cm.Data[k] = v
 		owners[k] = owner
 	}
-	versions := decodeVersions(cm.Data[compile.VersionKey])
-	versions[owner] = b.Hash
-	versionRaw, err := json.Marshal(versions)
-	if err != nil {
-		return err
-	}
-	cm.Data[compile.VersionKey] = string(versionRaw)
 	if configMapSize(cm.Data) > maxConfigMapBytes {
 		return provider.ErrConfigMapTooLarge
 	}
@@ -304,16 +285,28 @@ func (e *Envoy) writeConfigMap(ctx context.Context, c client.Client, b compile.B
 		cm.Labels = map[string]string{}
 	}
 	cm.Labels[managedByLabel] = managedByValue
+	if len(b.Files) == 0 && !hasPolicyData(cm.Data) {
+		if cm.ResourceVersion == "" {
+			return nil
+		}
+		return c.Delete(ctx, cm)
+	}
 	if cm.ResourceVersion == "" {
+		if len(b.Files) == 0 {
+			return nil
+		}
 		return c.Create(ctx, cm)
 	}
 	return c.Update(ctx, cm)
 }
 
 func (e *Envoy) writeExtension(ctx context.Context, c client.Client, b compile.Bundle, refs []gatewayv1.LocalPolicyTargetReference) error {
-	desired := extensionPolicy(b, refs)
+	desired, err := extensionPolicy(b, refs)
+	if err != nil {
+		return err
+	}
 	current := &egv1a1.EnvoyExtensionPolicy{}
-	err := c.Get(ctx, types.NamespacedName{Namespace: b.Namespace, Name: desired.Name}, current)
+	err = c.Get(ctx, types.NamespacedName{Namespace: b.Namespace, Name: desired.Name}, current)
 	if apierrors.IsNotFound(err) {
 		return c.Create(ctx, desired)
 	}
@@ -325,9 +318,15 @@ func (e *Envoy) writeExtension(ctx context.Context, c client.Client, b compile.B
 	return c.Update(ctx, current)
 }
 
-func extensionPolicy(b compile.Bundle, refs []gatewayv1.LocalPolicyTargetReference) *egv1a1.EnvoyExtensionPolicy {
+func extensionPolicy(b compile.Bundle, refs []gatewayv1.LocalPolicyTargetReference) (*egv1a1.EnvoyExtensionPolicy, error) {
 	name := filterName
-	raw, _ := json.Marshal(filterConfig(b))
+	raw, err := json.Marshal(filterConfig(b))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxConfigMapBytes {
+		return nil, provider.ErrConfigMapTooLarge
+	}
 	targets := make([]gatewayv1.LocalPolicyTargetReferenceWithSectionName, 0, len(refs))
 	for _, ref := range refs {
 		targets = append(targets, gatewayv1.LocalPolicyTargetReferenceWithSectionName{
@@ -351,7 +350,7 @@ func extensionPolicy(b compile.Bundle, refs []gatewayv1.LocalPolicyTargetReferen
 				Config:     &apiextensionsv1.JSON{Raw: raw},
 			}},
 		},
-	}
+	}, nil
 }
 
 type filterJSON struct {
@@ -374,16 +373,37 @@ func filterConfig(b compile.Bundle) filterJSON {
 		Mode:               mode,
 		RequestURIPathOnly: true,
 		Metrics:            metrics{AuthorityLabel: "route_name"},
-		Directives: []string{
-			"Include @coraza.conf",
-			"SecRuleEngine " + orEngine(b.Engine),
-			"SecRequestBodyAccess " + onOff(b.RequestBodyAccess),
-			"SecResponseBodyAccess " + onOff(b.ResponseBodyAccess),
-			"SecMarker " + b.Marker,
-			"Include " + compile.MountDir + "/" + compile.BeforeKey(b.Namespace, b.Name),
-			"Include " + compile.MountDir + "/" + compile.AfterKey(b.Namespace, b.Name),
-		},
+		Directives:         directiveLines(b),
 	}
+}
+
+func directiveLines(b compile.Bundle) []string {
+	before := nonEmptyLines(b.Before)
+	after := nonEmptyLines(b.After)
+	out := make([]string, 0, 5+len(before)+len(after))
+	out = append(out,
+		"Include @coraza.conf",
+		"SecRuleEngine "+orEngine(b.Engine),
+		"SecRequestBodyAccess "+onOff(b.RequestBodyAccess),
+		"SecResponseBodyAccess "+onOff(b.ResponseBodyAccess),
+		"SecMarker "+b.Marker,
+	)
+	out = append(out, before...)
+	out = append(out, after...)
+	return out
+}
+
+func nonEmptyLines(text string) []string {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 func orEngine(v string) string {
@@ -440,18 +460,8 @@ func (e *Envoy) deleteKeys(ctx context.Context, c client.Client, policyNamespace
 		delete(cm.Data, k)
 		delete(owners, k)
 	}
-	versions := decodeVersions(cm.Data[compile.VersionKey])
-	delete(versions, owner)
-	delete(cm.Data, compile.VersionKey)
 	if !hasPolicyData(cm.Data) {
 		return c.Delete(ctx, cm)
-	}
-	if len(versions) > 0 {
-		versionRaw, err := json.Marshal(versions)
-		if err != nil {
-			return err
-		}
-		cm.Data[compile.VersionKey] = string(versionRaw)
 	}
 	if cm.Annotations == nil {
 		cm.Annotations = map[string]string{}
@@ -499,25 +509,8 @@ func (e *Envoy) Programmed(ctx context.Context, c client.Client, policyNamespace
 	return provider.ProgramView{Found: true, Accepted: ok, Reason: reason, Message: message}, nil
 }
 
-func decodeVersions(raw string) map[string]string {
-	out := map[string]string{}
-	if strings.TrimSpace(raw) == "" {
-		return out
-	}
-	_ = json.Unmarshal([]byte(raw), &out)
-	if out == nil {
-		out = map[string]string{}
-	}
-	return out
-}
-
 func hasPolicyData(data map[string]string) bool {
-	for k := range data {
-		if k != compile.VersionKey {
-			return true
-		}
-	}
-	return false
+	return len(data) > 0
 }
 
 func decodeOwners(raw string) map[string]string {

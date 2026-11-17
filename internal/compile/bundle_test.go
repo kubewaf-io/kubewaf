@@ -81,8 +81,8 @@ func TestBuildOrdersIncludesAndRewritesFiles(t *testing.T) {
 	if b.Inspection != "REQUEST_ONLY" || !b.RequestBodyAccess || b.ResponseBodyAccess {
 		t.Fatalf("inspection defaults: %+v", b)
 	}
-	before := b.Files[BeforeKey("default", "edge")]
-	after := b.Files[AfterKey("default", "edge")]
+	before := b.Before
+	after := b.After
 	if !strings.HasPrefix(before, "SecDefaultAction \"phase:1,log,auditlog,deny,status:403\"\n") {
 		t.Fatalf("before start:\n%s", before)
 	}
@@ -101,9 +101,8 @@ func TestBuildOrdersIncludesAndRewritesFiles(t *testing.T) {
 	if b.Files["default_edge_scanners.data"] != "sqlmap\n" {
 		t.Fatal(b.Files["default_edge_scanners.data"])
 	}
-	extra := "default_edge_extra.conf"
-	if !strings.Contains(after, "Include /etc/kubewaf/seclang/"+extra) {
-		t.Fatalf("configmap include path:\n%s", after)
+	if !strings.Contains(after, "SecAction \"id:1,phase:1,pass,nolog\"") {
+		t.Fatalf("configmap include was not inlined:\n%s", after)
 	}
 	if err := ParseFiles(before+"\n"+after, b.Files); err != nil {
 		t.Fatal(err)

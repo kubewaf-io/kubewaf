@@ -58,8 +58,8 @@ func TestBuildProtectionOrdersCRSAndExclusions(t *testing.T) {
 	if bundle.Name != "p-edge" || bundle.Engine != "On" {
 		t.Fatalf("bundle %+v", bundle)
 	}
-	before := bundle.Files[BeforeKey("default", "p-edge")]
-	after := bundle.Files[AfterKey("default", "p-edge")]
+	before := bundle.Before
+	after := bundle.After
 	if !strings.Contains(before, "Include @crs-setup.conf") || !strings.Contains(before, "id:900991") {
 		t.Fatalf("before\n%s", before)
 	}

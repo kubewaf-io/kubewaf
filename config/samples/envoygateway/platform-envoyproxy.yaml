@@ -29,10 +29,6 @@ spec:
           volumes:
             - name: dynamic-modules
               emptyDir: {}
-            - name: kubewaf-seclang
-              configMap:
-                name: kubewaf-seclang
-                optional: true
         container:
           image: docker.io/envoyproxy/envoy:distroless-v1.40.2
           env:
@@ -41,9 +37,6 @@ spec:
           volumeMounts:
             - name: dynamic-modules
               mountPath: /etc/envoy/dynamic-modules
-              readOnly: true
-            - name: kubewaf-seclang
-              mountPath: /etc/kubewaf/seclang
               readOnly: true
   dynamicModules:
     - name: composer

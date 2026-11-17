@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -48,10 +49,9 @@ const (
 // local BackendTrafficPolicy objects. It does not create SecRule objects.
 type ProtectionReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	Registry          *registry.Registry
-	ProxyNamespace    string
-	WaitForProjection bool
+	Scheme         *runtime.Scheme
+	Registry       *registry.Registry
+	ProxyNamespace string
 }
 
 // +kubebuilder:rbac:groups=waf.kubewaf.io,resources=protections,verbs=get;list;watch;update;patch
@@ -152,16 +152,14 @@ func (r *ProtectionReconciler) reconcile(ctx context.Context, p provider.Provide
 		setCondition(&obj.Status.Conditions, obj.Generation, conditionProgrammed, metav1.ConditionFalse, reasonParseError, err.Error())
 		return ctrl.Result{}, r.writeStatus(ctx, obj)
 	}
-	applied, reason, message, err := stageAndApply(ctx, r.Client, p, r.ProxyNamespace, r.WaitForProjection, &bundle, obj.Spec.TargetRefs, gateways)
-	if err != nil {
-		setCondition(&obj.Status.Conditions, obj.Generation, conditionProgrammed, metav1.ConditionFalse, applyReason(err), err.Error())
+	if len(bundle.Files) > 0 && !engine.Mounted {
+		setCondition(&obj.Status.Conditions, obj.Generation, conditionEngineReady, metav1.ConditionFalse, provider.ReasonMountMissing, "data files need the kubewaf-seclang volume")
+		_ = p.Retract(ctx, r.Client, obj.Namespace, wafv1alpha1.ObjectName(obj.Name))
+		setCondition(&obj.Status.Conditions, obj.Generation, conditionProgrammed, metav1.ConditionFalse, provider.ReasonMountMissing, "extension policy removed because data files are not mounted")
 		return ctrl.Result{}, r.writeStatus(ctx, obj)
 	}
-	if !applied {
-		if reason == provider.ReasonEnvoyNotReady {
-			setCondition(&obj.Status.Conditions, obj.Generation, conditionEngineReady, metav1.ConditionFalse, reason, "no Ready Envoy pod has the SecLang volume")
-		}
-		setCondition(&obj.Status.Conditions, obj.Generation, conditionProgrammed, metav1.ConditionFalse, reason, message)
+	if err := p.Apply(ctx, r.Client, bundle, obj.Spec.TargetRefs, r.ProxyNamespace); err != nil {
+		setCondition(&obj.Status.Conditions, obj.Generation, conditionProgrammed, metav1.ConditionFalse, applyReason(err), err.Error())
 		return ctrl.Result{}, r.writeStatus(ctx, obj)
 	}
 	if err := r.syncRateLimits(ctx, obj); err != nil {
@@ -377,11 +375,11 @@ func (r *ProtectionReconciler) writeStatus(ctx context.Context, obj *wafv1alpha1
 }
 
 func applyReason(err error) string {
-	if err == nil {
-		return reasonPending
+	if errors.Is(err, provider.ErrDataFileConflict) {
+		return reasonDataFileConflict
 	}
-	if apierrors.IsAlreadyExists(err) {
-		return reasonInvalid
+	if errors.Is(err, provider.ErrConfigMapTooLarge) {
+		return reasonConfigMapTooLarge
 	}
 	return reasonParseError
 }
@@ -395,7 +393,6 @@ func (r *ProtectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&seclangv1alpha1.Include{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&seclangv1alpha1.SecPolicy{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.requestsForSecLang)).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&gatewayv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&gatewayv1.HTTPRoute{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
@@ -412,7 +409,7 @@ func (r *ProtectionReconciler) requestsForSecLang(ctx context.Context, obj clien
 	if obj.GetNamespace() != r.ProxyNamespace {
 		return nil
 	}
-	if obj.GetName() != compile.ConfigMapName && obj.GetName() != compile.SeenConfigMapName {
+	if obj.GetName() != compile.ConfigMapName {
 		return nil
 	}
 	return r.requestsAll(ctx, obj)

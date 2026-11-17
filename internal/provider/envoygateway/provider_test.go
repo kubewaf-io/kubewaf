@@ -53,13 +53,6 @@ func TestApplyWritesOnlyConfigMapAndExtensionPolicy(t *testing.T) {
 	}
 	assertPlatformUnchanged(t, c, beforeProxy, beforeGW)
 
-	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "envoy-gateway-system", Name: compile.ConfigMapName}, cm); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(cm.Data["default_edge-before.conf"], "id:1") {
-		t.Fatalf("keys %v", cm.Data)
-	}
 	ext := &egv1a1.EnvoyExtensionPolicy{}
 	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-edge"}, ext); err != nil {
 		t.Fatal(err)
@@ -75,8 +68,11 @@ func TestApplyWritesOnlyConfigMapAndExtensionPolicy(t *testing.T) {
 		t.Fatalf("config %+v", cfg)
 	}
 	joined := strings.Join(cfg.Directives, "\n")
-	if !strings.Contains(joined, "SecMarker KUBEWAF0123456789abcdef") || !strings.Contains(joined, "Include @coraza.conf") {
+	if !strings.Contains(joined, "SecMarker KUBEWAF0123456789abcdef") || !strings.Contains(joined, "Include @coraza.conf") || !strings.Contains(joined, "id:1") {
 		t.Fatal(joined)
+	}
+	if strings.Contains(joined, "/etc/kubewaf/seclang/") {
+		t.Fatalf("rule file was not inlined: %s", joined)
 	}
 	if ext.Spec.TargetRefs[0].Kind != "Gateway" {
 		t.Fatal(ext.Spec.TargetRefs)
@@ -85,15 +81,6 @@ func TestApplyWritesOnlyConfigMapAndExtensionPolicy(t *testing.T) {
 	other := sampleBundle("default", "extra", "KUBEWAFaaaaaaaaaaaaaaaa", "SecAction \"id:2,phase:1,pass\"\n")
 	if err := p.Apply(ctx, c, other, gatewayRef(), "envoy-gateway-system"); err != nil {
 		t.Fatal(err)
-	}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "envoy-gateway-system", Name: compile.ConfigMapName}, cm); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := cm.Data["default_edge-before.conf"]; !ok {
-		t.Fatal("first policy keys were dropped")
-	}
-	if _, ok := cm.Data["default_extra-before.conf"]; !ok {
-		t.Fatal("second policy keys missing")
 	}
 	assertPlatformUnchanged(t, c, beforeProxy, beforeGW)
 
@@ -156,8 +143,8 @@ func TestEngineNotReady(t *testing.T) {
 	unmounted := platformProxy(true, false)
 	c = fakeClient(t, unmounted, platformGateway())
 	view, err = p.CheckEngine(ctx, c, []provider.GatewayRef{{Namespace: "default", Name: "eg"}}, "composer", "envoy-gateway-system")
-	if err != nil || view.Ready || view.Reason != provider.ReasonMountMissing {
-		t.Fatalf("%+v %v", view, err)
+	if err != nil || !view.Ready || view.Mounted {
+		t.Fatalf("inline rules do not need the mount: %+v %v", view, err)
 	}
 	bare := platformGateway()
 	bare.Spec.Infrastructure = nil
@@ -210,22 +197,12 @@ func TestDeleteRemovesKeysAndPolicyOnly(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-edge"}, &egv1a1.EnvoyExtensionPolicy{}); err == nil {
 		t.Fatal("extension policy still exists")
 	}
-	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "envoy-gateway-system", Name: compile.ConfigMapName}, cm); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := cm.Data["default_edge-before.conf"]; ok {
-		t.Fatal("deleted policy key remains")
-	}
-	if _, ok := cm.Data["default_extra-before.conf"]; !ok {
-		t.Fatal("other policy key was removed")
-	}
 	assertPlatformUnchanged(t, c, beforeProxy, gw.Spec.DeepCopy())
 	if err := p.Delete(ctx, c, "default", "extra", "envoy-gateway-system"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "envoy-gateway-system", Name: compile.ConfigMapName}, cm); err == nil {
-		t.Fatal("empty configmap should be deleted")
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "envoy-gateway-system", Name: compile.ConfigMapName}, &corev1.ConfigMap{}); err == nil {
+		t.Fatal("rule-only policies should not leave a ConfigMap")
 	}
 }
 
@@ -234,16 +211,16 @@ func TestDataFileConflictAndSize(t *testing.T) {
 	p := New("envoy-gateway-system")
 	ctx := context.Background()
 	first := sampleBundle("default", "edge", "KUBEWAF0123456789abcdef", "x\n")
+	first.Files = map[string]string{"default_edge_scanners.data": "sqlmap\n"}
 	if err := p.Apply(ctx, c, first, gatewayRef(), "envoy-gateway-system"); err != nil {
 		t.Fatal(err)
 	}
 	clash := sampleBundle("other", "policy", "KUBEWAFaaaaaaaaaaaaaaaa", "y\n")
-	clash.Files = map[string]string{"default_edge-before.conf": "nope\n"}
+	clash.Files = map[string]string{"default_edge_scanners.data": "nope\n"}
 	if err := p.Apply(ctx, c, clash, gatewayRef(), "envoy-gateway-system"); err == nil || !strings.Contains(err.Error(), "owned") {
 		t.Fatalf("conflict: %v", err)
 	}
-	huge := sampleBundle("default", "big", "KUBEWAFbbbbbbbbbbbbbbbb", "")
-	huge.Files = map[string]string{"default_big-before.conf": strings.Repeat("a", 900*1024)}
+	huge := sampleBundle("default", "big", "KUBEWAFbbbbbbbbbbbbbbbb", strings.Repeat("a\n", 500*1024))
 	if err := p.Apply(ctx, c, huge, gatewayRef(), "envoy-gateway-system"); err == nil {
 		t.Fatal("expected size error")
 	}
@@ -254,10 +231,6 @@ func sampleBundle(ns, name, marker, before string) compile.Bundle {
 		Namespace: ns, Name: name, Hash: strings.TrimPrefix(marker, "KUBEWAF"), Marker: marker,
 		Engine: "On", RequestBodyAccess: true, Inspection: "REQUEST_ONLY", ModuleName: "composer",
 		Before: before,
-		Files: map[string]string{
-			ns + "_" + name + "-before.conf": before,
-			ns + "_" + name + "-after.conf":  "",
-		},
 	}
 }
 
