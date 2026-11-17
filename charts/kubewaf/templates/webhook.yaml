@@ -156,4 +156,68 @@ webhooks:
         operations: ["CREATE", "UPDATE"]
         resources: ["wafs"]
         scope: Namespaced
+  - name: v1a1secrule.kubewaf.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
+    clientConfig:
+      service:
+        name: {{ $svcName }}
+        namespace: {{ $ns }}
+        path: /validate-seclang-kubewaf-io-v1alpha1-secrule
+      caBundle: {{ $caCert }}
+    rules:
+      - apiGroups: ["seclang.kubewaf.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["secrules"]
+        scope: Namespaced
+  - name: v1a1secaction.kubewaf.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
+    clientConfig:
+      service:
+        name: {{ $svcName }}
+        namespace: {{ $ns }}
+        path: /validate-seclang-kubewaf-io-v1alpha1-secaction
+      caBundle: {{ $caCert }}
+    rules:
+      - apiGroups: ["seclang.kubewaf.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["secactions"]
+        scope: Namespaced
+  - name: v1a1include.kubewaf.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
+    clientConfig:
+      service:
+        name: {{ $svcName }}
+        namespace: {{ $ns }}
+        path: /validate-seclang-kubewaf-io-v1alpha1-include
+      caBundle: {{ $caCert }}
+    rules:
+      - apiGroups: ["seclang.kubewaf.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["includes"]
+        scope: Namespaced
+  - name: v1a1secpolicy.kubewaf.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
+    clientConfig:
+      service:
+        name: {{ $svcName }}
+        namespace: {{ $ns }}
+        path: /validate-seclang-kubewaf-io-v1alpha1-secpolicy
+      caBundle: {{ $caCert }}
+    rules:
+      - apiGroups: ["seclang.kubewaf.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["secpolicies"]
+        scope: Namespaced
 {{- end }}

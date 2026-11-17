@@ -10,7 +10,7 @@ The rewrite is a breaking replacement of the API and the data-plane integration.
 
 ### Goals
 
-1. One SecLang API, `seclang.kubewaf.io/v1alpha1`, with `SecRule` and `SecAction` that emit SecLang and nothing else. One rule per object. Chains, targets, operators, transformations, and the five SecLang action classes are fields, not free-form blobs and not a second legacy bag.
+1. One SecLang API, `seclang.kubewaf.io/v1alpha1`, with `SecRule`, `SecAction`, and `Include` that emit SecLang and nothing else. One directive per object. Chains, targets, operators, transformations, and the five SecLang action classes are fields, not free-form blobs and not a second legacy bag.
 2. One attachment object, `SecPolicy`, that selects those rules and binds them to an Envoy Gateway `Gateway` or `HTTPRoute`.
 3. The operator writes two Kubernetes objects and then stops: a ConfigMap of SecLang files, and an `EnvoyExtensionPolicy` whose `dynamicModule` names the platform's preinstalled module (`composer`) and filter (`coraza-waf`). kubeWAF never creates, patches, or merges an `EnvoyProxy`, and never patches `Gateway.spec.infrastructure.parametersRef`. Envoy Gateway's own xDS server programs Envoy.
 4. The request path contains Envoy and the in-process Coraza module. The operator is not in that path.
@@ -205,7 +205,7 @@ The hash is a `SecMarker` directive inside the filter config (`SecMarker KUBEWAF
 
 ### Filter config the provider builds
 
-`Bundle` is provider-neutral. The compiler fills it. Only the Envoy Gateway provider knows `@coraza.conf`, `@owasp_crs`, and the JSON keys.
+`Bundle` is provider-neutral. The compiler fills it. Only the Envoy Gateway provider knows `@coraza.conf` and the JSON keys. CRS files are `Include` objects in the documents, not a flag on the bundle.
 
 ```go
 // internal/provider/provider.go
@@ -224,17 +224,18 @@ type Bundle struct {
     Engine              string // On, DetectionOnly, Off
     RequestBodyAccess   bool
     ResponseBodyAccess  bool
-    CRSBundle           bool
     Inspection          string // REQUEST_ONLY or FULL
 
-    // Before and After are complete SecLang documents, including data-file
-    // operator paths already rewritten to /etc/kubewaf/seclang/<file>.
+    // Before and After are complete SecLang documents. They contain SecRule,
+    // SecAction, and Include lines in order. Data-file operator paths are
+    // already rewritten to /etc/kubewaf/seclang/<file>.
     Before string
     After  string
 
     // Files are keys in ConfigMap kubewaf-seclang.
     // Names are "<policy-namespace>_<policy-name>-before.conf", the matching
-    // "-after.conf", and "<policy-namespace>_<policy-name>_<basename>.data".
+    // "-after.conf", "<policy-namespace>_<policy-name>_<include>.conf",
+    // and "<policy-namespace>_<policy-name>_<basename>.data".
     Files map[string]string
 }
 
@@ -257,7 +258,7 @@ type Provider interface {
 }
 ```
 
-Envoy Gateway `directives` for a policy that opts into the CRS bundle:
+Envoy Gateway `directives` for every policy:
 
 ```text
 Include @coraza.conf
@@ -265,19 +266,17 @@ SecRuleEngine On
 SecRequestBodyAccess On
 SecResponseBodyAccess Off
 SecMarker KUBEWAF<hash>
-Include @crs-setup.conf
 Include /etc/kubewaf/seclang/<policy-namespace>_<policy>-before.conf
-Include @owasp_crs/*.conf
 Include /etc/kubewaf/seclang/<policy-namespace>_<policy>-after.conf
 ```
 
-`@crs-setup.conf` and `@owasp_crs/*.conf` are omitted when `CRSBundle` is false. `@coraza.conf` stays: it is the module's recommended Coraza configuration, not the OWASP rules. Body-access lines override what `@coraza.conf` set, because they come after that include. This matches the [Coraza WAF extension](https://builtonenvoy.io/extensions/coraza-waf/) and the [Envoy Gateway dynamic modules task](https://gateway.envoyproxy.io/docs/tasks/extensibility/dynamic-modules/).
+`@coraza.conf` stays in the preamble. It is the module's recommended Coraza configuration, not the OWASP rules. Body-access lines override what `@coraza.conf` set, because they come after that include. `@crs-setup.conf` and `@owasp_crs/*.conf` are not inserted here. They are `Include` objects, written into the before or after file at the object's `order`. This matches the [Coraza WAF extension](https://builtonenvoy.io/extensions/coraza-waf/) and the [Envoy Gateway dynamic modules task](https://gateway.envoyproxy.io/docs/tasks/extensibility/dynamic-modules/).
 
 `mode` on the filter JSON is `REQUEST_ONLY` or `FULL`. The extension documents that `mode` chooses which phases are presented to Coraza and does not itself turn body access on. `RESPONSE_ONLY` is deprecated by the extension and is not a value we emit. `request_uri_path_only` is always `true`, which is the value the extension asks new users to set so `REQUEST_URI` is the path and query. `metrics.authority_label` is always `route_name` so `waf_tx_blocked` does not grow with client-supplied `:authority`.
 
 ## 5. SecRule and SecAction
 
-Group: `seclang.kubewaf.io`. Version: `v1alpha1`. Scope: namespaced. Short names: `sr`, `sa`, `sp`.
+Group: `seclang.kubewaf.io`. Version: `v1alpha1`. Scope: namespaced. Short names: `sr`, `sa`, `inc`, `sp`.
 
 Storage conventions: camelCase JSON, one object per logical directive, `status.secLang` is the exact text the policy compiler concatenates. Comments in the Go structs below are the kubebuilder comments the implementation should keep. Methods that only exist to satisfy a back-reference interface are not part of the API.
 
@@ -518,7 +517,7 @@ Quoting follows SecLang: the operator value is a quoted string when it is presen
 `SecAction` uses the same action order and no targets or operator:
 
 ```text
-SecAction "id:900990,phase:1,nolog,pass,setvar:tx.blocking_paranoia_level=2"
+SecAction "id:900990,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=2"
 ```
 
 `markerAfter: END_SCANNERS` appends a line `SecMarker END_SCANNERS`.
@@ -1014,9 +1013,70 @@ Delete all three CRDs.
 
 **Why this is simpler.** v1beta1 has two CRDs with the same shape (`content` / `configMapRef` / `parts`), a discovery index, a fail-closed policy, and injection into Wasm JSON. The dynamic module reads ordinary files. A field on the policy that already owns the mount is the whole feature.
 
+### 5.6 Include
+
+The SecLang directive is `Include`, so the kind is `Include`, not `SecInclude`. `SecRule` and `SecAction` are named after their directives the same way.
+
+```go
+type IncludeSpec struct {
+    // +optional
+    // +kubebuilder:default=1000
+    Order int32 `json:"order,omitempty"`
+    // +optional
+    // +kubebuilder:default=AfterCRS
+    // +kubebuilder:validation:Enum=BeforeCRS;AfterCRS
+    Placement Placement `json:"placement,omitempty"`
+    // +optional
+    MarkerAfter string `json:"markerAfter,omitempty"`
+    // VirtualPath is a module-embedded path. One * is allowed: @owasp_crs/*.conf.
+    // +optional
+    VirtualPath string `json:"virtualPath,omitempty"`
+    // ConfigMapRef is file content copied onto the kubewaf-seclang mount.
+    // +optional
+    ConfigMapRef *ConfigMapKeyRef `json:"configMapRef,omitempty"`
+}
+```
+
+CEL requires exactly one of `virtualPath` and `configMapRef`. The virtual-path pattern allows a single `*`. The ConfigMap key pattern does not, so a glob is legal only on a virtual path.
+
+`SecPolicy.spec.rules` selects `Include` the same way it selects `SecRule` and `SecAction` (`kind: Include`, plus a name or a label selector). The compiler sorts the selected objects by `order`, then name, and writes `Include <path>` into the before or after file at that position.
+
+A virtual path is emitted as written (`Include @crs-setup.conf`). A ConfigMap include is copied to `<namespace>_<policy>_<include-name>.conf` and emitted as `Include /etc/kubewaf/seclang/<that key>`. The object's own `status.secLang` uses `/etc/kubewaf/seclang/<configMap key>` so the object does not name a policy.
+
+`spec.crs` is not a field. A boolean that emits the same two lines would be a second way to include CRS. The two `Include` objects are the mechanism. The usual order, which puts CRS rules between setup and custom detections, is:
+
+| Object | Placement | Order | Path |
+| --- | --- | --- | --- |
+| setup `SecAction`s | BeforeCRS | 10 | |
+| `Include/crs-setup` | BeforeCRS | 20 | `@crs-setup.conf` |
+| `Include/owasp` | AfterCRS | 10 | `@owasp_crs/*.conf` |
+| custom `SecRule`s | AfterCRS | 1000 | |
+
+`@coraza.conf` stays in the filter preamble. It is engine configuration, not an `Include` the user attaches.
+
+```yaml
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: Include
+metadata:
+  name: owasp
+  namespace: default
+spec:
+  order: 10
+  placement: AfterCRS
+  virtualPath: "@owasp_crs/*.conf"
+```
+
+#### Include
+
+| API | SecLang |
+| --- | --- |
+| `virtualPath: "@crs-setup.conf"` | `Include @crs-setup.conf` |
+| `virtualPath: "@owasp_crs/*.conf"` | `Include @owasp_crs/*.conf` |
+| `configMapRef` key `custom.conf` | `Include /etc/kubewaf/seclang/<namespace>_<policy>_<name>.conf` in the bundle file |
+
 ## 6. SecPolicy, the attachment
 
-`SecPolicy` is the only object that binds rules to a dataplane. It lives in `seclang.kubewaf.io/v1alpha1` so phase 1 has one API group.
+`SecPolicy` binds `SecRule`, `SecAction`, and `Include` objects to a dataplane. It lives in `seclang.kubewaf.io/v1alpha1` so phase 1 has one API group.
 
 ```go
 type SecPolicy struct {
@@ -1033,8 +1093,8 @@ type SecPolicySpec struct {
     // +kubebuilder:validation:MaxItems=16
     TargetRefs []gatewayv1.LocalPolicyTargetReference `json:"targetRefs"`
 
-    // Rules selects SecRule and SecAction objects in this namespace.
-    // Each entry is a name or a label selector. Kind is SecRule or SecAction.
+    // Rules selects SecRule, SecAction, and Include objects in this namespace.
+    // Each entry is a name or a label selector.
     // +kubebuilder:validation:MinItems=1
     Rules []RuleSelector `json:"rules"`
 
@@ -1062,10 +1122,6 @@ type SecPolicySpec struct {
     // +kubebuilder:default=false
     ResponseBodyAccess *bool `json:"responseBodyAccess,omitempty"`
 
-    // CRS loads the module's embedded OWASP CRS.
-    // +optional
-    CRS *CRSSpec `json:"crs,omitempty"`
-
     // DataFiles are bodies for @pmFromFile and @ipMatchFromFile.
     // +optional
     // +kubebuilder:validation:MaxItems=32
@@ -1087,19 +1143,13 @@ type SecPolicySpec struct {
 }
 
 type RuleSelector struct {
-    // +kubebuilder:validation:Enum=SecRule;SecAction
+    // +kubebuilder:validation:Enum=SecRule;SecAction;Include
     Kind string `json:"kind"`
     // Name and Selector are mutually exclusive. One is required.
     // +optional
     Name string `json:"name,omitempty"`
     // +optional
     Selector *metav1.LabelSelector `json:"selector,omitempty"`
-}
-
-type CRSSpec struct {
-    // Bundle emits Include @crs-setup.conf and Include @owasp_crs/*.conf.
-    // +kubebuilder:default=true
-    Bundle *bool `json:"bundle,omitempty"`
 }
 
 type DataFile struct {
@@ -1169,11 +1219,9 @@ spec:
   inspection: RequestOnly
   requestBodyAccess: true
   responseBodyAccess: false
-  crs:
-    bundle: false
 ```
 
-`crs.bundle: false` is what the Kind test uses, so the 403 comes from `block-sqlmap` and not from a CRS scanner rule.
+The Kind test selects only `block-sqlmap`. It does not select `Include/owasp`, so the 403 comes from that rule and not from a CRS scanner rule.
 
 ### Objects the provider writes
 
@@ -1334,12 +1382,7 @@ spec:
 
 `filterName: coraza-waf` selects the filter inside `libcomposer.so`. Composer ships more than one filter; an empty filter name does not load Coraza. `config` is arbitrary JSON in the Envoy Gateway API (`apiextensionsv1.JSON`) and is passed to the module's init. The keys above are the ones the Coraza extension documents. Unknown keys are avoided. The extension rejects unknown keys under `metrics`.
 
-When `crs.bundle` is true the provider inserts, after the before-include and before the after-include:
-
-```yaml
-- Include @crs-setup.conf
-- Include @owasp_crs/*.conf
-```
+CRS includes are lines inside those two files, not extra entries in `directives`. With the order in section 5.6, `default_edge-before.conf` ends with `Include @crs-setup.conf` and `default_edge-after.conf` starts with `Include @owasp_crs/*.conf`.
 
 An HTTPRoute target uses `kind: HTTPRoute` and the route name. The provider reads `HTTPRoute.spec.parentRefs` to find the Gateway whose `EnvoyProxy` it checks for `EngineReady`. It does not create or patch that proxy. v1alpha1 supports a single parent Gateway in the same namespace. More than one parent sets `Accepted=False`, reason `MultipleParents`.
 
@@ -1410,7 +1453,7 @@ Adding Istio later:
 3. Extend `SecPolicy` target kinds, or add `spec.provider`, in a new API version if the schema change is breaking.
 4. Do not edit `SecRule`, `SecAction`, or `internal/compile`.
 
-The Istio package will not be able to emit `@owasp_crs` unless that engine has the same virtual filesystem. `Bundle.CRSBundle` is a hint. A provider that cannot honor it returns an error, and the policy condition is `Programmed=False`, reason `ProviderRejected`. The Envoy Gateway provider honors it with the virtual includes. Cilium follows the same steps when a Cilium build can load this dynamic module or another SecLang engine. Until then the registry has one entry, and a request to add a second provider is a new package, not a change to rule compilation.
+The Istio package will not be able to open `@owasp_crs` unless that engine has the same virtual filesystem. A provider that cannot honor an `Include` of an `@` path returns an error, and the policy condition is `Programmed=False`, reason `ProviderRejected`. The Envoy Gateway provider honors those paths because Composer embeds them. Cilium follows the same steps when a Cilium build can load this dynamic module or another SecLang engine. Until then the registry has one entry, and a request to add a second provider is a new package, not a change to rule compilation.
 
 What the seam deliberately does not include: a Go interface per Envoy filter, a portable xDS protobuf, or a slot registry with `Ensure`/`Delete` per mesh. Those are the abstractions that produced `internal/dataplane/slot`. The bundle is SecLang text plus flags. The Envoy Gateway provider renders two objects, the ConfigMap and the `EnvoyExtensionPolicy`. It has no client method that updates `EnvoyProxy` or `Gateway`. A later provider is held to the same rule: it attaches by the objects that platform already supports, and it does not take ownership of that platform's proxy CR.
 
@@ -1458,7 +1501,7 @@ spec:
       unit: Second
 ```
 
-Compilation, all inside the Protection controller, all text in the bundle files:
+Compilation, all inside the Protection controller, all text in the bundle files. Protection does not set a field on `SecPolicy`. Its `crs` block compiles to the two `Include` objects in section 5.6 plus the setup `SecAction`.
 
 | Preset field | SecLang or other object |
 | --- | --- |
@@ -1495,11 +1538,14 @@ internal/webhook/              Coraza parse of one object
 cmd/operator/main.go
 cmd/crs-converter/main.go
 charts/kubewaf/
+config/crd/v1alpha1/        generated v1alpha1 CRDs, not installed by the chart yet
 config/crd/, config/rbac/, config/samples/
 test/e2e/
 ```
 
 `PROJECT` stays kubebuilder multi-group. Phase 2 adds `api/waf/v1alpha1` when Protection is implemented. It is not scaffolded in the first implementation, so an empty group does not ship.
+
+v1alpha1 CRDs are generated into `config/crd/v1alpha1/`. They are not merged into `charts/kubewaf/crds`. `secrules.seclang.kubewaf.io` cannot serve v1beta1 and v1alpha1 together without a conversion webhook, and this rewrite does not ship one. The chart keeps serving v1beta1 until M4 deletes it and installs the v1alpha1 CRDs in its place.
 
 ### Helm chart `charts/kubewaf`
 
@@ -1513,7 +1559,7 @@ Values that go away: ecds, wasm serve, extension server, otel, victoria metrics,
 
 RBAC:
 
-- `secrules`, `secactions`, `secpolicies` in `seclang.kubewaf.io`: `*`, plus status subresource
+- `secrules`, `secactions`, `includes`, `secpolicies` in `seclang.kubewaf.io`: `*`, plus status subresource
 - `configmaps` in `proxyNamespace`: get, list, watch, create, update, patch, delete, bound with a Role in that namespace so the operator can write `kubewaf-seclang` and nothing else there
 - `configmaps` elsewhere: get, list, watch, for `spec.dataFiles[].configMapRef`
 - `envoyextensionpolicies` in `gateway.envoyproxy.io`: get, list, watch, create, update, patch, delete
@@ -1548,7 +1594,7 @@ Default actions' raw action strings are parsed by the same webhook as a syntheti
 
 **Round trip, `internal/compile`.**
 
-- One golden file per fixture under `testdata/`: the sqlmap rule, the chain, the SecAction, one fixture per operator, one per transformation, one per action class, one ctl fixture per prefix, one target fixture for scalar, selector, count, exclude, and regex selector.
+- One golden file per fixture under `testdata/`: the sqlmap rule, the chain, the SecAction, the CRS and ConfigMap `Include`s, one fixture per operator, one per transformation, one per action class, one ctl fixture per prefix, one target fixture for scalar, selector, count, exclude, and regex selector.
 - A loop over every enum constant builds a minimal object and either matches a golden file or fails the test. Adding a token without a fixture breaks CI.
 - Each golden file is parsed with Coraza. Tokens the engine rejects are listed in `testdata/unsupported.txt` with the parser error. Any other parse error fails the test. Updating that file is a deliberate review.
 - A fixture that came from upstream CRS (one rule from `REQUEST-942-APPLICATION-ATTACK-SQLI.conf`) is compiled from YAML the converter emitted and compared to the source directive, whitespace-normalized. This is the converter's acceptance test.
@@ -1563,7 +1609,7 @@ Default actions' raw action strings are parsed by the same webhook as a syntheti
 4. Apply `config/samples/envoygateway/platform-envoyproxy.yaml` from the test harness. That is the platform prerequisite: it registers `composer`, mounts `kubewaf-seclang`, and sets `Gateway/eg` `spec.infrastructure.parametersRef`. The operator is not running yet.
 5. Record the `EnvoyProxy` spec and the Gateway `infrastructure.parametersRef`.
 6. Install the kubeWAF chart.
-7. Apply `SecRule/block-sqlmap` and `SecPolicy/edge` with `crs.bundle: false`, target Gateway `eg`.
+7. Apply `SecRule/block-sqlmap` and `SecPolicy/edge` with no CRS `Include` selected, target Gateway `eg`.
 8. Wait until `SecPolicy` Ready is True and `EnvoyExtensionPolicy/kubewaf-edge` is Accepted.
 9. `curl -H 'Host: www.example.com' http://$GATEWAY/` returns 200.
 10. `curl -H 'Host: www.example.com' -H 'User-Agent: sqlmap/1.0' http://$GATEWAY/` returns 403.
@@ -1575,11 +1621,11 @@ A second case in the same suite removes `dynamicModules` from a copy of the fixt
 
 The sqlmap assertion uses the custom rule, not CRS rule 913100. The test then does not depend on which CRS version the module embedded.
 
-A second, optional, non-gating test enables `crs.bundle: true` and sends `/?id=1'+OR+'1'='1`, expecting 403, which is the example in the Envoy Gateway task. It is nightly, not the PR gate, because CRS scoring can change across Composer patch releases.
+A second, optional, non-gating test selects `Include/crs-setup` and `Include/owasp` and sends `/?id=1'+OR+'1'='1`, expecting 403, which is the example in the Envoy Gateway task. It is nightly, not the PR gate, because CRS scoring can change across Composer patch releases.
 
 ## 11. OWASP CRS
 
-**Default: bundled.** `SecPolicy.spec.crs.bundle: true` emits `Include @crs-setup.conf` and `Include @owasp_crs/*.conf`. The files and the `*.data` phrase files are inside the module, from `github.com/corazawaf/coraza-coreruleset`, which Composer already links. The cluster stores no CRS CRDs. Upgrading CRS means the platform upgrades the Composer image in their `EnvoyProxy`.
+**Default: two Include objects.** There is no `spec.crs` field. Attaching `Include` `@crs-setup.conf` (BeforeCRS, after setup actions) and `Include` `@owasp_crs/*.conf` (AfterCRS, before custom rules) is how a policy loads the embedded CRS. The files and the `*.data` phrase files are inside the module, from `github.com/corazawaf/coraza-coreruleset`, which Composer already links. The cluster stores no CRS CRDs. Upgrading CRS means the platform upgrades the Composer image in their `EnvoyProxy`. Samples ship those two objects. A policy that does not select them runs only the rules it names.
 
 **Tuning** of that bundle is phase 2's Protection fields, which emit setup `setvar`s and `SecRuleRemove*` / `SecRuleUpdateTargetById`. A v1alpha1 user who needs the same thing before phase 2 ships writes the `SecAction` and uses `placement: BeforeCRS`, and puts removal directives in `spec.defaultActions` only where that field fits. Removals are not default actions. v1alpha1 therefore allows a small raw escape on the policy:
 
@@ -1593,7 +1639,7 @@ PostDirectives []string `json:"postDirectives,omitempty"`
 
 Each line is parsed by the webhook as its own directive. This is the v1alpha1 exclusion mechanism. Protection replaces it with structured fields and can keep accepting `postDirectives` by compiling them into the same lines. Sixty-four lines is enough for real exclusions and small enough that the field cannot become a second ruleset.
 
-**Generated CRDs: opt-in, off by default.** `cmd/crs-converter` reads an upstream CRS checkout and writes `SecRule` and `SecAction` YAML, one object per logical rule, preserving ids, phases, chains, and `SecMarker` via `markerAfter`. Users who want to delete a rule by deleting a Kubernetes object run the converter, commit the YAML, and attach it with a `SecPolicy` whose `crs.bundle` is false. They own the upgrade. The operator does not ship `charts/kubewaf-crs`. Running the converter in CI of this repo, against one pinned CRS tag, is the fixture source for the round-trip test. It is not a release artifact.
+**Generated CRDs: opt-in, off by default.** `cmd/crs-converter` reads an upstream CRS checkout and writes `SecRule` and `SecAction` YAML, one object per logical rule, preserving ids, phases, chains, and `SecMarker` via `markerAfter`. Users who want to delete a rule by deleting a Kubernetes object run the converter, commit the YAML, and attach it with a `SecPolicy` that does not select the CRS `Include` objects. They own the upgrade. The operator does not ship `charts/kubewaf-crs`. Running the converter in CI of this repo, against one pinned CRS tag, is the fixture source for the round-trip test. It is not a release artifact.
 
 Why bundled is the default: the current CRS chart is tens of thousands of lines of generated YAML, a phrase-list chart, and a RuleSet per file. The module already contains those rules. Generating them back into etcd spends the 1 MiB ConfigMap budget and recreates the complexity this rewrite removes. Users who need line-level GitOps still have the converter.
 
@@ -1610,7 +1656,7 @@ Steps for an existing cluster:
 3. Delete CRDs `secrules`, `secactions`, `phraselists`, `iplists`, `secruleidpools.seclang.kubewaf.io` and `rulesets`, `wafs.waf.kubewaf.io`.
 4. Install the new chart. Install Envoy Gateway v1.10 if the cluster is still on an older Gateway that cannot load dynamic modules. The platform team applies the `EnvoyProxy` sample and the Gateway `parametersRef` from section 6 before any `SecPolicy` can become Ready. kubeWAF does not do that step.
 5. Re-author rules as v1alpha1, or run a one-shot helper that wraps each saved `status.secLang` line in a SecRule. A helper is optional and is spike 13.4. Hand conversion is acceptable because the owner accepted a breaking release. The helper, if built, shells out to the same parser the converter uses and emits YAML. It is not a controller.
-6. Replace each `WAF` with a `SecPolicy` targeting the same Gateway or HTTPRoute. Drop `spec.provider`, `spec.challenge`, `spec.telemetry`, and `spec.crsEnable`. CRS comes back as `spec.crs.bundle: true`.
+6. Replace each `WAF` with a `SecPolicy` targeting the same Gateway or HTTPRoute. Drop `spec.provider`, `spec.challenge`, `spec.telemetry`, and `spec.crsEnable`. CRS comes back as the two `Include` objects in section 5.6.
 7. Delete PhraseList and IPList objects after copying their bodies into `spec.dataFiles`.
 8. Remove Cilium bootstrap edits and Istio `EnvoyFilter`s the old chart created. Those data planes are unsupported until a provider exists.
 

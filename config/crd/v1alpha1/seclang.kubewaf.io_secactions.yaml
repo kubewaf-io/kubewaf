@@ -1,0 +1,365 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: secactions.seclang.kubewaf.io
+spec:
+  group: seclang.kubewaf.io
+  names:
+    categories:
+    - waf
+    - security
+    kind: SecAction
+    listKind: SecActionList
+    plural: secactions
+    shortNames:
+    - sa
+    singular: secaction
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.metadata.id
+      name: ID
+      type: integer
+    - jsonPath: .spec.metadata.phase
+      name: Phase
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SecAction is an unconditional SecAction directive.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SecActionSpec is one unconditional SecAction.
+            properties:
+              actions:
+                description: |-
+                  Actions is the SecLang action list minus metadata (those are Metadata)
+                  and minus chain (the chain structure emits that).
+                properties:
+                  data:
+                    items:
+                      properties:
+                        type:
+                          enum:
+                          - status
+                          - xmlns
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - type
+                      type: object
+                      x-kubernetes-validations:
+                      - message: status takes an HTTP code and xmlns takes prefix=url
+                        rule: (self.type == 'status' && self.value.matches('^[1-5][0-9]{2}$'))
+                          || (self.type == 'xmlns' && self.value.matches('^[^=]+=.+$'))
+                    type: array
+                  disruptive:
+                    properties:
+                      type:
+                        enum:
+                        - allow
+                        - block
+                        - deny
+                        - drop
+                        - pass
+                        - pause
+                        - proxy
+                        - redirect
+                        type: string
+                      value:
+                        description: |-
+                          Value is the argument: allow:phase, allow:request, pause:<ms>,
+                          proxy:<url>, redirect:<url>. Empty for deny, drop, block, pass.
+                        type: string
+                    required:
+                    - type
+                    type: object
+                    x-kubernetes-validations:
+                    - message: disruptive action value does not match the action type
+                      rule: (self.type in ['deny','drop','block','pass'] && (!has(self.value)
+                        || size(self.value) == 0)) || (self.type == 'allow' && (!has(self.value)
+                        || size(self.value) == 0 || self.value == 'phase' || self.value
+                        == 'request')) || (self.type == 'pause' && has(self.value)
+                        && self.value.matches('^[0-9]+$')) || (self.type in ['proxy','redirect']
+                        && has(self.value) && size(self.value) > 0)
+                  flow:
+                    items:
+                      properties:
+                        type:
+                          description: chain is rejected. skip and skipAfter are the
+                            accepted types.
+                          enum:
+                          - skip
+                          - skipAfter
+                          - chain
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - type
+                      - value
+                      type: object
+                      x-kubernetes-validations:
+                      - message: skip takes a positive integer and skipAfter takes
+                          a marker name
+                        rule: (self.type == 'skip' && self.value.matches('^[1-9][0-9]*$'))
+                          || (self.type == 'skipAfter' && self.value.matches('^[A-Za-z_][A-Za-z0-9_-]*$'))
+                          || self.type == 'chain'
+                    type: array
+                  nonDisruptive:
+                    items:
+                      properties:
+                        type:
+                          enum:
+                          - append
+                          - prepend
+                          - auditlog
+                          - capture
+                          - ctl
+                          - deprecatevar
+                          - exec
+                          - expirevar
+                          - initcol
+                          - log
+                          - logdata
+                          - multiMatch
+                          - noauditlog
+                          - nolog
+                          - sanitiseArg
+                          - sanitizeArg
+                          - sanitiseMatched
+                          - sanitizeMatched
+                          - sanitiseMatchedBytes
+                          - sanitizeMatchedBytes
+                          - sanitiseRequestHeader
+                          - sanitizeRequestHeader
+                          - sanitiseResponseHeader
+                          - sanitizeResponseHeader
+                          - setenv
+                          - setrsc
+                          - setsid
+                          - setuid
+                          - setvar
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    type: array
+                type: object
+                x-kubernetes-validations:
+                - message: chain is emitted from the chain list, not from a flow action
+                  rule: '!has(self.flow) || self.flow.all(f, f.type != ''chain'')'
+                - message: action value does not match the action type
+                  rule: '!has(self.nonDisruptive) || self.nonDisruptive.all(a, (a.type
+                    in [''auditlog'',''capture'',''log'',''multiMatch'',''noauditlog'',''nolog'',''sanitiseMatched'',''sanitizeMatched'']
+                    && (!has(a.value) || size(a.value) == 0)) || a.type in [''sanitiseMatchedBytes'',''sanitizeMatchedBytes'']
+                    || (a.type in [''append'',''prepend'',''ctl'',''deprecatevar'',''exec'',''expirevar'',''initcol'',''logdata'',''sanitiseArg'',''sanitizeArg'',''sanitiseRequestHeader'',''sanitizeRequestHeader'',''sanitiseResponseHeader'',''sanitizeResponseHeader'',''setenv'',''setrsc'',''setsid'',''setuid'',''setvar'']
+                    && has(a.value) && size(a.value) > 0))'
+              markerAfter:
+                maxLength: 64
+                pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+                type: string
+              metadata:
+                description: |-
+                  Metadata maps onto SecLang metadata actions.
+                  id and phase are emitted first. The rest follow in the canonical order.
+                properties:
+                  accuracy:
+                    type: string
+                  id:
+                    maximum: 2147483647
+                    minimum: 1
+                    type: integer
+                  maturity:
+                    type: string
+                  message:
+                    type: string
+                  phase:
+                    description: |-
+                      Phase is 1 request headers, 2 request body, 3 response headers,
+                      4 response body, 5 logging.
+                    maximum: 5
+                    minimum: 1
+                    type: integer
+                  revision:
+                    type: string
+                  severity:
+                    pattern: ^([0-7]|EMERGENCY|ALERT|CRITICAL|ERROR|WARNING|NOTICE|INFO|DEBUG)$
+                    type: string
+                  tags:
+                    items:
+                      type: string
+                    type: array
+                  version:
+                    type: string
+                required:
+                - id
+                - phase
+                type: object
+              order:
+                default: 100
+                format: int32
+                type: integer
+              placement:
+                default: AfterCRS
+                description: |-
+                  Placement selects which file a SecPolicy writes the object into.
+                  BeforeCRS is included first. AfterCRS is included second.
+                  CRS itself is an Include object, not a boolean on the policy.
+                enum:
+                - BeforeCRS
+                - AfterCRS
+                type: string
+              transformations:
+                items:
+                  enum:
+                  - base64Decode
+                  - base64DecodeExt
+                  - base64Encode
+                  - cmdLine
+                  - compressWhitespace
+                  - cssDecode
+                  - escapeSeqDecode
+                  - hexDecode
+                  - hexEncode
+                  - htmlEntityDecode
+                  - jsDecode
+                  - length
+                  - lowercase
+                  - md5
+                  - none
+                  - normalisePath
+                  - normalizePath
+                  - normalisePathWin
+                  - normalizePathWin
+                  - parityEven7bit
+                  - parityOdd7bit
+                  - parityZero7bit
+                  - removeComments
+                  - removeCommentsChar
+                  - removeNulls
+                  - removeWhitespace
+                  - replaceComments
+                  - replaceNulls
+                  - sha1
+                  - sqlHexDecode
+                  - trim
+                  - trimLeft
+                  - trimRight
+                  - uppercase
+                  - urlDecode
+                  - urlDecodeUni
+                  - urlEncode
+                  - utf8toUnicode
+                  type: string
+                type: array
+            required:
+            - metadata
+            type: object
+          status:
+            description: SecLangStatus is the compiled text of one object.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              secLang:
+                description: SecLang is the rendered directive text, including a trailing
+                  SecMarker line.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: chain is not valid on SecAction
+          rule: '!has(self.spec.actions) || !has(self.spec.actions.flow) || self.spec.actions.flow.all(f,
+            f.type != ''chain'')'
+    served: true
+    storage: true
+    subresources:
+      status: {}

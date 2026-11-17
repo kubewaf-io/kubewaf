@@ -1,0 +1,1 @@
+SecRule MULTIPART_MISSING_SEMICOLON "@rx x" "id:100001,phase:1,pass"

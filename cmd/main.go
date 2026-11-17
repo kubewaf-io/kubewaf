@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	envoygatewayv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
+	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
 	seclangv1beta1 "github.com/kubewaf-io/kubewaf/api/seclang/v1beta1"
 	wafv1beta1 "github.com/kubewaf-io/kubewaf/api/waf/v1beta1"
 	seclangcontroller "github.com/kubewaf-io/kubewaf/internal/controller/seclang"
@@ -63,6 +64,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
+	utilruntime.Must(seclangv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(seclangv1beta1.AddToScheme(scheme))
 	utilruntime.Must(wafv1beta1.AddToScheme(scheme))
 	utilruntime.Must(envoygatewayv1alpha1.AddToScheme(scheme))

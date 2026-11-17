@@ -40,5 +40,5 @@ func SetupWithManager(mgr ctrl.Manager) error {
 	if err := SetupWAFWebhook(mgr); err != nil {
 		return err
 	}
-	return nil
+	return SetupV1Alpha1(mgr)
 }

@@ -1,0 +1,1 @@
+SecRule MULTIPART_INVALID_QUOTING "@rx x" "id:100001,phase:1,pass"
