@@ -4,7 +4,7 @@ Status: planning only. This document is the design. It does not change operator 
 
 Source tree: `github.com/kubewaf-io/kubewaf` at `v0.1.0-beta.5` (`git describe` → `v0.1.0-beta.5-1-g6d4cabc` on `main`). Latest release named by the owner: `v0.1.0-beta.5`.
 
-The rewrite is a breaking replacement of the API and the data-plane integration. SecRule and SecAction stay, and they map 1:1 onto SecLang. Everything that exists to push Wasm over xDS goes away. Envoy Gateway loads a Coraza dynamic module the same way the Envoy Gateway task does: an `EnvoyProxy` registers the `.so`, an `EnvoyExtensionPolicy` passes the filter config. Istio and Cilium are a Go interface with no implementation in this stage. A higher-level Protection API is phase 2 and compiles down to the same SecLang bundle.
+The rewrite is a breaking replacement of the API and the data-plane integration. SecRule and SecAction stay, and they map 1:1 onto SecLang. Everything that exists to push Wasm over xDS goes away. The platform team registers a Coraza dynamic module on their `EnvoyProxy` and points the Gateway at it. kubeWAF writes a SecLang ConfigMap and an `EnvoyExtensionPolicy` that references that module by name. Istio and Cilium are a Go interface with no implementation in this stage. A higher-level Protection API is phase 2 and compiles down to the same SecLang bundle.
 
 ## 1. Goals and non-goals
 
@@ -12,7 +12,7 @@ The rewrite is a breaking replacement of the API and the data-plane integration.
 
 1. One SecLang API, `seclang.kubewaf.io/v1alpha1`, with `SecRule` and `SecAction` that emit SecLang and nothing else. One rule per object. Chains, targets, operators, transformations, and the five SecLang action classes are fields, not free-form blobs and not a second legacy bag.
 2. One attachment object, `SecPolicy`, that selects those rules and binds them to an Envoy Gateway `Gateway` or `HTTPRoute`.
-3. The operator writes three Kubernetes objects and then stops: a ConfigMap of SecLang files, an `EnvoyProxy` that loads the dynamic module, and an `EnvoyExtensionPolicy` whose `dynamicModule.config` is the Coraza filter JSON. Envoy Gateway's own xDS server programs Envoy.
+3. The operator writes two Kubernetes objects and then stops: a ConfigMap of SecLang files, and an `EnvoyExtensionPolicy` whose `dynamicModule` names the platform's preinstalled module (`composer`) and filter (`coraza-waf`). kubeWAF never creates, patches, or merges an `EnvoyProxy`, and never patches `Gateway.spec.infrastructure.parametersRef`. Envoy Gateway's own xDS server programs Envoy.
 4. The request path contains Envoy and the in-process Coraza module. The operator is not in that path.
 5. A provider interface so a later Istio or Cilium backend consumes the same compiled bundle and leaves `api/` and `internal/compile` untouched.
 6. A phase-2 `Protection` CRD with CRS presets and exclusions that compiles to SecLang plus the same provider call.
@@ -29,6 +29,7 @@ The rewrite is a breaking replacement of the API and the data-plane integration.
 - Persistent collections (`IP`, `SESSION`, `GLOBAL`, `USER`, `RESOURCE`) as a supported feature. The actions stay in the language API so SecLang still round-trips. The dynamic module has no durable `SecDataDir`. Rate limits in phase 2 use Envoy Gateway `BackendTrafficPolicy`, which already has a working store.
 - `SecRuleScript` / Lua.
 - Editing rules that already live inside the bundled CRS files. Exclusions are `SecRuleRemoveById`, `SecRuleRemoveByTag`, and `SecRuleUpdateTargetById` emitted after the CRS include.
+- Creating, patching, or merging `EnvoyProxy`, and patching `Gateway` or `GatewayClass` `parametersRef`. Those objects belong to the platform team. kubeWAF only reads them.
 
 ### Decisions recorded here
 
@@ -43,16 +44,17 @@ These are the defaults an implementer should follow. Section 13 lists the ones t
 | IDs | `metadata.id` is required. Delete `SecRuleIDPool`. |
 | Phrase and IP lists | Delete the CRDs. Bodies live on `SecPolicy.spec.dataFiles` and are mounted next to the conf. |
 | CRS default | Bundled virtual includes inside the Coraza module. Generated CRDs are an opt-in converter output, not a default Helm install. |
-| Attachment namespace | `SecPolicy`, its Gateway or HTTPRoute, and the rendered Envoy objects are the same namespace. Rule selectors are the same namespace. |
-| Foreign EnvoyProxy | The operator creates `EnvoyProxy/kubewaf-<gateway>`. It sets `Gateway.spec.infrastructure.parametersRef` only when that field is empty or already points at ours. It does not merge into a user's EnvoyProxy. |
-| Module delivery | Init container copy is the default (works on the whole Envoy Gateway v1.10 Kubernetes range, which starts at 1.34). Image volumes are a chart switch for Kubernetes 1.35 and later, matching the Envoy Gateway task note. |
+| Attachment namespace | `SecPolicy`, its Gateway or HTTPRoute, and the `EnvoyExtensionPolicy` are the same namespace. Rule selectors are the same namespace. The SecLang ConfigMap lives in the Envoy proxy namespace, because that is where the pod runs. |
+| EnvoyProxy | Platform-owned. kubeWAF never creates, patches, or merges an `EnvoyProxy`, and never sets `Gateway.spec.infrastructure.parametersRef` or `GatewayClass.spec.parametersRef`. |
+| Rule delivery | One well-known ConfigMap, `kubewaf-seclang`, in the Envoy proxy namespace (default `envoy-gateway-system`). The platform `EnvoyProxy` mounts it at `/etc/kubewaf/seclang`. The `EnvoyExtensionPolicy` `Include`s those files. Inline directives are not the delivery path. |
+| Module delivery | The platform chooses an init container or an image volume in the `EnvoyProxy` they apply. kubeWAF has no image and no delivery setting. |
 | Engine | Upstream Coraza filter inside Tetrate Built-on-Envoy `libcomposer.so`, filter name `coraza-waf`. This repo does not fork the engine. |
 
 ## 2. Complexity removed
 
 The current operator is a control plane. A WAF object resolves RuleSets recursively, renders SecLang, pushes it over gRPC ECDS (`:18001`), serves Wasm over HTTP (`:18002`), and runs an Envoy Gateway Extension Server (`:5005`) that patches listeners and clusters. Istio gets an `EnvoyFilter`. Cilium gets a `CiliumEnvoyConfig` plus a hand-merged bootstrap cluster. A second controller on every replica re-publishes the same snapshot so followers can serve gRPC. PhraseList and IPList exist because the Wasm plugin has to receive `data_files` in its JSON. SecRuleIDPool exists because ids are optional. Two SecRule shapes exist (single-rule `match[]` and legacy `secLangRules[]`). goverter plus `github.com/coreruleset/crslang` sit between the CRD and a string. Managed telemetry then adds a collector, VictoriaMetrics, and VictoriaTraces.
 
-The rewrite deletes that stack. The operator's runtime job is: render SecLang, write a ConfigMap, write an EnvoyProxy, write an EnvoyExtensionPolicy. Leader election still guards those writes. Followers do not serve traffic config. There is one rule shape, one target type, one emitter, and no xDS library in `go.mod`.
+The rewrite deletes that stack. The operator's runtime job is: render SecLang, write a ConfigMap, write an `EnvoyExtensionPolicy`. Leader election still guards those writes. Followers do not serve traffic config. There is one rule shape, one target type, one emitter, and no xDS library in `go.mod`. The platform `EnvoyProxy` is read so status can say whether the module and the mount are present. It is not written.
 
 Concrete deletions that follow from that:
 
@@ -60,7 +62,7 @@ Concrete deletions that follow from that:
 - `github.com/envoyproxy/go-control-plane` and the Envoy Gateway extension protobuf.
 - The `references2` resolver, RuleSet recursion, finalizers, and `status.ruleSetRefs` back-pointers. A policy watches rules; rules do not point back.
 - Path A (`Include @owasp_crs` inside Wasm) versus Path B (CRS as thousands of CRDs plus injected phrase files). One CRS path: the module's embedded files. Custom rules are always SecLang the operator wrote.
-- The per-replica "dataplane sync" pipeline. One reconciler writes status and the three objects.
+- The per-replica "dataplane sync" pipeline. One reconciler writes status, the ConfigMap, and the `EnvoyExtensionPolicy`.
 - Engine catalog, Wasm registry client, challenge HMAC Secrets, probe assembler, subresource API server.
 
 What stays conceptually, rewritten against the new types: the SecLang vocabulary already enumerated in `api/seclang/v1beta1`, the CRS converter CLI, a validating admission path that asks Coraza to parse one rule, a small Helm chart, and Kind-based end-to-end tests.
@@ -130,7 +132,7 @@ Legend: **Delete** means the rewrite does not carry it forward. **Rewrite** mean
 | `hack/boilerplate.go.txt`, `hack/githooks/` | Keep | Unrelated to the data plane. |
 | `test/e2e/` provider, FTW, phrase, probe, headlamp suites | Rewrite | One Kind suite: Envoy Gateway v1.10, clean GET, sqlmap User-Agent. FTW against full CRS is a follow-up, not a gate for the rewrite. |
 | `Makefile` wasm, ecds, local-demo engine targets | Rewrite | Drop Wasm build targets. Keep `generate`, `test`, `lint`, a Kind e2e target. |
-| `go.mod` require of `github.com/envoyproxy/gateway` | Rewrite | Bump from v1.8.3 (no dynamic modules; that release ships Envoy 1.38) to v1.10.x for the typed `EnvoyProxy` and `EnvoyExtensionPolicy` clients. |
+| `go.mod` require of `github.com/envoyproxy/gateway` | Rewrite | Bump from v1.8.3 (no dynamic modules; that release ships Envoy 1.38) to v1.10.x so the operator can read `EnvoyProxy` and write `EnvoyExtensionPolicy`. |
 | `go.mod` require of `go-control-plane`, `crslang`, `coraza` | Rewrite | Drop `go-control-plane` and `crslang`. Keep `coraza` for parse tests. |
 | `README.md`, `CHANGELOG.md`, `TODO.md`, `PROJECT` | Rewrite when implementation starts | This plan does not edit them. The implementation PR updates them to describe the new architecture. |
 | `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md` | Keep | |
@@ -139,6 +141,11 @@ Legend: **Delete** means the rewrite does not carry it forward. **Rewrite** mean
 
 ```mermaid
 flowchart TD
+  subgraph platform [Platform team]
+    PROXY[EnvoyProxy registers composer and mounts kubewaf-seclang]
+    GW[Gateway parametersRef]
+  end
+
   subgraph authors [Authors]
     SR[SecRule]
     SA[SecAction]
@@ -152,12 +159,9 @@ flowchart TD
     EG[internal/provider/envoygateway]
   end
 
-  subgraph ns [Gateway namespace]
-    CM[ConfigMap kubewaf-seclang]
-    PROXY[EnvoyProxy kubewaf]
+  subgraph written [Objects kubeWAF writes]
+    CM[ConfigMap kubewaf-seclang in the proxy namespace]
     EXT[EnvoyExtensionPolicy]
-    GW[Gateway infrastructure.parametersRef]
-    RT[HTTPRoute optional target]
   end
 
   subgraph envoy [Envoy pod managed by Envoy Gateway]
@@ -166,6 +170,7 @@ flowchart TD
     UP[upstream]
   end
 
+  PROXY --> GW
   SR --> REC
   SA --> REC
   REC --> COMP
@@ -173,13 +178,9 @@ flowchart TD
   POL --> COMP
   COMP --> EG
   EG --> CM
-  EG --> PROXY
   EG --> EXT
-  EG --> GW
-  EXT --> RT
-  EXT --> GW
-  PROXY --> GW
-  GW --> SO
+  GW -. read only .-> POL
+  PROXY -. read only .-> POL
   CM --> FILT
   SO --> FILT
   EXT -. filter JSON via Envoy Gateway xDS .-> FILT
@@ -196,8 +197,9 @@ Reconcile path for a `SecPolicy`:
 3. Compile each object with `internal/compile`. Split on `spec.placement`.
 4. Ask Coraza to parse `before + after` with a minimal preamble (`SecRuleEngine On` and the body-access lines). A parse error sets `Programmed=False` and does not write.
 5. Build the bundle hash from the file bytes.
-6. Call `provider.Apply`. The Envoy Gateway provider writes the ConfigMap keys, the `EnvoyProxy`, the `EnvoyExtensionPolicy`, and, when allowed, the Gateway `parametersRef`.
-7. Read `EnvoyExtensionPolicy` status. Reflect Accepted into `Programmed`.
+6. Read the target Gateway and, when `spec.infrastructure.parametersRef` is empty, its GatewayClass. GET the referenced `EnvoyProxy`. This step is read-only. Set `EngineReady` from that object (section 6). When `EngineReady` is False, do not write the ConfigMap or the `EnvoyExtensionPolicy`. If this policy had written an `EnvoyExtensionPolicy` earlier, delete it so Envoy Gateway does not keep a filter pointed at a missing module or a missing mount. The `EnvoyProxy` and the Gateway stay untouched.
+7. Call `provider.Apply`. The Envoy Gateway provider writes this policy's keys in ConfigMap `kubewaf-seclang` and writes the `EnvoyExtensionPolicy`. It does not write an `EnvoyProxy` and it does not patch the Gateway.
+8. Read `EnvoyExtensionPolicy` status. Reflect Accepted into `Programmed`.
 
 The hash is a `SecMarker` directive inside the filter config (`SecMarker KUBEWAF<16 hex chars>`). Coraza re-reads `Include` files when the filter config is re-initialized. A ConfigMap-only edit would not change the xDS resource, so the marker is part of `directives` and changes when the files change. The marker sits before user rules. `skipAfter` targets the user's own markers, which are emitted later.
 
@@ -230,7 +232,9 @@ type Bundle struct {
     Before string
     After  string
 
-    // Files includes "<policy>-before.conf", "<policy>-after.conf", and data files.
+    // Files are keys in ConfigMap kubewaf-seclang.
+    // Names are "<policy-namespace>_<policy-name>-before.conf", the matching
+    // "-after.conf", and "<policy-namespace>_<policy-name>_<basename>.data".
     Files map[string]string
 }
 
@@ -243,10 +247,12 @@ type Target struct {
 
 type Provider interface {
     Name() string
+    // Apply writes the ConfigMap keys and the EnvoyExtensionPolicy.
+    // It does not create, patch, or merge an EnvoyProxy, and it does not patch a Gateway.
     Apply(ctx context.Context, c client.Client, tgt Target, b Bundle) error
     // Delete removes this policy's EnvoyExtensionPolicy and its ConfigMap keys.
-    // The EnvoyProxy and the ConfigMap themselves are removed when no SecPolicy
-    // still targets the Gateway.
+    // It does not delete or patch an EnvoyProxy, and it does not patch a Gateway.
+    // The ConfigMap itself is removed when it has no remaining keys.
     Delete(ctx context.Context, c client.Client, tgt Target, policyName string) error
 }
 ```
@@ -260,9 +266,9 @@ SecRequestBodyAccess On
 SecResponseBodyAccess Off
 SecMarker KUBEWAF<hash>
 Include @crs-setup.conf
-Include /etc/kubewaf/seclang/<policy>-before.conf
+Include /etc/kubewaf/seclang/<policy-namespace>_<policy>-before.conf
 Include @owasp_crs/*.conf
-Include /etc/kubewaf/seclang/<policy>-after.conf
+Include /etc/kubewaf/seclang/<policy-namespace>_<policy>-after.conf
 ```
 
 `@crs-setup.conf` and `@owasp_crs/*.conf` are omitted when `CRSBundle` is false. `@coraza.conf` stays: it is the module's recommended Coraza configuration, not the OWASP rules. Body-access lines override what `@coraza.conf` set, because they come after that include. This matches the [Coraza WAF extension](https://builtonenvoy.io/extensions/coraza-waf/) and the [Envoy Gateway dynamic modules task](https://gateway.envoyproxy.io/docs/tasks/extensibility/dynamic-modules/).
@@ -1069,6 +1075,15 @@ type SecPolicySpec struct {
     // Leave empty to keep the module and CRS defaults.
     // +optional
     DefaultActions []DefaultAction `json:"defaultActions,omitempty"`
+
+    // ModuleName is the dynamicModules[].name the platform registered.
+    // The EnvoyExtensionPolicy references this name. It does not register the module.
+    // +optional
+    // +kubebuilder:default=composer
+    // +kubebuilder:validation:MinLength=1
+    // +kubebuilder:validation:MaxLength=253
+    // +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
+    ModuleName string `json:"moduleName,omitempty"`
 }
 
 type RuleSelector struct {
@@ -1117,10 +1132,20 @@ CEL: each `targetRefs` entry has group `gateway.networking.k8s.io` and kind `Gat
 | --- | --- |
 | Accepted | Targets exist, kinds are legal, and this policy is the only kubeWAF owner of each target. |
 | RulesResolved | Every name exists and is Ready, selectors match at least the rules the user asked for, ids are unique inside the policy. |
-| Programmed | ConfigMap, EnvoyProxy, and EnvoyExtensionPolicy are written, and the Envoy Gateway policy reports Accepted. |
-| Ready | The three conditions above are True. |
+| EngineReady | Read-only check of the platform `EnvoyProxy` succeeded: the module name is registered and the SecLang ConfigMap is mounted. See below. |
+| Programmed | This policy's ConfigMap keys and its `EnvoyExtensionPolicy` are written, and that policy reports Accepted. |
+| Ready | The four conditions above are True. |
 
-Status fields next to conditions: `secLangHash`, `rulesLoaded`, `actionsLoaded`, `envoyProxyName`, `envoyExtensionPolicyName`, `configMapName`, `gatewayName`.
+`EngineReady` is False in two cases, and kubeWAF does not fix either of them:
+
+| Reason | When |
+| --- | --- |
+| ModuleMissing | The Gateway has no `infrastructure.parametersRef` and its GatewayClass has no `parametersRef`, the referenced `EnvoyProxy` does not exist, or `spec.dynamicModules` has no entry whose `name` equals `spec.moduleName` (default `composer`). |
+| MountMissing | The module name is registered, and the `EnvoyProxy` pod template does not mount ConfigMap `kubewaf-seclang` at `/etc/kubewaf/seclang`. |
+
+Read order for the `EnvoyProxy`: `Gateway.spec.infrastructure.parametersRef` when it is set, otherwise `GatewayClass.spec.parametersRef` of `Gateway.spec.gatewayClassName`. A Gateway-level reference wins, which is how Envoy Gateway itself resolves it. Both references are read with get. Neither is written.
+
+Status fields next to conditions: `secLangHash`, `rulesLoaded`, `actionsLoaded`, `envoyExtensionPolicyName`, `configMapName`, `configMapNamespace`, `gatewayName`, and the observed `envoyProxyNamespace` / `envoyProxyName`. Those last two are copies of what the platform set. They are not owned object names.
 
 There is no `renderedDirectives` dump of the full CRS. The hash and the ConfigMap are the artifact. That avoids multi-megabyte status.
 
@@ -1152,43 +1177,47 @@ spec:
 
 ### Objects the provider writes
 
-Names, all in the Gateway's namespace:
+kubeWAF writes these and nothing else in the data plane:
 
-| Object | Name | Lifetime |
-| --- | --- | --- |
-| ConfigMap | `kubewaf-seclang-<gateway>` | one per Gateway, keys per policy |
-| EnvoyProxy | `kubewaf-<gateway>` | one per Gateway |
-| EnvoyExtensionPolicy | `kubewaf-<policy>` | one per SecPolicy |
-| Gateway patch | `spec.infrastructure.parametersRef` | set when the field is empty or already ours |
+| Object | Namespace | Name | Lifetime |
+| --- | --- | --- | --- |
+| ConfigMap | Envoy proxy namespace, default `envoy-gateway-system` | `kubewaf-seclang` | one object for the cluster; keys per policy |
+| EnvoyExtensionPolicy | same namespace as the SecPolicy | `kubewaf-<policy>` | one per SecPolicy |
 
-Annotation `seclang.kubewaf.io/managed-parameters-ref: "true"` is set on the Gateway only when the operator filled an empty `parametersRef`. On deletion of the last policy for that Gateway, the operator clears the ref only if that annotation is present, then removes the annotation. A user who pointed the Gateway at `kubewaf-<gateway>` themselves keeps the ref.
+The platform owns `EnvoyProxy` and `Gateway.spec.infrastructure.parametersRef`. kubeWAF does not create them, patch them, merge into them, or set an annotation on the Gateway. There is no `ForeignEnvoyProxy` condition and no managed-parameters-ref annotation, because the operator never has a proxy of its own to reconcile against.
 
-The operator does not strategic-merge into an `EnvoyProxy` it does not own. If `parametersRef` names something else, `Accepted=False`, reason `ForeignEnvoyProxy`, with a message that shows the `dynamicModules` fragment to copy. Merging pod templates is how the current Cilium bootstrap code became a Python script. That does not come back.
+#### Why a well-known ConfigMap, not inline directives
 
-ConfigMap keys for policy `edge` on gateway `eg`:
+Envoy's pods do not run in the Gateway's namespace. They run in the Envoy Gateway workload namespace. A ConfigMap next to the Gateway cannot be mounted. Putting the SecLang into `EnvoyExtensionPolicy.spec.dynamicModule[].config.directives` would avoid the mount, and it would fit the Kind test, but `@pmFromFile` and `@ipMatchFromFile` still need a file the process can open, and an opt-in generated CRS blows the same 1 MiB object limit the ConfigMap already has. One mounted file set serves both.
 
-- `edge-before.conf`
-- `edge-after.conf`
-- any `*.data` from `spec.dataFiles`
+The mount is a fixed name, so the platform snippet does not change when rules change. kubeWAF updates keys in `kubewaf-seclang`. The `EnvoyExtensionPolicy` `Include`s `/etc/kubewaf/seclang/<key>` and carries the `SecMarker` hash so Envoy re-reads the files. The platform does not edit the `EnvoyProxy` for a rule change.
 
-Two policies on the same Gateway that use the same data-file basename: the newer one stays unprogrammed with reason `DataFileConflict`.
+The operator flag `--proxy-namespace` (chart value `proxyNamespace`, default `envoy-gateway-system`) is the namespace the platform already chose for Envoy pods. It is not a module image and it is not a delivery switch.
 
-Size budget: the rendered ConfigMap must stay under 900 KiB. Beyond that `Programmed=False`, reason `ConfigMapTooLarge`. Bundled CRS does not count, because those bytes live in the `.so`, not in etcd. This is why generated CRS CRDs are not the default.
+ConfigMap keys for policy `edge` in namespace `default`:
 
-#### EnvoyProxy (default, init container)
+- `default_edge-before.conf`
+- `default_edge-after.conf`
+- `default_edge_<basename>.data` for each `spec.dataFiles` entry
 
-The `.so` path inside the Composer image is `/libcomposer.so`. The image-volume example in the Envoy Gateway task mounts the image root at `/etc/envoy/dynamic-modules` and loads `libcomposer.so` from that directory, which is that layout. The init container copies the same file. Spike 13.1 confirms the path if a release image moves it.
+The namespace prefix keeps two policies in different namespaces from sharing a key. Two policies that still collide on a data-file key stay unprogrammed with reason `DataFileConflict`.
 
-`envoyDeployment.initContainers` and `container.volumeMounts` are fields on `gateway.envoyproxy.io/v1alpha1` `EnvoyProxy` (`KubernetesDeploymentSpec` and `KubernetesContainerSpec` in the v1.10 API).
+Size budget: the whole ConfigMap stays under 900 KiB. Beyond that `Programmed=False`, reason `ConfigMapTooLarge`. Bundled CRS does not count, because those bytes live in the `.so`. This is why generated CRS CRDs are not the default.
+
+`configMap.optional: true` on the platform volume lets Envoy start before kubeWAF has created the ConfigMap. kubelet projects the keys when they appear. The hash in the extension policy is what makes the filter re-read them.
+
+#### Platform prerequisite
+
+The platform team applies the following. It lives in the repo as `config/samples/envoygateway/platform-envoyproxy.yaml` when implementation starts. kubeWAF does not apply it.
+
+The `.so` path inside the Composer image is `/libcomposer.so`. The image-volume form in the Envoy Gateway task mounts the image root and loads `libcomposer.so` from that directory. The init container copies the same file. Spike 13.1 confirms the path if a release image moves it. `envoyDeployment.initContainers` and `container.volumeMounts` are fields on `gateway.envoyproxy.io/v1alpha1` `EnvoyProxy`.
 
 ```yaml
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
-  name: kubewaf-eg
+  name: eg
   namespace: default
-  labels:
-    app.kubernetes.io/managed-by: kubewaf
 spec:
   provider:
     type: Kubernetes
@@ -1208,7 +1237,8 @@ spec:
               emptyDir: {}
             - name: kubewaf-seclang
               configMap:
-                name: kubewaf-seclang-eg
+                name: kubewaf-seclang
+                optional: true
         container:
           env:
             - name: GODEBUG
@@ -1228,13 +1258,27 @@ spec:
           path: /etc/envoy/dynamic-modules/libcomposer.so
       doNotClose: true
       loadGlobally: false
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: eg
+  namespace: default
+spec:
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: eg
 ```
+
+The Gateway document is a merge patch of `spec.infrastructure.parametersRef` on the Gateway the platform already runs. Applying it as a full object would drop listeners. The `EnvoyProxy` is a full object the platform creates. kubeWAF applies neither.
 
 `doNotClose: true` and `GODEBUG=cgocheck=0` are what the Envoy Gateway Coraza example sets. The module is a Go `c-shared` library. `dlclose` and the cgo pointer check break that combination. `loadGlobally: false` matches the example (`RTLD_LOCAL`).
 
-`dynamicModules[].name` must match `^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`. `composer` is the name the Envoy Gateway task uses. `EnvoyExtensionPolicy` references it. A name that is not in this allowlist is rejected by Envoy Gateway.
+`dynamicModules[].name` must match `^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`. `composer` is the name the Envoy Gateway task uses and the default of `SecPolicy.spec.moduleName`. The `EnvoyExtensionPolicy` references that name. A name that is not in this allowlist is rejected by Envoy Gateway, which is why `EngineReady` checks for it before kubeWAF writes the policy.
 
-The chart value `dynamicModule.delivery: initContainer|imageVolume` switches the volume. Image volume form, for Kubernetes 1.35 and later, replaces the init container and the emptyDir with the volume from the official task:
+On Kubernetes 1.35 and later the platform may replace the init container and the emptyDir with an image volume. kubeWAF does not select this. The ConfigMap mount and `dynamicModules` entry stay the same:
 
 ```yaml
 volumes:
@@ -1244,9 +1288,15 @@ volumes:
       pullPolicy: IfNotPresent
 ```
 
-The container mount and `dynamicModules` source stay the same. DaemonSet mode (`envoyDaemonSet`) is out of v1alpha1. The DaemonSet spec does not share the Deployment `initContainers` field in the API this plan was checked against. An image volume sits on `pod.volumes`, which both forms have, and is the way a later DaemonSet patch should load the `.so`.
+DaemonSet mode (`envoyDaemonSet`) is out of v1alpha1. The DaemonSet spec this plan was checked against has no `initContainers` field. An image volume sits on `pod.volumes`, which both forms have. That choice remains the platform's.
+
+The platform may set `GatewayClass.spec.parametersRef` instead of a per-Gateway reference when every Gateway in the class should load the module. kubeWAF reads that reference when the Gateway's own `infrastructure.parametersRef` is empty. It writes neither.
+
+The ConfigMap volume name `kubewaf-seclang` is resolved in the proxy pod's namespace (`envoy-gateway-system` by default), not in the Gateway namespace where this `EnvoyProxy` object sits. That is the namespace `--proxy-namespace` must name.
 
 #### EnvoyExtensionPolicy
+
+kubeWAF writes this. `name: composer` and `filterName: coraza-waf` point at the module the platform already loaded.
 
 ```yaml
 apiVersion: gateway.envoyproxy.io/v1alpha1
@@ -1276,8 +1326,8 @@ spec:
           - SecRequestBodyAccess On
           - SecResponseBodyAccess Off
           - SecMarker KUBEWAF0123456789abcdef
-          - Include /etc/kubewaf/seclang/edge-before.conf
-          - Include /etc/kubewaf/seclang/edge-after.conf
+          - Include /etc/kubewaf/seclang/default_edge-before.conf
+          - Include /etc/kubewaf/seclang/default_edge-after.conf
 ```
 
 `filterName: coraza-waf` selects the filter inside `libcomposer.so`. Composer ships more than one filter; an empty filter name does not load Coraza. `config` is arbitrary JSON in the Envoy Gateway API (`apiextensionsv1.JSON`) and is passed to the module's init. The keys above are the ones the Coraza extension documents. Unknown keys are avoided. The extension rejects unknown keys under `metrics`.
@@ -1289,27 +1339,7 @@ When `crs.bundle` is true the provider inserts, after the before-include and bef
 - Include @owasp_crs/*.conf
 ```
 
-An HTTPRoute target uses `kind: HTTPRoute` and the route name. The provider still ensures the EnvoyProxy on the Gateway named by `HTTPRoute.spec.parentRefs`. v1alpha1 supports a single parent Gateway in the same namespace. More than one parent sets `Accepted=False`, reason `MultipleParents`.
-
-Gateway patch the operator applies when the field is empty:
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: eg
-  namespace: default
-  annotations:
-    seclang.kubewaf.io/managed-parameters-ref: "true"
-spec:
-  infrastructure:
-    parametersRef:
-      group: gateway.envoyproxy.io
-      kind: EnvoyProxy
-      name: kubewaf-eg
-```
-
-Alternative the user can choose instead, documented and not written by the operator: set `GatewayClass.spec.parametersRef` to an EnvoyProxy. That loads the module into every Gateway of the class. v1alpha1 does not do this, because a class-wide proxy forces the `.so` onto Gateways that have no SecPolicy.
+An HTTPRoute target uses `kind: HTTPRoute` and the route name. The provider reads `HTTPRoute.spec.parentRefs` to find the Gateway whose `EnvoyProxy` it checks for `EngineReady`. It does not create or patch that proxy. v1alpha1 supports a single parent Gateway in the same namespace. More than one parent sets `Accepted=False`, reason `MultipleParents`.
 
 Stacking a Gateway policy and an HTTPRoute policy on the same route is rejected. Envoy Gateway appends dynamic-module filters in policy order, so both would run. `Accepted=False`, reason `StackedPolicy`, on both objects. One attachment per route.
 
@@ -1320,7 +1350,7 @@ Stacking a Gateway policy and an HTTPRoute policy on the same route is rejected.
 3. Envoy Gateway pushes a new filter config. The module initializes again and `Include`s the mounted files.
 4. A ConfigMap update that does not change the policy spec is invisible to Envoy. The hash exists so step 2 always happens together with step 1.
 
-Adding a policy to a Gateway that already has the ConfigMap mounted does not change the pod template. The volume name stays `kubewaf-seclang`. New keys appear in the same ConfigMap. The first policy for a Gateway creates the EnvoyProxy and rolls the Envoy pods once, because the `.so` mount is new.
+Adding a policy adds keys to the existing ConfigMap. The platform pod template does not change, so Envoy does not roll. The `.so` mount is already there because the platform put it on the `EnvoyProxy` before any SecPolicy existed.
 
 ## 7. Engine and distribution
 
@@ -1338,7 +1368,7 @@ Use the Coraza HTTP filter packaged as a Built-on-Envoy Composer dynamic module.
 | Embedded files | `@coraza.conf`, `@crs-setup.conf`, `@owasp_crs/*.conf`, plus the CRS `*.data` files those rules include |
 | Build | This repo does not compile the `.so`. Composer is CGO, a Go `c-shared` build, and an Envoy ABI pin. Owning that build would recreate `engines/`. |
 
-The Envoy Gateway task currently shows tag `0.6.0-dev`. A `-dev` tag is not a pin. The chart default is a release tag, proposed `0.6.0`, confirmed by spike 13.1 against Envoy Gateway v1.10. The operator does not float `:latest`.
+The Envoy Gateway task currently shows tag `0.6.0-dev`. A `-dev` tag is not a pin. The platform sample in section 6 uses a release tag, proposed `0.6.0`, confirmed by spike 13.1 against Envoy Gateway v1.10. kubeWAF does not pull that image and has no Helm value for it.
 
 ### Version compatibility
 
@@ -1351,13 +1381,13 @@ Envoy Gateway ships one Envoy minor per release ([compatibility matrix](https://
 | v1.8 | 1.38.x | API not in the v1.8.3 module this repo depends on | unsupported |
 | v1.9 | 1.39.x | task page exists | best-effort only if the chosen Composer build's ABI window includes 1.39 |
 | v1.10 | 1.40.x | task page, Helm example `v1.10.0`, EOL 2027-05-05 | the supported pair |
-| v1.11 and later | next Envoy minor | ABI window may exclude a module built for 1.39 | bump the Composer pin in the same change as the Gateway bump |
+| v1.11 and later | next Envoy minor | ABI window may exclude a module built for 1.39 | the platform bumps the Composer image in their `EnvoyProxy` in the same change as the Gateway bump |
 
-Composer 0.5.0 already required Envoy 1.38 or newer. A module built for 1.39 therefore covers Envoy Gateway v1.9 (1.39) and v1.10 (1.40). A module built for 1.40 covers v1.10 and the next Gateway minor. The chart documents the pair `(envoyGateway, composer)` and the operator can refuse to program a cluster whose Envoy Gateway deployment image is outside that pair, by reading the `envoy-gateway` Deployment image tag. If the tag cannot be read, it programs anyway and surfaces a condition `EngineSkew=Unknown`. It does not try to load a module into an unsupported Envoy and call the result Ready.
+Composer 0.5.0 already required Envoy 1.38 or newer. A module built for 1.39 therefore covers Envoy Gateway v1.9 (1.39) and v1.10 (1.40). A module built for 1.40 covers v1.10 and the next Gateway minor. The platform sample documents the pair `(envoyGateway, composer)`. kubeWAF reads the `envoy-gateway` Deployment image tag and, when the tag is outside the supported pair, sets `EngineSkew=Unknown` and still programs if `EngineReady` is true. The module is already loaded by the platform; kubeWAF does not choose a different `.so`. If the tag cannot be read, `EngineSkew` stays Unknown.
 
-Kubernetes: Envoy Gateway v1.10 tests 1.34 through 1.37. Image volumes, which the official task uses, are called out by that task as Kubernetes 1.35 and later. The default init-container path covers 1.34.
+Kubernetes: Envoy Gateway v1.10 tests 1.34 through 1.37. Image volumes, which the official task uses, are called out by that task as Kubernetes 1.35 and later. The platform sample uses an init container so it covers 1.34. An image volume is a platform edit of that sample, not a kubeWAF setting.
 
-Remote dynamic module source (`source.type: Remote` with a URL and SHA256) is a real Envoy Gateway field. v1alpha1 does not use it. A URL fetch from Envoy hides the image-supply story and adds a checksum the chart would have to publish. The `.so` comes from a cluster-pulled image, which is the same supply chain as every other container.
+Remote dynamic module source (`source.type: Remote` with a URL and SHA256) is a real Envoy Gateway field. The platform sample does not use it. A URL fetch from Envoy hides the image-supply story. The `.so` comes from the image the platform pulls.
 
 ## 8. Provider seam
 
@@ -1380,7 +1410,7 @@ Adding Istio later:
 
 The Istio package will not be able to emit `@owasp_crs` unless that engine has the same virtual filesystem. `Bundle.CRSBundle` is a hint. A provider that cannot honor it returns an error, and the policy condition is `Programmed=False`, reason `ProviderRejected`. The Envoy Gateway provider honors it with the virtual includes. Cilium follows the same steps when a Cilium build can load this dynamic module or another SecLang engine. Until then the registry has one entry, and a request to add a second provider is a new package, not a change to rule compilation.
 
-What the seam deliberately does not include: a Go interface per Envoy filter, a portable xDS protobuf, or a slot registry with `Ensure`/`Delete` per mesh. Those are the abstractions that produced `internal/dataplane/slot`. The bundle is SecLang text plus flags. Providers render their own Kubernetes objects.
+What the seam deliberately does not include: a Go interface per Envoy filter, a portable xDS protobuf, or a slot registry with `Ensure`/`Delete` per mesh. Those are the abstractions that produced `internal/dataplane/slot`. The bundle is SecLang text plus flags. The Envoy Gateway provider renders two objects, the ConfigMap and the `EnvoyExtensionPolicy`. It has no client method that updates `EnvoyProxy` or `Gateway`. A later provider is held to the same rule: it attaches by the objects that platform already supports, and it does not take ownership of that platform's proxy CR.
 
 ## 9. Phase 2 Protection API
 
@@ -1473,20 +1503,24 @@ test/e2e/
 
 One Deployment, one ServiceAccount, CRDs, a validating webhook with the existing self-signed cert pattern, metrics on the controller-runtime bind address, health probes.
 
-Values that exist: `image`, `replicaCount`, `dynamicModule.image` (the Composer ref), `dynamicModule.delivery` (`initContainer` default, `imageVolume` optional), `dynamicModule.envoyGateway` (the supported Gateway version string, default `v1.10`), webhook enablement.
+Values that exist: `image`, `replicaCount`, `proxyNamespace` (default `envoy-gateway-system`, the namespace where the platform mounts `kubewaf-seclang`), webhook enablement.
+
+Values that do not exist: `dynamicModule.image`, `dynamicModule.delivery`, and any Composer or Envoy Gateway image pin. The platform sample carries those.
 
 Values that go away: ecds, wasm serve, extension server, otel, victoria metrics, victoria traces, cilium bootstrap, challenge, probe, subresource API, CRS chart dependency.
 
-RBAC, all namespaced unless noted:
+RBAC:
 
 - `secrules`, `secactions`, `secpolicies` in `seclang.kubewaf.io`: `*`, plus status subresource
-- `configmaps`: `*` in the namespaces where policies exist (standard controller Role per the kubebuilder pattern, cluster-wide Role or namespace Role matching the current chart)
-- `envoyproxies`, `envoyextensionpolicies` in `gateway.envoyproxy.io`: get, list, watch, create, update, patch, delete
-- `gateways`, `httproutes` in `gateway.networking.k8s.io`: get, list, watch, update, patch (the parametersRef patch)
+- `configmaps` in `proxyNamespace`: get, list, watch, create, update, patch, delete, bound with a Role in that namespace so the operator can write `kubewaf-seclang` and nothing else there
+- `configmaps` elsewhere: get, list, watch, for `spec.dataFiles[].configMapRef`
+- `envoyextensionpolicies` in `gateway.envoyproxy.io`: get, list, watch, create, update, patch, delete
+- `envoyproxies` in `gateway.envoyproxy.io`: get, list, watch. No create, update, patch, or delete
+- `gateways`, `gatewayclasses`, `httproutes` in `gateway.networking.k8s.io`: get, list, watch. No update and no patch
 - `events`: create
 - leader-election Lease, as controller-runtime generates it
 
-No cluster role for Istio, Cilium, or monitoring CRDs.
+No cluster role for Istio, Cilium, or monitoring CRDs. No write verb on `envoyproxies` or `gateways`.
 
 The chart documents a hard upgrade: uninstall `0.1.x`, delete the v1beta1 CRDs, install the new chart. CRDs in a different version do not adopt the old objects.
 
@@ -1496,9 +1530,9 @@ One manager, leader election on. Three reconcilers, all leader-only. No second b
 
 `SecRule` and `SecAction`: compile, set `status.secLang`, set `Ready`. On a compile or parse error, `Ready=False` and clear `secLang` so a policy cannot keep a stale string. They do not write other objects. They do not allocate ids. They do not copy tags onto labels.
 
-`SecPolicy`: the algorithm in section 4. Watches SecRule, SecAction, ConfigMap (the data-file sources), Gateway, HTTPRoute, EnvoyProxy, and EnvoyExtensionPolicy. A rule change enqueues policies whose selector matches, using a label index and a name index. Finalizer `seclang.kubewaf.io/policy` deletes the policy's Envoy objects on removal.
+`SecPolicy`: the algorithm in section 4. Watches SecRule, SecAction, ConfigMap (data-file sources and `kubewaf-seclang`), Gateway, GatewayClass, HTTPRoute, EnvoyProxy, and EnvoyExtensionPolicy. A rule change enqueues policies whose selector matches, using a label index and a name index. Finalizer `seclang.kubewaf.io/policy` deletes this policy's `EnvoyExtensionPolicy` and its ConfigMap keys. It does not delete an `EnvoyProxy` and it does not patch a Gateway.
 
-Shared EnvoyProxy updates use a deterministic render of the union of policies on that Gateway (module image, volume, dynamic module entry). The render does not depend on reconcile order.
+There is no shared `EnvoyProxy` render. The platform object is an input to `EngineReady` and is not part of the reconcile output.
 
 ### Validation
 
@@ -1517,20 +1551,25 @@ Default actions' raw action strings are parsed by the same webhook as a syntheti
 - Each golden file is parsed with Coraza. Tokens the engine rejects are listed in `testdata/unsupported.txt` with the parser error. Any other parse error fails the test. Updating that file is a deliberate review.
 - A fixture that came from upstream CRS (one rule from `REQUEST-942-APPLICATION-ATTACK-SQLI.conf`) is compiled from YAML the converter emitted and compared to the source directive, whitespace-normalized. This is the converter's acceptance test.
 
-**Provider unit test.** A fake client. Input bundle, expect the EnvoyProxy, ConfigMap, and EnvoyExtensionPolicy YAML. Cases: bundle on and off, foreign `parametersRef`, second policy adds keys and does not change the volume name, hash change updates the marker and not the pod template.
+**Provider unit test.** A fake client. Input bundle plus a pre-existing platform `EnvoyProxy` and Gateway `parametersRef`. Expect only the ConfigMap and the `EnvoyExtensionPolicy`. Assert the `EnvoyProxy` spec and the Gateway spec are unchanged. Cases: bundle on and off, `ModuleMissing` when `dynamicModules` has no `composer` entry, `MountMissing` when the ConfigMap volume is absent, a second policy adds keys, a hash change updates the marker and not the platform object.
 
 **Kind end-to-end, `test/e2e`.**
 
 1. Create a Kind cluster on a Kubernetes version Envoy Gateway v1.10 supports (1.34 or newer).
 2. `helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.10.0`.
 3. Apply the Gateway API quickstart (Gateway `eg`, HTTPRoute, backend) from the v1.10.0 release manifest.
-4. Install the kubeWAF chart.
-5. Apply `SecRule/block-sqlmap` and `SecPolicy/edge` with `crs.bundle: false`, target Gateway `eg`.
-6. Wait until `SecPolicy` Ready is True and `EnvoyExtensionPolicy/kubewaf-edge` is Accepted.
-7. `curl -H 'Host: www.example.com' http://$GATEWAY/` returns 200.
-8. `curl -H 'Host: www.example.com' -H 'User-Agent: sqlmap/1.0' http://$GATEWAY/` returns 403.
-9. Assert no Service listens on 18001, 18002, or 5005 in the operator namespace.
-10. Delete the policy and assert the EnvoyExtensionPolicy is gone. A following `User-Agent: sqlmap/1.0` request returns 200, which proves the filter was removed.
+4. Apply `config/samples/envoygateway/platform-envoyproxy.yaml` from the test harness. That is the platform prerequisite: it registers `composer`, mounts `kubewaf-seclang`, and sets `Gateway/eg` `spec.infrastructure.parametersRef`. The operator is not running yet.
+5. Record the `EnvoyProxy` spec and the Gateway `infrastructure.parametersRef`.
+6. Install the kubeWAF chart.
+7. Apply `SecRule/block-sqlmap` and `SecPolicy/edge` with `crs.bundle: false`, target Gateway `eg`.
+8. Wait until `SecPolicy` Ready is True and `EnvoyExtensionPolicy/kubewaf-edge` is Accepted.
+9. `curl -H 'Host: www.example.com' http://$GATEWAY/` returns 200.
+10. `curl -H 'Host: www.example.com' -H 'User-Agent: sqlmap/1.0' http://$GATEWAY/` returns 403.
+11. Assert no Service listens on 18001, 18002, or 5005 in the operator namespace.
+12. Assert the `EnvoyProxy` spec and the Gateway `infrastructure.parametersRef` still match the snapshot from step 5.
+13. Delete the policy and assert the `EnvoyExtensionPolicy` is gone. A following `User-Agent: sqlmap/1.0` request returns 200, which proves the filter was removed.
+
+A second case in the same suite removes `dynamicModules` from a copy of the fixture (or points the Gateway at an `EnvoyProxy` that has none) and expects `EngineReady=False`, reason `ModuleMissing`, and no `EnvoyExtensionPolicy`. The operator still does not write the `EnvoyProxy`.
 
 The sqlmap assertion uses the custom rule, not CRS rule 913100. The test then does not depend on which CRS version the module embedded.
 
@@ -1538,7 +1577,7 @@ A second, optional, non-gating test enables `crs.bundle: true` and sends `/?id=1
 
 ## 11. OWASP CRS
 
-**Default: bundled.** `SecPolicy.spec.crs.bundle: true` emits `Include @crs-setup.conf` and `Include @owasp_crs/*.conf`. The files and the `*.data` phrase files are inside the module, from `github.com/corazawaf/coraza-coreruleset`, which Composer already links. The cluster stores no CRS CRDs. Upgrading CRS means upgrading the Composer image, which is a chart value with a changelog line.
+**Default: bundled.** `SecPolicy.spec.crs.bundle: true` emits `Include @crs-setup.conf` and `Include @owasp_crs/*.conf`. The files and the `*.data` phrase files are inside the module, from `github.com/corazawaf/coraza-coreruleset`, which Composer already links. The cluster stores no CRS CRDs. Upgrading CRS means the platform upgrades the Composer image in their `EnvoyProxy`.
 
 **Tuning** of that bundle is phase 2's Protection fields, which emit setup `setvar`s and `SecRuleRemove*` / `SecRuleUpdateTargetById`. A v1alpha1 user who needs the same thing before phase 2 ships writes the `SecAction` and uses `placement: BeforeCRS`, and puts removal directives in `spec.defaultActions` only where that field fits. Removals are not default actions. v1alpha1 therefore allows a small raw escape on the policy:
 
@@ -1556,7 +1595,7 @@ Each line is parsed by the webhook as its own directive. This is the v1alpha1 ex
 
 Why bundled is the default: the current CRS chart is tens of thousands of lines of generated YAML, a phrase-list chart, and a RuleSet per file. The module already contains those rules. Generating them back into etcd spends the 1 MiB ConfigMap budget and recreates the complexity this rewrite removes. Users who need line-level GitOps still have the converter.
 
-CRS version skew: the bundle version is whatever Composer embedded. The operator status should show it if the module exposes it. If it does not, status shows the Composer image tag (`status.engineImage`) and the docs say that tag is the CRS version pin. Spike 13.1 checks whether the image labels or `@crs-setup.conf` contain the CRS version string. If they do, copy it to `status.crsVersion`.
+CRS version skew: the bundle version is whatever Composer the platform loaded. When the `EnvoyProxy` init container or image volume names that image, status copies the reference to `status.engineImage`. Spike 13.1 checks whether the image labels or `@crs-setup.conf` contain the CRS version string. If they do, and the operator can see them without pulling the image itself, copy the string to `status.crsVersion`. Otherwise the platform image reference is the pin.
 
 ## 12. Migration
 
@@ -1567,7 +1606,7 @@ Steps for an existing cluster:
 1. `kubectl get secrules,secactions -A -o yaml` and save it. On v1beta1 the rendered text is `status.secRuleString`. That string is the migration source. The new API stores the same kind of text in `status.secLang`.
 2. Uninstall the `0.1.x` Helm release.
 3. Delete CRDs `secrules`, `secactions`, `phraselists`, `iplists`, `secruleidpools.seclang.kubewaf.io` and `rulesets`, `wafs.waf.kubewaf.io`.
-4. Install the new chart. Install Envoy Gateway v1.10 if the cluster is still on an older Gateway that cannot load dynamic modules.
+4. Install the new chart. Install Envoy Gateway v1.10 if the cluster is still on an older Gateway that cannot load dynamic modules. The platform team applies the `EnvoyProxy` sample and the Gateway `parametersRef` from section 6 before any `SecPolicy` can become Ready. kubeWAF does not do that step.
 5. Re-author rules as v1alpha1, or run a one-shot helper that wraps each saved `status.secLang` line in a SecRule. A helper is optional and is spike 13.4. Hand conversion is acceptable because the owner accepted a breaking release. The helper, if built, shells out to the same parser the converter uses and emits YAML. It is not a controller.
 6. Replace each `WAF` with a `SecPolicy` targeting the same Gateway or HTTPRoute. Drop `spec.provider`, `spec.challenge`, `spec.telemetry`, and `spec.crsEnable`. CRS comes back as `spec.crs.bundle: true`.
 7. Delete PhraseList and IPList objects after copying their bodies into `spec.dataFiles`.
@@ -1589,8 +1628,8 @@ Sizing is the amount of code, not a calendar.
 | --- | --- | --- |
 | M0 | Spikes 13.1–13.3. No product code. A short note appended to this doc with the pin and the `.so` path. | A Kind cluster and a Composer image. |
 | M1 | `api/seclang/v1alpha1`, `internal/compile`, round-trip suite, webhook parse. `kubebuilder` CRDs generate. No Envoy. | The enums are mostly a move. The emitter and goldens are the new code. |
-| M2 | `internal/provider/envoygateway`, `SecPolicy` reconciler, Gateway patch rules, unit tests with a fake client. | One controller and one YAML renderer. |
-| M3 | Helm chart stripped to the operator. Kind e2e: GET 200, `User-Agent: sqlmap/1.0` returns 403, ports 18001/18002/5005 absent. | The cluster bring-up is the large part. The chart shrinks. |
+| M2 | `internal/provider/envoygateway`, `SecPolicy` reconciler, read-only `EngineReady`, unit tests with a fake client. The provider writes a ConfigMap and an `EnvoyExtensionPolicy` only. | One controller and one YAML renderer. |
+| M3 | Helm chart stripped to the operator, with no Composer image values. Kind e2e applies the platform `EnvoyProxy` fixture first, then GET 200 and `User-Agent: sqlmap/1.0` returns 403. Ports 18001/18002/5005 absent. Gateway and `EnvoyProxy` specs unchanged. | The cluster bring-up is the large part. The chart shrinks. |
 | M4 | Delete the inventory rows marked Delete. `go.mod` drops `go-control-plane` and `crslang`. README describes the new path. | Large diff, almost all removals. Do this only after M3 is green, in the same release branch, so main is never half-deleted. |
 | M5 | Phase 2 `Protection` and `BackendTrafficPolicy` rate limit. Converter emits v1alpha1. Optional nightly CRS bundle test. | A compiler in front of M2. Starts after M3, can overlap M4. |
 
@@ -1600,27 +1639,27 @@ M1 through M3 are the rewrite the owner asked for. M4 is the cleanup that makes 
 
 | Risk | Why it matters | Mitigation in this design |
 | --- | --- | --- |
-| ABI break | A Composer build for Envoy 1.39 loads into 1.40 and is not promised for 1.41. Envoy Gateway bumps Envoy every minor. | Pin the pair in the chart. Bump both in one change. `EngineSkew` condition. |
-| `-dev` image | The official task floats `0.6.0-dev`. | Chart default is a release tag. Spike 13.1 blocks M3. |
-| Go module unload | `dlclose` of a Go `c-shared` library crashes the process. | `doNotClose: true` and `GODEBUG=cgocheck=0`, as the Envoy Gateway example sets. |
+| ABI break | A Composer build for Envoy 1.39 loads into 1.40 and is not promised for 1.41. Envoy Gateway bumps Envoy every minor. | The platform sample pins the pair. They bump the image when they bump Envoy Gateway. kubeWAF sets `EngineSkew` from a read of the Gateway deployment. |
+| `-dev` image | The official task floats `0.6.0-dev`. | The platform sample uses a release tag. Spike 13.1 blocks M3. |
+| Go module unload | `dlclose` of a Go `c-shared` library crashes the process. | The platform sample sets `doNotClose: true` and `GODEBUG=cgocheck=0`, as the Envoy Gateway example does. |
 | Include files do not hot-reload | Envoy will not re-read a mounted conf unless the filter config changes. | `SecMarker` hash inside `directives`. |
-| ConfigMap 1 MiB | A full CRS checkout as SecRules does not fit. | Bundled CRS is the default. Budget check at 900 KiB. |
-| Foreign EnvoyProxy | Users already attach their own `EnvoyProxy` for replicas and resources. | Refuse to merge. Status tells them what to copy. |
+| ConfigMap 1 MiB | One cluster-wide `kubewaf-seclang` holds every policy. A full CRS checkout as SecRules does not fit. | Bundled CRS is the default. Budget check at 900 KiB. |
+| Module or mount absent | The platform `EnvoyProxy` has no `composer` entry, or it does not mount `kubewaf-seclang`. Traffic is not filtered, and kubeWAF must not paper over that by editing the proxy. | `EngineReady=False` with `ModuleMissing` or `MountMissing`. No `EnvoyExtensionPolicy` is written. |
+| Wrong proxy namespace | `--proxy-namespace` does not match the namespace Envoy Gateway runs pods in, so the mount stays empty. | Default `envoy-gateway-system`. `MountMissing` when the volume is absent. Document the flag next to the platform sample. |
 | Stacked filters | A Gateway policy and a route policy both attach, and traffic is evaluated twice. | `StackedPolicy` rejects the overlap. |
-| Image volumes vs Kubernetes 1.34 | Envoy Gateway v1.10 still supports 1.34. The task's image volume is 1.35+. | Init container is the default. |
+| Image volumes vs Kubernetes 1.34 | Envoy Gateway v1.10 still supports 1.34. The task's image volume is 1.35+. | The platform sample uses an init container. An image volume is their edit on 1.35+. |
 | Persistent collections | `initcol` and IP rate limits look like they work and then reset per pod. | Documented unsupported. Phase 2 rate limit is `BackendTrafficPolicy`. |
 | Admission cost | Parsing every rule with Coraza on apply. | One rule per admission, no CRS load. Bundle parse happens in the reconciler. |
-| First policy rolls Envoy | Adding the `.so` mount changes the pod template. | Expected once per Gateway. Later rule edits do not change the template. |
 | Loss of Istio and Cilium | Current beta attaches to both. | Explicit non-goal. The interface is the only thing those providers will need. Call it out in the release notes. |
 | CRS behavior changes inside Composer | A Composer patch can change a score and break a nightly test. | PR gate uses the custom sqlmap rule. CRS test is nightly. |
 
 ### Spikes and owner decisions
 
-**13.1 Composer pin (blocks M3).** Pull a release tag, not `0.6.0-dev`. Confirm `/libcomposer.so` is the image path, which Envoy minor it was built for, and whether the image label or `@crs-setup.conf` records the CRS version. Confirm `GODEBUG=cgocheck=0` and `doNotClose: true` are still required. Record the pair next to the chart default. Owner decision if no stable tag exists: wait for one, or temporarily pin a digest of a `-dev` image and accept the rebuild risk.
+**13.1 Composer pin (blocks M3).** Pull a release tag, not `0.6.0-dev`. Confirm `/libcomposer.so` is the image path, which Envoy minor it was built for, and whether the image label or `@crs-setup.conf` records the CRS version. Confirm `GODEBUG=cgocheck=0` and `doNotClose: true` are still required. Record the pair in the platform sample, not in a kubeWAF Helm value. Owner decision if no stable tag exists: wait for one, or temporarily pin a digest of a `-dev` image in that sample and accept the rebuild risk.
 
 **13.2 Filter reload (blocks M2).** On a Kind cluster with the official dynamic-module example, change only a mounted conf and show that Envoy keeps the old rules. Then change the `SecMarker` line in `EnvoyExtensionPolicy` and show that the new rules apply. If a comment directive is enough and `SecMarker` is not, switch the hash carrier. If the module rejects unknown directives, the hash has to be a legal one; `SecMarker` is the candidate because it is legal and does not deny traffic.
 
-**13.3 Policy combination (blocks M2).** With two `EnvoyExtensionPolicy` objects, one targeting the Gateway and one the HTTPRoute, observe whether Envoy installs two Coraza filters. The plan assumes it does and rejects that combination. If Envoy Gateway replaces rather than appends, the rejection can be relaxed. Also confirm `Gateway.spec.infrastructure.parametersRef` is the field Envoy Gateway v1.10 honors (the task text also says `spec.envoyProxy`, which is not a Gateway API field; the implementation uses `infrastructure.parametersRef`).
+**13.3 Policy combination (blocks M2).** With two `EnvoyExtensionPolicy` objects, one targeting the Gateway and one the HTTPRoute, observe whether Envoy installs two Coraza filters. The plan assumes it does and rejects that combination. If Envoy Gateway replaces rather than appends, the rejection can be relaxed. Also confirm the field the platform sets is `Gateway.spec.infrastructure.parametersRef` (the task text also says `spec.envoyProxy`, which is not a Gateway API field). The operator only reads it.
 
 **13.4 Migration helper (does not block M3).** Decide whether to ship a CLI that reads a v1beta1 YAML dump and emits v1alpha1 from `status.secRuleString`. Recommendation: do not block the release on it. The saved `status.secRuleString` is already the portable form.
 
@@ -1630,7 +1669,6 @@ M1 through M3 are the rewrite the owner asked for. M4 is the cleanup that makes 
 - Keep `SecRuleIDPool` for users who do not want to pick ids.
 - Keep PhraseList and IPList as CRDs instead of `spec.dataFiles`.
 - Make generated CRS CRDs the default instead of the bundle.
-- Let the operator merge `dynamicModules` into a user-owned EnvoyProxy.
 - Put rate limits in SecLang despite the missing persistent store.
 
 The recommendations in the decisions table stand unless one of these is answered the other way.
