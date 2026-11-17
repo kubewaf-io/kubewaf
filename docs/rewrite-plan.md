@@ -47,7 +47,7 @@ These are the defaults an implementer should follow. Section 13 lists the ones t
 | Attachment namespace | `SecPolicy`, its Gateway or HTTPRoute, and the `EnvoyExtensionPolicy` are the same namespace. Rule selectors are the same namespace. The SecLang ConfigMap lives in the Envoy proxy namespace, because that is where the pod runs. |
 | EnvoyProxy | Platform-owned. kubeWAF never creates, patches, or merges an `EnvoyProxy`, and never sets `Gateway.spec.infrastructure.parametersRef` or `GatewayClass.spec.parametersRef`. |
 | Rule delivery | One well-known ConfigMap, `kubewaf-seclang`, in the Envoy proxy namespace (default `envoy-gateway-system`). The platform `EnvoyProxy` mounts it at `/etc/kubewaf/seclang`. The `EnvoyExtensionPolicy` `Include`s those files. Inline directives are not the delivery path. |
-| Module delivery | The platform chooses an init container or an image volume in the `EnvoyProxy` they apply. kubeWAF has no image and no delivery setting. |
+| Module delivery | The platform loads `composer:0.13.0`. The Composer image is scratch, so `cp` cannot be the init command on that image. M0 used a busybox wrapper. An image volume was not run. kubeWAF has no image and no delivery setting. |
 | Engine | Upstream Coraza filter inside Tetrate Built-on-Envoy `libcomposer.so`, filter name `coraza-waf`. This repo does not fork the engine. |
 
 ## 2. Complexity removed
@@ -1210,7 +1210,7 @@ Size budget: the whole ConfigMap stays under 900 KiB. Beyond that `Programmed=Fa
 
 The platform team applies the following. It lives in the repo as `config/samples/envoygateway/platform-envoyproxy.yaml` when implementation starts. kubeWAF does not apply it.
 
-The `.so` path inside the Composer image is `/libcomposer.so`. The image-volume form in the Envoy Gateway task mounts the image root and loads `libcomposer.so` from that directory. The init container copies the same file. Spike 13.1 confirms the path if a release image moves it. `envoyDeployment.initContainers` and `container.volumeMounts` are fields on `gateway.envoyproxy.io/v1alpha1` `EnvoyProxy`.
+The `.so` inside `ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0` is `/libcomposer.so` (73,038,768 bytes). The image is `FROM scratch` and has no `cp` and no shell. An init container whose image is the Composer image and whose command is `cp` fails with `exec: "cp": executable file not found`. M0 used a wrapper image (busybox plus `COPY --from=composer /libcomposer.so`) for the init container. The Envoy Gateway task's image volume mounts the image root and does not need `cp`. That form was not run in M0. `envoyDeployment.initContainers` and `container.volumeMounts` are fields on `gateway.envoyproxy.io/v1alpha1` `EnvoyProxy`.
 
 ```yaml
 apiVersion: gateway.envoyproxy.io/v1alpha1
@@ -1225,7 +1225,9 @@ spec:
       envoyDeployment:
         initContainers:
           - name: install-composer
-            image: ghcr.io/tetratelabs/built-on-envoy/composer:0.6.0
+            # Not the Composer image. That image is scratch and has no cp.
+            # Build: FROM composer:0.13.0 AS src, then busybox, COPY --from=src /libcomposer.so /libcomposer.so
+            image: example.local/composer-cp:0.13.0
             imagePullPolicy: IfNotPresent
             command: ["cp", "/libcomposer.so", "/modules/libcomposer.so"]
             volumeMounts:
@@ -1284,7 +1286,7 @@ On Kubernetes 1.35 and later the platform may replace the init container and the
 volumes:
   - name: dynamic-modules
     image:
-      reference: ghcr.io/tetratelabs/built-on-envoy/composer:0.6.0
+      reference: ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0
       pullPolicy: IfNotPresent
 ```
 
@@ -1341,7 +1343,7 @@ When `crs.bundle` is true the provider inserts, after the before-include and bef
 
 An HTTPRoute target uses `kind: HTTPRoute` and the route name. The provider reads `HTTPRoute.spec.parentRefs` to find the Gateway whose `EnvoyProxy` it checks for `EngineReady`. It does not create or patch that proxy. v1alpha1 supports a single parent Gateway in the same namespace. More than one parent sets `Accepted=False`, reason `MultipleParents`.
 
-Stacking a Gateway policy and an HTTPRoute policy on the same route is rejected. Envoy Gateway appends dynamic-module filters in policy order, so both would run. `Accepted=False`, reason `StackedPolicy`, on both objects. One attachment per route.
+A Gateway `EnvoyExtensionPolicy` and an HTTPRoute `EnvoyExtensionPolicy` are both Accepted. Envoy Gateway does not put both Coraza filters on the chain that serves that route. M0 measured one filter per chain: requests to the route hit only the route policy, and deleting the route policy restored the gateway policy. `StackedPolicy` is not a rejection. The route policy overrides the gateway policy for that HTTPRoute. Routes with no policy of their own keep the gateway policy. A `Protection` and a `SecPolicy` on the same target still conflict, because both would write an `EnvoyExtensionPolicy` with the same role. That conflict stays, under reason `DualAttachment`.
 
 ### Reload
 
@@ -1368,7 +1370,7 @@ Use the Coraza HTTP filter packaged as a Built-on-Envoy Composer dynamic module.
 | Embedded files | `@coraza.conf`, `@crs-setup.conf`, `@owasp_crs/*.conf`, plus the CRS `*.data` files those rules include |
 | Build | This repo does not compile the `.so`. Composer is CGO, a Go `c-shared` build, and an Envoy ABI pin. Owning that build would recreate `engines/`. |
 
-The Envoy Gateway task currently shows tag `0.6.0-dev`. A `-dev` tag is not a pin. The platform sample in section 6 uses a release tag, proposed `0.6.0`, confirmed by spike 13.1 against Envoy Gateway v1.10. kubeWAF does not pull that image and has no Helm value for it.
+The Envoy Gateway task currently shows tag `0.6.0-dev`. M0 pinned the release image `ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0` (`sha256:14962aad43553b1f4f2c1d92cd255423f35c05b3f5c80d255bda714eac32d9a2`) on Envoy Gateway v1.10.0 and Envoy `distroless-v1.40.2`. kubeWAF does not pull that image and has no Helm value for it. The image has no labels. CRS `4.25.0` and Coraza `v3.8.1` are inside `libcomposer.so` (`go version -m`, and the string `OWASP CRS ver.4.25.0`). Envoy logs `Dynamic module ABI version v0.1.0 is deprecated` and still loads the module.
 
 ### Version compatibility
 
@@ -1416,7 +1418,7 @@ What the seam deliberately does not include: a Go interface per Envoy filter, a 
 
 Ship after the Kind test is green. Not in the v1alpha1 chart by default.
 
-Group `waf.kubewaf.io/v1alpha1`, kind `Protection`. It does not create `SecRule` objects. It builds a `Bundle` with `internal/compile` helpers and calls the same `Provider.Apply`. Users who outgrow a preset write `SecRule` and `SecPolicy`. A Gateway or HTTPRoute that already has a `SecPolicy` cannot also have a `Protection` (`StackedPolicy`).
+Group `waf.kubewaf.io/v1alpha1`, kind `Protection`. It does not create `SecRule` objects. It builds a `Bundle` with `internal/compile` helpers and calls the same `Provider.Apply`. Users who outgrow a preset write `SecRule` and `SecPolicy`. A Gateway or HTTPRoute that already has a `SecPolicy` cannot also have a `Protection` (`DualAttachment`). An HTTPRoute policy overrides a Gateway policy for that route. It does not stack a second Coraza filter.
 
 ```yaml
 apiVersion: waf.kubewaf.io/v1alpha1
@@ -1595,7 +1597,7 @@ Each line is parsed by the webhook as its own directive. This is the v1alpha1 ex
 
 Why bundled is the default: the current CRS chart is tens of thousands of lines of generated YAML, a phrase-list chart, and a RuleSet per file. The module already contains those rules. Generating them back into etcd spends the 1 MiB ConfigMap budget and recreates the complexity this rewrite removes. Users who need line-level GitOps still have the converter.
 
-CRS version skew: the bundle version is whatever Composer the platform loaded. When the `EnvoyProxy` init container or image volume names that image, status copies the reference to `status.engineImage`. Spike 13.1 checks whether the image labels or `@crs-setup.conf` contain the CRS version string. If they do, and the operator can see them without pulling the image itself, copy the string to `status.crsVersion`. Otherwise the platform image reference is the pin.
+CRS version skew: the bundle version is whatever Composer the platform loaded. The image has no labels, so the operator cannot read a CRS version off the pod. `status.engineImage` is the image reference copied from the platform `EnvoyProxy`. For `composer:0.13.0` the embedded CRS is `4.25.0` (M0). `status.crsVersion` stays empty unless a later spike finds a file the operator can read without pulling the image. The documented pin for that image is `4.25.0`.
 
 ## 12. Migration
 
@@ -1640,13 +1642,13 @@ M1 through M3 are the rewrite the owner asked for. M4 is the cleanup that makes 
 | Risk | Why it matters | Mitigation in this design |
 | --- | --- | --- |
 | ABI break | A Composer build for Envoy 1.39 loads into 1.40 and is not promised for 1.41. Envoy Gateway bumps Envoy every minor. | The platform sample pins the pair. They bump the image when they bump Envoy Gateway. kubeWAF sets `EngineSkew` from a read of the Gateway deployment. |
-| `-dev` image | The official task floats `0.6.0-dev`. | The platform sample uses a release tag. Spike 13.1 blocks M3. |
+| `-dev` image | The official task floats `0.6.0-dev`. | M0 pinned `composer:0.13.0`. The platform sample uses that tag. |
 | Go module unload | `dlclose` of a Go `c-shared` library crashes the process. | The platform sample sets `doNotClose: true` and `GODEBUG=cgocheck=0`, as the Envoy Gateway example does. |
 | Include files do not hot-reload | Envoy will not re-read a mounted conf unless the filter config changes. | `SecMarker` hash inside `directives`. |
 | ConfigMap 1 MiB | One cluster-wide `kubewaf-seclang` holds every policy. A full CRS checkout as SecRules does not fit. | Bundled CRS is the default. Budget check at 900 KiB. |
 | Module or mount absent | The platform `EnvoyProxy` has no `composer` entry, or it does not mount `kubewaf-seclang`. Traffic is not filtered, and kubeWAF must not paper over that by editing the proxy. | `EngineReady=False` with `ModuleMissing` or `MountMissing`. No `EnvoyExtensionPolicy` is written. |
 | Wrong proxy namespace | `--proxy-namespace` does not match the namespace Envoy Gateway runs pods in, so the mount stays empty. | Default `envoy-gateway-system`. `MountMissing` when the volume is absent. Document the flag next to the platform sample. |
-| Stacked filters | A Gateway policy and a route policy both attach, and traffic is evaluated twice. | `StackedPolicy` rejects the overlap. |
+| Route policy hides the gateway policy | An HTTPRoute `EnvoyExtensionPolicy` replaces the Gateway policy for that route. A route policy that forgets the gateway rules drops them. | Document the override. Do not emit two policies for one route. `Protection` and `SecPolicy` on the same target stay `DualAttachment`. |
 | Image volumes vs Kubernetes 1.34 | Envoy Gateway v1.10 still supports 1.34. The task's image volume is 1.35+. | The platform sample uses an init container. An image volume is their edit on 1.35+. |
 | Persistent collections | `initcol` and IP rate limits look like they work and then reset per pod. | Documented unsupported. Phase 2 rate limit is `BackendTrafficPolicy`. |
 | Admission cost | Parsing every rule with Coraza on apply. | One rule per admission, no CRS load. Bundle parse happens in the reconciler. |
@@ -1655,11 +1657,11 @@ M1 through M3 are the rewrite the owner asked for. M4 is the cleanup that makes 
 
 ### Spikes and owner decisions
 
-**13.1 Composer pin (blocks M3).** Pull a release tag, not `0.6.0-dev`. Confirm `/libcomposer.so` is the image path, which Envoy minor it was built for, and whether the image label or `@crs-setup.conf` records the CRS version. Confirm `GODEBUG=cgocheck=0` and `doNotClose: true` are still required. Record the pair in the platform sample, not in a kubeWAF Helm value. Owner decision if no stable tag exists: wait for one, or temporarily pin a digest of a `-dev` image in that sample and accept the rebuild risk.
+**13.1 Composer pin.** Done in M0. Release tag `composer:0.13.0` loads on Envoy `1.40.2` (Envoy Gateway v1.10.0). `/libcomposer.so` is the path. There are no image labels. CRS `4.25.0` is embedded in the `.so`. `GODEBUG=cgocheck=0` is still required: without it Envoy aborts with the cgo unpinned-pointer panic, exit 134. `doNotClose: true` is the setting that survived a `SecMarker` reload. Details are in the M0 note.
 
-**13.2 Filter reload (blocks M2).** On a Kind cluster with the official dynamic-module example, change only a mounted conf and show that Envoy keeps the old rules. Then change the `SecMarker` line in `EnvoyExtensionPolicy` and show that the new rules apply. If a comment directive is enough and `SecMarker` is not, switch the hash carrier. If the module rejects unknown directives, the hash has to be a legal one; `SecMarker` is the candidate because it is legal and does not deny traffic.
+**13.2 Filter reload.** Done in M0. A ConfigMap-only edit is visible in the pod and does not change HTTP results. Changing `SecMarker` in the `EnvoyExtensionPolicy` applies the new file within a few seconds. The hash carrier stays `SecMarker`.
 
-**13.3 Policy combination (blocks M2).** With two `EnvoyExtensionPolicy` objects, one targeting the Gateway and one the HTTPRoute, observe whether Envoy installs two Coraza filters. The plan assumes it does and rejects that combination. If Envoy Gateway replaces rather than appends, the rejection can be relaxed. Also confirm the field the platform sets is `Gateway.spec.infrastructure.parametersRef` (the task text also says `spec.envoyProxy`, which is not a Gateway API field). The operator only reads it.
+**13.3 Policy combination.** Done in M0. The route policy replaces the gateway policy for that HTTPRoute. They are not two filters on one request. `Gateway.spec.infrastructure.parametersRef` is the field Envoy Gateway v1.10.0 honors. The operator only reads it.
 
 **13.4 Migration helper (does not block M3).** Decide whether to ship a CLI that reads a v1beta1 YAML dump and emits v1alpha1 from `status.secRuleString`. Recommendation: do not block the release on it. The saved `status.secRuleString` is already the portable form.
 
@@ -1672,6 +1674,116 @@ M1 through M3 are the rewrite the owner asked for. M4 is the cleanup that makes 
 - Put rate limits in SecLang despite the missing persistent store.
 
 The recommendations in the decisions table stand unless one of these is answered the other way.
+
+## M0 note
+
+Run on 2026-11-17. No operator code. Kind cluster `m0`, node image `kindest/node:v1.34.0`, `kind v0.30.0`, kubectl client `v1.34.1`, Helm `v3.18.4`. Envoy Gateway installed with `helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.10.0 -n envoy-gateway-system --create-namespace`. The quickstart is `https://github.com/envoyproxy/gateway/releases/download/v1.10.0/quickstart.yaml`. Gateway `eg` in `default`, HTTPRoute `backend`, hostname `www.example.com`. The host could pull images. The Kind node could not reach Docker Hub, and kube-proxy's iptables mode failed because the kernel has no `xt_statistic` module (`Extension statistic revision 0 not supported`). Switching kube-proxy to `mode: nftables` made ClusterIP work. Those two environment fixes are not part of the design.
+
+Versions that actually ran:
+
+| Piece | Value |
+| --- | --- |
+| Envoy Gateway chart and controller | `v1.10.0`, image `docker.io/envoyproxy/gateway:v1.10.0`, digest `sha256:c2243d43518bed91d3ed8c2db849a4b7a14ac9b96eb019f2ab104bb1ca8572b1` |
+| Envoy | `docker.io/envoyproxy/envoy:distroless-v1.40.2`, digest `sha256:09ca6f2140a61ad8df11779a4a30d52b48433d444466328494f9188c9c35eded`, binary `b2d89e0ae53916f28770771fbdd49c5c99c5c5a2/1.40.2/Clean/RELEASE/BoringSSL` |
+| Composer | `ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0`, digest `sha256:14962aad43553b1f4f2c1d92cd255423f35c05b3f5c80d255bda714eac32d9a2`, manifest `version: 0.13.0`, `minEnvoyVersion: 1.38.0` |
+| Embedded deps (`go version -m libcomposer.so`) | `github.com/corazawaf/coraza/v3 v3.8.1`, `github.com/corazawaf/coraza-coreruleset/crs/v4 v4.25.0`, Envoy dynamic-module SDK `v0.0.0-20260425100846-90594f45b3ed` |
+| File | `/libcomposer.so`, 73,038,768 bytes. Image has no labels and no shell. |
+
+### 13.1 Composer pin
+
+Commands, on the host, before the cluster:
+
+```text
+docker pull ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0
+docker create --name composerinspect --entrypoint /libcomposer.so ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0
+docker export composerinspect | tar -x libcomposer.so manifest.yaml metadatas/waf/config.schema.json
+go version -m libcomposer.so
+strings libcomposer.so | grep 'OWASP CRS ver'
+```
+
+`manifest.yaml` says `minEnvoyVersion: 1.38.0`. The image has no OCI labels, so CRS is not a label. `go version -m` reports Coraza `v3.8.1` and CRS module `v4.25.0`. The binary contains the string `OWASP CRS ver.4.25.0`. The WAF schema in the image requires `directives`, allows `mode` and `request_uri_path_only`, and sets `additionalProperties: false`. It does not list `metrics`. The running module still accepted `metrics.authority_label: route_name`: after that field was added, `User-Agent: blockme-v2` stayed `403` and the admin `config_dump` contained `authority_label` and `KUBEWAFHASH4`.
+
+The platform `EnvoyProxy` was applied in namespace `default`, and `kubectl patch gateway eg --type merge` set `spec.infrastructure.parametersRef` to `group: gateway.envoyproxy.io`, `kind: EnvoyProxy`, `name: platform`. `EnvoyProxy/platform` status was `Accepted=True`. The generated deployment mounted ConfigMap `kubewaf-seclang` from namespace `envoy-gateway-system` at `/etc/kubewaf/seclang`, which is the namespace the plan already chose.
+
+The first init container used the Composer image and `command: ["cp", "/libcomposer.so", "/modules/libcomposer.so"]`. The pod event was:
+
+```text
+exec: "cp": executable file not found in $PATH
+```
+
+M0 continued with a wrapper image, busybox `1.36` plus `COPY --from=ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0 /libcomposer.so /libcomposer.so`, imported as `docker.io/library/composer-cp:0.13.0`. That init container completed and left `libcomposer.so` on the emptyDir. The image-volume form was not run.
+
+With `GODEBUG=cgocheck=0` and `doNotClose: true`, Envoy logged:
+
+```text
+[warning][dynamic_modules] Dynamic module ABI version v0.1.0 is deprecated. Please recompile the module against the SDK with the exact Envoy version used by the main program.
+```
+
+The module still loaded. Baseline through NodePort `172.18.0.2:30520`, rule `SecRule REQUEST_HEADERS:User-Agent "@rx blockme-v1" ... status:403`:
+
+| Request | HTTP |
+| --- | --- |
+| `GET /get` Host `www.example.com` | 200 |
+| same, `User-Agent: blockme-v1` | 403 |
+| same, `User-Agent: blockme-v2` | 200 |
+
+Removing `GODEBUG` and rolling the proxy produced a new pod with exit code 134. The previous log contains:
+
+```text
+panic: runtime error: .../sdk/go/abi/internal.go:1839: result of Go function envoy_dynamic_module_on_http_filter_config_new called from cgo is unpinned Go unsafe pointer
+[critical][backtrace] Caught Aborted
+```
+
+`GODEBUG=cgocheck=0` stays required. That crashing rollout also set `doNotClose: false`, so `doNotClose` was not isolated. The reload in 13.2 ran with `doNotClose: true` and did not restart Envoy. The sample keeps `doNotClose: true`.
+
+Decision: pin `composer:0.13.0` with Envoy Gateway `v1.10.0` / Envoy `1.40.2`. Record the ABI deprecation. The platform init image must contain `cp`. The Composer image itself cannot be that init image. Nothing here blocks M1. It does change the platform sample before M2.
+
+### 13.2 Filter reload
+
+The mounted file was changed from `blockme-v1` to `blockme-v2` and nothing else. The file inside the pod was the v2 text by 13:33:05Z. HTTP did not change:
+
+| Time | `User-Agent: blockme-v1` | `User-Agent: blockme-v2` |
+| --- | --- | --- |
+| immediate (13:32:11Z) | 403 | 200 |
+| +20s | 403 | 200 |
+| +60s | 403 | 200 |
+
+Then the only change was `SecMarker KUBEWAFHASH1` to `SecMarker KUBEWAFHASH2` in `EnvoyExtensionPolicy/kubewaf-edge`. Three seconds later:
+
+| `User-Agent: blockme-v1` | `User-Agent: blockme-v2` |
+| --- | --- |
+| 200 | 403 |
+
+Envoy did not restart. The hash carrier stays `SecMarker`. A ConfigMap write without an `EnvoyExtensionPolicy` change does not publish rules.
+
+### 13.3 Gateway policy plus HTTPRoute policy
+
+`Gateway.spec.infrastructure.parametersRef` is accepted by the v1.10.0 API server and is what created the proxy deployment above. There is no `spec.envoyProxy` field on the Gateway.
+
+A second policy, `EnvoyExtensionPolicy/kubewaf-route`, targeted HTTPRoute `backend` and included `/etc/kubewaf/seclang/route_only.conf` (`X-Spike: route` -> 403). After both files were on the mount and both policies had a new `SecMarker`:
+
+| Request to `www.example.com` | HTTP |
+| --- | --- |
+| no special headers | 200 |
+| `User-Agent: blockme-v2` | 200 |
+| `X-Spike: route` | 403 |
+| both headers | 403 |
+
+The gateway rule did not run for that route. `config_dump` shows two HTTP connection managers, one filter each: `.../kubewaf-route/dynamic-module/0` and `.../kubewaf-edge/dynamic-module/0`. They are not two filters in one chain. `Host: other.example.com` with `User-Agent: blockme-v2` returned 404, not 403, so the gateway filter was not on that request either.
+
+Deleting `kubewaf-route` restored the gateway rule:
+
+| Request | HTTP |
+| --- | --- |
+| clean | 200 |
+| `User-Agent: blockme-v2` | 403 |
+| `X-Spike: route` | 200 |
+
+Decision: a route policy overrides the gateway policy for that HTTPRoute. It does not double-evaluate. The plan no longer rejects that pair with `StackedPolicy`. Two kubeWAF owners of the same attachment (`SecPolicy` and `Protection`) remain `DualAttachment`, because they would fight over one extension policy.
+
+### What this does not block
+
+M1 is the API and the SecLang compiler. It does not load the module. M0 does not block M1. M2 must use the wrapper-or-image-volume init fact, the `SecMarker` reload, the route-overrides-gateway behavior, and `GODEBUG=cgocheck=0`.
 
 ## 14. Implementation note
 
