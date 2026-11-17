@@ -6,6 +6,7 @@ resources:
 - v1alpha1/seclang.kubewaf.io_secactions.yaml
 - v1alpha1/seclang.kubewaf.io_includes.yaml
 - v1alpha1/seclang.kubewaf.io_secpolicies.yaml
+- v1alpha1/waf.kubewaf.io_protections.yaml
 
 # patches:
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.

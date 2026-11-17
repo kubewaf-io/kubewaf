@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/kubewaf-io/kubewaf/internal/compile"
@@ -47,7 +48,8 @@ func Run(ctx context.Context, client kubernetes.Interface, namespace, nodeName, 
 		default:
 		}
 	}
-	factory := informers.NewSharedInformerFactoryWithOptions(client, 0, informers.WithNamespace(namespace))
+	// Resync re-reads the mount if inotify misses kubelet's symlink swap.
+	factory := informers.NewSharedInformerFactoryWithOptions(client, 2*time.Second, informers.WithNamespace(namespace))
 	inf := factory.Core().V1().ConfigMaps().Informer()
 	if _, err := inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj any) { setDesired(&mu, &desired, obj); notify() },

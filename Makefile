@@ -70,7 +70,7 @@ help: ## Display this help.
 # that conflicts with aggregation).
 CONTROLLER_GEN_OBJECT_PATHS ?= ./api/...
 # v1alpha1 is the only served version.
-CONTROLLER_GEN_CRD_PATHS ?= ./api/seclang/v1alpha1/...
+CONTROLLER_GEN_CRD_PATHS ?= ./api/seclang/v1alpha1/...;./api/waf/v1alpha1/...
 
 .PHONY: manifests
 manifests: controller-gen ## Generate CustomResourceDefinition objects.
@@ -118,7 +118,7 @@ define wait-crd-established
 	done
 endef
 
-KUBEWAF_CRDS ?= secrules.seclang.kubewaf.io secactions.seclang.kubewaf.io includes.seclang.kubewaf.io secpolicies.seclang.kubewaf.io
+KUBEWAF_CRDS ?= secrules.seclang.kubewaf.io secactions.seclang.kubewaf.io includes.seclang.kubewaf.io secpolicies.seclang.kubewaf.io protections.waf.kubewaf.io
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -137,6 +137,10 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager ./cmd/operator
+
+.PHONY: crs-converter
+crs-converter: ## Build the CRS to v1alpha1 converter.
+	go build -o bin/crs-converter ./cmd/crs-converter
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.

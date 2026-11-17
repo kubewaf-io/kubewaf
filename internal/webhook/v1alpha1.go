@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
+	wafv1alpha1 "github.com/kubewaf-io/kubewaf/api/waf/v1alpha1"
 	"github.com/kubewaf-io/kubewaf/internal/compile"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -43,8 +44,12 @@ func SetupV1Alpha1(mgr ctrl.Manager) error {
 		WithValidator(&IncludeV1Alpha1{}).Complete(); err != nil {
 		return err
 	}
-	return ctrl.NewWebhookManagedBy(mgr, &seclangv1alpha1.SecPolicy{}).
-		WithValidator(&SecPolicyV1Alpha1{}).Complete()
+	if err := ctrl.NewWebhookManagedBy(mgr, &seclangv1alpha1.SecPolicy{}).
+		WithValidator(&SecPolicyV1Alpha1{}).Complete(); err != nil {
+		return err
+	}
+	return ctrl.NewWebhookManagedBy(mgr, &wafv1alpha1.Protection{}).
+		WithValidator(&ProtectionV1Alpha1{}).Complete()
 }
 
 // +kubebuilder:webhook:path=/validate-seclang-kubewaf-io-v1alpha1-secrule,mutating=false,failurePolicy=fail,sideEffects=None,groups=seclang.kubewaf.io,resources=secrules,verbs=create;update,versions=v1alpha1,name=v1a1secrule.kubewaf.io,admissionReviewVersions=v1
@@ -160,9 +165,48 @@ func admitPolicy(policy *seclangv1alpha1.SecPolicy) error {
 	return nil
 }
 
+// +kubebuilder:webhook:path=/validate-waf-kubewaf-io-v1alpha1-protection,mutating=false,failurePolicy=fail,sideEffects=None,groups=waf.kubewaf.io,resources=protections,verbs=create;update,versions=v1alpha1,name=v1a1protection.kubewaf.io,admissionReviewVersions=v1
+
+type ProtectionV1Alpha1 struct{}
+
+var _ admission.Validator[*wafv1alpha1.Protection] = &ProtectionV1Alpha1{}
+
+func (v *ProtectionV1Alpha1) ValidateCreate(_ context.Context, obj *wafv1alpha1.Protection) (admission.Warnings, error) {
+	return nil, admitProtection(obj)
+}
+func (v *ProtectionV1Alpha1) ValidateUpdate(_ context.Context, _, obj *wafv1alpha1.Protection) (admission.Warnings, error) {
+	return nil, admitProtection(obj)
+}
+func (v *ProtectionV1Alpha1) ValidateDelete(_ context.Context, _ *wafv1alpha1.Protection) (admission.Warnings, error) {
+	return nil, nil
+}
+
+func admitProtection(obj *wafv1alpha1.Protection) error {
+	lines, err := compile.ProtectionLines(obj.Spec)
+	if err != nil {
+		return invalidGroup("waf.kubewaf.io", "Protection", obj.Name, field.NewPath("spec"), err)
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	if err := compile.Parse(lines[0]); err != nil {
+		return invalidGroup("waf.kubewaf.io", "Protection", obj.Name, field.NewPath("spec").Child("crs"), err)
+	}
+	for i, line := range obj.Spec.PostDirectives {
+		if err := compile.Parse(line); err != nil {
+			return invalidGroup("waf.kubewaf.io", "Protection", obj.Name, field.NewPath("spec").Child("postDirectives").Index(i), err)
+		}
+	}
+	return nil
+}
+
 func invalid(kind, name string, path *field.Path, err error) error {
+	return invalidGroup("seclang.kubewaf.io", kind, name, path, err)
+}
+
+func invalidGroup(group, kind, name string, path *field.Path, err error) error {
 	return apierrors.NewInvalid(
-		schema.GroupKind{Group: "seclang.kubewaf.io", Kind: kind},
+		schema.GroupKind{Group: group, Kind: kind},
 		name,
 		field.ErrorList{field.Invalid(path, "", err.Error())},
 	)

@@ -23,6 +23,7 @@ import (
 	"fmt"
 
 	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
+	wafv1alpha1 "github.com/kubewaf-io/kubewaf/api/waf/v1alpha1"
 	"github.com/kubewaf-io/kubewaf/internal/compile"
 	"github.com/kubewaf-io/kubewaf/internal/provider"
 	"github.com/kubewaf-io/kubewaf/internal/provider/registry"
@@ -30,10 +31,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -62,10 +61,6 @@ const (
 	reasonDataFileConflict  = "DataFileConflict"
 	reasonConfigMapTooLarge = "ConfigMapTooLarge"
 	reasonPending           = "Pending"
-
-	protectionGroup   = "waf.kubewaf.io"
-	protectionVersion = "v1alpha1"
-	protectionKind    = "Protection"
 )
 
 // SecPolicyReconciler attaches compiled rules to Envoy Gateway.
@@ -141,7 +136,7 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
 
-	gateways, reason, message, err := r.gatewaysFor(ctx, policy)
+	gateways, reason, message, err := gatewaysFor(ctx, r.Client, policy.Namespace, policy.Spec.TargetRefs)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -217,32 +212,46 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // applyBundle stages SecLang, then publishes the filter once the version file is on the Envoy nodes.
 // handled is true when the caller should return without marking Programmed from Envoy Gateway.
 func (r *SecPolicyReconciler) applyBundle(ctx context.Context, p provider.Provider, policy *seclangv1alpha1.SecPolicy, bundle *compile.Bundle, gateways []provider.GatewayRef) (bool, error) {
-	if err := p.Stage(ctx, r.Client, *bundle, r.ProxyNamespace); err != nil {
+	applied, reason, message, err := stageAndApply(ctx, r.Client, p, r.ProxyNamespace, r.WaitForProjection, bundle, policy.Spec.TargetRefs, gateways)
+	if err != nil {
 		return true, r.failApply(ctx, policy, err)
 	}
-	if r.WaitForProjection {
-		ready, err := r.envoyReady(ctx, gateways)
+	if applied {
+		return false, nil
+	}
+	if reason == provider.ReasonEnvoyNotReady {
+		setCondition(&policy.Status.Conditions, policy.Generation, conditionEngineReady, metav1.ConditionFalse, reason, "no Ready Envoy pod has the SecLang volume")
+	}
+	setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reason, message)
+	return true, r.writeStatus(ctx, policy)
+}
+
+// stageAndApply writes the bundle files, then the filter once the version file is projected.
+// applied is false when the caller should keep Programmed false for reason.
+func stageAndApply(ctx context.Context, c client.Client, p provider.Provider, proxyNamespace string, wait bool, bundle *compile.Bundle, refs []gatewayv1.LocalPolicyTargetReference, gateways []provider.GatewayRef) (bool, string, string, error) {
+	if err := p.Stage(ctx, c, *bundle, proxyNamespace); err != nil {
+		return false, "", "", err
+	}
+	if wait {
+		ready, err := envoyReady(ctx, c, proxyNamespace, gateways)
 		if err != nil {
-			return true, err
+			return false, "", "", err
 		}
 		if !ready {
-			setCondition(&policy.Status.Conditions, policy.Generation, conditionEngineReady, metav1.ConditionFalse, provider.ReasonEnvoyNotReady, "no Ready Envoy pod has the SecLang volume")
-			setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, provider.ReasonEnvoyNotReady, "waiting for a Ready Envoy pod before publishing the filter")
-			return true, r.writeStatus(ctx, policy)
+			return false, provider.ReasonEnvoyNotReady, "waiting for a Ready Envoy pod before publishing the filter", nil
 		}
-		ok, err := r.projected(ctx, policy.Namespace+"/"+policy.Name, bundle.Hash)
+		ok, err := projected(ctx, c, proxyNamespace, bundle.Namespace+"/"+bundle.Name, bundle.Hash)
 		if err != nil {
-			return true, err
+			return false, "", "", err
 		}
 		if !ok {
-			setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, provider.ReasonProjectionPending, "SecLang files are not projected into the Envoy pods yet")
-			return true, r.writeStatus(ctx, policy)
+			return false, provider.ReasonProjectionPending, "SecLang files are not projected into the Envoy pods yet", nil
 		}
 	}
-	if err := p.Apply(ctx, r.Client, *bundle, policy.Spec.TargetRefs, r.ProxyNamespace); err != nil {
-		return true, r.failApply(ctx, policy, err)
+	if err := p.Apply(ctx, c, *bundle, refs, proxyNamespace); err != nil {
+		return false, "", "", err
 	}
-	return false, nil
+	return true, "", "", nil
 }
 
 func (r *SecPolicyReconciler) failApply(ctx context.Context, policy *seclangv1alpha1.SecPolicy, err error) error {
@@ -257,9 +266,9 @@ func (r *SecPolicyReconciler) failApply(ctx context.Context, policy *seclangv1al
 	return r.writeStatus(ctx, policy)
 }
 
-func (r *SecPolicyReconciler) envoyReady(ctx context.Context, gateways []provider.GatewayRef) (bool, error) {
+func envoyReady(ctx context.Context, c client.Client, proxyNamespace string, gateways []provider.GatewayRef) (bool, error) {
 	var pods corev1.PodList
-	if err := r.List(ctx, &pods, client.InNamespace(r.ProxyNamespace)); err != nil {
+	if err := c.List(ctx, &pods, client.InNamespace(proxyNamespace)); err != nil {
 		return false, err
 	}
 	for i := range pods.Items {
@@ -304,9 +313,9 @@ func podMountsSecLang(pod *corev1.Pod) bool {
 	return false
 }
 
-func (r *SecPolicyReconciler) projected(ctx context.Context, owner, hash string) (bool, error) {
+func projected(ctx context.Context, c client.Client, proxyNamespace, owner, hash string) (bool, error) {
 	cm := &corev1.ConfigMap{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: r.ProxyNamespace, Name: compile.ConfigMapName}, cm); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Namespace: proxyNamespace, Name: compile.ConfigMapName}, cm); err != nil {
 		return false, err
 	}
 	var versions map[string]string
@@ -318,14 +327,14 @@ func (r *SecPolicyReconciler) projected(ctx context.Context, owner, hash string)
 	}
 	body := cm.Data[compile.VersionKey]
 	seen := &corev1.ConfigMap{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: r.ProxyNamespace, Name: compile.SeenConfigMapName}, seen); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Namespace: proxyNamespace, Name: compile.SeenConfigMapName}, seen); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil
 		}
 		return false, err
 	}
 	var pods corev1.PodList
-	if err := r.List(ctx, &pods, client.InNamespace(r.ProxyNamespace)); err != nil {
+	if err := c.List(ctx, &pods, client.InNamespace(proxyNamespace)); err != nil {
 		return false, err
 	}
 	nodes := map[string]struct{}{}
@@ -461,51 +470,23 @@ func (r *SecPolicyReconciler) dualAttachment(ctx context.Context, policy *seclan
 			return true, fmt.Sprintf("SecPolicy %s already targets the same resource", other.Name), nil
 		}
 	}
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(schema.GroupVersionKind{Group: protectionGroup, Version: protectionVersion, Kind: protectionKind + "List"})
-	err := r.List(ctx, list, client.InNamespace(policy.Namespace))
-	if err != nil {
+	var protections wafv1alpha1.ProtectionList
+	if err := r.List(ctx, &protections, client.InNamespace(policy.Namespace)); err != nil {
 		if apierrors.IsNotFound(err) || apimeta.IsNoMatchError(err) {
 			return false, "", nil
 		}
 		return false, "", err
 	}
-	for _, item := range list.Items {
-		if protectionOverlaps(item, policy.Spec.TargetRefs) {
-			return true, fmt.Sprintf("Protection %s already targets the same resource", item.GetName()), nil
+	for i := range protections.Items {
+		item := &protections.Items[i]
+		if !item.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if overlap(policy.Spec.TargetRefs, item.Spec.TargetRefs) {
+			return true, fmt.Sprintf("Protection %s already targets the same resource", item.Name), nil
 		}
 	}
 	return false, "", nil
-}
-
-// AddProtectionScheme lets the client list Protection without a generated type.
-// A missing CRD is treated as no Protection objects.
-func AddProtectionScheme(s *runtime.Scheme) error {
-	gv := schema.GroupVersion{Group: protectionGroup, Version: protectionVersion}
-	s.AddKnownTypeWithName(gv.WithKind(protectionKind), &unstructured.Unstructured{})
-	s.AddKnownTypeWithName(gv.WithKind(protectionKind+"List"), &unstructured.UnstructuredList{})
-	metav1.AddToGroupVersion(s, gv)
-	return nil
-}
-
-func protectionOverlaps(obj unstructured.Unstructured, refs []gatewayv1.LocalPolicyTargetReference) bool {
-	raw, found, err := unstructured.NestedSlice(obj.Object, "spec", "targetRefs")
-	if err != nil || !found {
-		return false
-	}
-	var theirs []gatewayv1.LocalPolicyTargetReference
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		theirs = append(theirs, gatewayv1.LocalPolicyTargetReference{
-			Group: gatewayv1.Group(fmt.Sprint(m["group"])),
-			Kind:  gatewayv1.Kind(fmt.Sprint(m["kind"])),
-			Name:  gatewayv1.ObjectName(fmt.Sprint(m["name"])),
-		})
-	}
-	return overlap(refs, theirs)
 }
 
 func overlap(a, b []gatewayv1.LocalPolicyTargetReference) bool {
@@ -519,21 +500,21 @@ func overlap(a, b []gatewayv1.LocalPolicyTargetReference) bool {
 	return false
 }
 
-func (r *SecPolicyReconciler) gatewaysFor(ctx context.Context, policy *seclangv1alpha1.SecPolicy) ([]provider.GatewayRef, string, string, error) {
+func gatewaysFor(ctx context.Context, c client.Client, namespace string, refs []gatewayv1.LocalPolicyTargetReference) ([]provider.GatewayRef, string, string, error) {
 	var out []provider.GatewayRef
-	for _, ref := range policy.Spec.TargetRefs {
+	for _, ref := range refs {
 		switch ref.Kind {
 		case "Gateway":
-			out = append(out, provider.GatewayRef{Namespace: policy.Namespace, Name: string(ref.Name)})
+			out = append(out, provider.GatewayRef{Namespace: namespace, Name: string(ref.Name)})
 		case "HTTPRoute":
 			route := &gatewayv1.HTTPRoute{}
-			if err := r.Get(ctx, types.NamespacedName{Namespace: policy.Namespace, Name: string(ref.Name)}, route); err != nil {
+			if err := c.Get(ctx, types.NamespacedName{Namespace: namespace, Name: string(ref.Name)}, route); err != nil {
 				if apierrors.IsNotFound(err) {
 					return nil, reasonNotFound, fmt.Sprintf("HTTPRoute %s not found", ref.Name), nil
 				}
 				return nil, "", "", err
 			}
-			gw, reason, message := parentGateway(route, policy.Namespace)
+			gw, reason, message := parentGateway(route, namespace)
 			if reason != "" {
 				return nil, reason, message, nil
 			}
@@ -584,7 +565,8 @@ func (r *SecPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.requestsInNamespace)).
 		Watches(&gatewayv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
-		Watches(&gatewayv1.HTTPRoute{}, handler.EnqueueRequestsFromMapFunc(r.requestsInNamespace))
+		Watches(&gatewayv1.HTTPRoute{}, handler.EnqueueRequestsFromMapFunc(r.requestsInNamespace)).
+		Watches(&wafv1alpha1.Protection{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll))
 	if p, ok := r.Registry.Get(provider.NameEnvoyGateway); ok {
 		for _, obj := range p.WatchObjects() {
 			b = b.Watches(obj, handler.EnqueueRequestsFromMapFunc(r.requestsAll))

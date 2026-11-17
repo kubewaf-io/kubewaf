@@ -25,6 +25,7 @@ import (
 
 	egv1a1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
+	wafv1alpha1 "github.com/kubewaf-io/kubewaf/api/waf/v1alpha1"
 	"github.com/kubewaf-io/kubewaf/internal/compile"
 	v1alpha1 "github.com/kubewaf-io/kubewaf/internal/controller/v1alpha1"
 	"github.com/kubewaf-io/kubewaf/internal/projection"
@@ -53,9 +54,9 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(seclangv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(wafv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(egv1a1.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1.Install(scheme))
-	utilruntime.Must(v1alpha1.AddProtectionScheme(scheme))
 }
 
 func main() {
@@ -130,6 +131,13 @@ func main() {
 		ProxyNamespace: proxyNamespace, WaitForProjection: true,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "SecPolicy")
+		os.Exit(1)
+	}
+	if err := (&v1alpha1.ProtectionReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Registry: reg,
+		ProxyNamespace: proxyNamespace, WaitForProjection: true,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Protection")
 		os.Exit(1)
 	}
 	if enableWebhooks {

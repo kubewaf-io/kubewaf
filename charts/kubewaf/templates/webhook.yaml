@@ -40,10 +40,11 @@ metadata:
     {{- include "kubewaf.labels" . | nindent 4 }}
 webhooks:
   {{- range $hook := list
-      (dict "name" "v1a1secrule.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-secrule" "resource" "secrules")
-      (dict "name" "v1a1secaction.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-secaction" "resource" "secactions")
-      (dict "name" "v1a1include.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-include" "resource" "includes")
-      (dict "name" "v1a1secpolicy.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-secpolicy" "resource" "secpolicies") }}
+      (dict "name" "v1a1secrule.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-secrule" "resource" "secrules" "group" "seclang.kubewaf.io")
+      (dict "name" "v1a1secaction.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-secaction" "resource" "secactions" "group" "seclang.kubewaf.io")
+      (dict "name" "v1a1include.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-include" "resource" "includes" "group" "seclang.kubewaf.io")
+      (dict "name" "v1a1secpolicy.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-secpolicy" "resource" "secpolicies" "group" "seclang.kubewaf.io")
+      (dict "name" "v1a1protection.kubewaf.io" "path" "/validate-waf-kubewaf-io-v1alpha1-protection" "resource" "protections" "group" "waf.kubewaf.io") }}
   - name: {{ $hook.name }}
     admissionReviewVersions: ["v1"]
     sideEffects: None
@@ -56,7 +57,7 @@ webhooks:
         path: {{ $hook.path }}
       caBundle: {{ $ca.Cert | b64enc }}
     rules:
-      - apiGroups: ["seclang.kubewaf.io"]
+      - apiGroups: ["{{ $hook.group }}"]
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["{{ $hook.resource }}"]

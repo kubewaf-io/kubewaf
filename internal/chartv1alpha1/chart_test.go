@@ -75,7 +75,7 @@ func TestChartIsTheV1Alpha1Operator(t *testing.T) {
 		t.Cleanup(func() { _ = env.Stop() })
 	}
 	crds, err := os.ReadDir(filepath.Join(dir, "crds"))
-	if err != nil || len(crds) != 4 {
+	if err != nil || len(crds) != 5 {
 		t.Fatalf("crds: %v %v", crds, err)
 	}
 }
