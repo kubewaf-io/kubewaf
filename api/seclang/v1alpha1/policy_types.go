@@ -166,6 +166,10 @@ type SecPolicyStatus struct {
 	EngineImage string `json:"engineImage,omitempty"`
 	// +optional
 	CRSVersion string `json:"crsVersion,omitempty"`
+	// ReloadGeneration counts retries after Envoy rejected an Include that was not on disk yet.
+	// The SecMarker gains an rN suffix so Envoy loads the filter again. Zero is the first publish.
+	// +optional
+	ReloadGeneration int32 `json:"reloadGeneration,omitempty"`
 }
 
 // +kubebuilder:object:root=true

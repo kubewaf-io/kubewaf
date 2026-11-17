@@ -1,3 +1,0 @@
-input:
-  - values.yaml
-  - ci/test-values.yaml

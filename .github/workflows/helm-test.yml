@@ -38,7 +38,6 @@ jobs:
       - name: Linting Chart
         run: |
           helm lint ./charts/kubewaf
-          helm lint ./charts/kubewaf-crs
 
       - name: Run chart-testing (lint)
         run: make helm-lint

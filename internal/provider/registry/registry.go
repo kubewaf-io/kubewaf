@@ -32,19 +32,8 @@ type Registry struct {
 
 // New returns a registry whose only entry is Envoy Gateway.
 func New(proxyNamespace string) *Registry {
-	return registryWith(envoygateway.New(proxyNamespace))
-}
-
-// NewImmediate is New with no mount-settle delay. Unit tests use it.
-func NewImmediate(proxyNamespace string) *Registry {
-	eg := envoygateway.New(proxyNamespace)
-	eg.SetImmediate()
-	return registryWith(eg)
-}
-
-func registryWith(eg *envoygateway.Envoy) *Registry {
 	return &Registry{providers: map[string]provider.Provider{
-		provider.NameEnvoyGateway: eg,
+		provider.NameEnvoyGateway: envoygateway.New(proxyNamespace),
 	}}
 }
 

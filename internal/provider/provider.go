@@ -44,12 +44,6 @@ var ErrDataFileConflict = errors.New("data file key is owned by another policy")
 // ErrConfigMapTooLarge means the merged ConfigMap would exceed 900KiB.
 var ErrConfigMapTooLarge = errors.New("configmap exceeds 900KiB")
 
-// ErrMountSettling means the ConfigMap keys are written and the extension
-// policy is held until kubelet can project them. Envoy rejects the listener
-// if it loads the filter before those files exist, and it does not retry
-// until the SecMarker changes.
-var ErrMountSettling = errors.New("seclang volume is settling")
-
 // GatewayRef is a Gateway in a namespace. HTTPRoute parents are resolved to this
 // before the provider is asked whether the engine is ready.
 type GatewayRef struct {

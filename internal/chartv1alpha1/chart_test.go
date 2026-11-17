@@ -31,7 +31,7 @@ func TestChartIsTheV1Alpha1Operator(t *testing.T) {
 	if err != nil {
 		t.Skip("helm not found")
 	}
-	dir, err := filepath.Abs(filepath.Join("..", "..", "charts", "kubewaf-v1alpha1"))
+	dir, err := filepath.Abs(filepath.Join("..", "..", "charts", "kubewaf"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,7 +19,9 @@ package v1alpha1
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	egv1a1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
@@ -141,6 +143,54 @@ func TestSecPolicyProgramsAndLeavesTheProxyAlone(t *testing.T) {
 	}
 	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-edge"}, ext); err == nil {
 		t.Fatal("extension policy should be retracted")
+	}
+}
+
+func TestSecPolicyRepublishesAfterAMissingInclude(t *testing.T) {
+	c := testClient(t, readyRule(), platformProxy(), platformGateway())
+	ctx := context.Background()
+	if err := c.Create(ctx, policy("edge", "block-sqlmap")); err != nil {
+		t.Fatal(err)
+	}
+	r := newPolicyReconciler(c)
+	r.EnvoyLog = func(context.Context) (string, error) {
+		return "[2020-01-01 00:00:00.000][1][warning] failed to readfile: open /etc/kubewaf/seclang/default_edge-before.conf: no such file or directory\n", nil
+	}
+	res, err := r.Reconcile(ctx, req("default", "edge"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RequeueAfter != time.Second {
+		t.Fatalf("requeue %s", res.RequeueAfter)
+	}
+	got := &seclangv1alpha1.SecPolicy{}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "edge"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.ReloadGeneration != 1 {
+		t.Fatalf("generation %d", got.Status.ReloadGeneration)
+	}
+	ext := &egv1a1.EnvoyExtensionPolicy{}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubewaf-edge"}, ext); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(ext.Spec.DynamicModule)
+	if !strings.Contains(string(raw), "SecMarker ") || !strings.Contains(string(raw), "r1") {
+		t.Fatalf("marker was not retried: %s", raw)
+	}
+	res, err = r.Reconcile(ctx, req("default", "edge"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "edge"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.ReloadGeneration != 1 {
+		t.Fatalf("same log line republished: generation %d", got.Status.ReloadGeneration)
+	}
+	cond := meta.FindStatusCondition(got.Status.Conditions, conditionProgrammed)
+	if cond == nil || !strings.Contains(cond.Message, "confirming envoy load r1") {
+		t.Fatalf("stable NACK should confirm the retry, got %+v", cond)
 	}
 }
 
@@ -308,7 +358,7 @@ func TestNameAndLabelIndex(t *testing.T) {
 }
 
 func newPolicyReconciler(c client.Client) *SecPolicyReconciler {
-	return &SecPolicyReconciler{Client: c, Registry: registry.NewImmediate("envoy-gateway-system"), ProxyNamespace: "envoy-gateway-system"}
+	return &SecPolicyReconciler{Client: c, Registry: registry.New("envoy-gateway-system"), ProxyNamespace: "envoy-gateway-system"}
 }
 
 func req(ns, name string) ctrl.Request {
