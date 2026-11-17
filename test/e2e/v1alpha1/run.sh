@@ -11,7 +11,14 @@ OPERATOR_IMAGE="${OPERATOR_IMAGE:-kubewaf-operator:dev}"
 KEEP="${E2E_KEEP:-false}"
 
 log() { printf '== %s\n' "$*"; }
-die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+die() {
+  printf 'FAIL: %s\n' "$*" >&2
+  kubectl get secpolicy,protection,secrule -A -o wide 2>/dev/null || true
+  kubectl get cm -n envoy-gateway-system kubewaf-seclang -o jsonpath='version={.data.kubewaf-version}{"\n"}' 2>/dev/null || true
+  kubectl get cm -n envoy-gateway-system kubewaf-seclang-seen -o yaml 2>/dev/null || true
+  kubectl logs -n kubewaf-system -l app.kubernetes.io/name=kubewaf --tail=80 2>/dev/null || true
+  exit 1
+}
 
 cleanup() {
   if [[ "$KEEP" != "true" ]]; then

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	seclangv1alpha1 "github.com/kubewaf-io/kubewaf/api/seclang/v1alpha1"
 	wafv1alpha1 "github.com/kubewaf-io/kubewaf/api/waf/v1alpha1"
@@ -348,7 +349,7 @@ func projected(ctx context.Context, c client.Client, proxyNamespace, owner, hash
 		return false, nil
 	}
 	for node := range nodes {
-		if seen.Data[node] != body {
+		if strings.TrimSpace(seen.Data[node]) != strings.TrimSpace(body) {
 			return false, nil
 		}
 	}
