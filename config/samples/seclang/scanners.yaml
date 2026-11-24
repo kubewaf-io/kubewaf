@@ -1,0 +1,138 @@
+# Cross-namespace scanner rules.
+# Prerequisites, not created here:
+#   kubectl create namespace security-team
+#   kubectl create namespace feature-team
+#   an HTTPRoute named app in feature-team, parented by a Gateway in that namespace
+#   the platform EnvoyProxy and composer module on that Gateway
+#   Gateway API ReferenceGrant v1 already installed by the platform (this file does not install the CRD)
+#
+# The three SecRules and the RuleSet live in security-team. The ReferenceGrant
+# in security-team allows a SecPolicy in feature-team to name RuleSet scanners.
+# A nested RuleSet in another namespace would need its own grant for kind RuleSet,
+# not this SecPolicy grant.
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecRule
+metadata:
+  name: block-sqlmap
+  namespace: security-team
+spec:
+  order: 10
+  metadata:
+    id: 910001
+    phase: 1
+    message: sqlmap scanner
+  chain:
+    - targets:
+        - name: REQUEST_HEADERS
+          selector: User-Agent
+      operator:
+        name: rx
+        value: (?i)sqlmap
+      actions:
+        disruptive:
+          type: deny
+        data:
+          - type: status
+            value: "403"
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecRule
+metadata:
+  name: block-nikto
+  namespace: security-team
+spec:
+  order: 20
+  metadata:
+    id: 910002
+    phase: 1
+    message: nikto scanner
+  chain:
+    - targets:
+        - name: REQUEST_HEADERS
+          selector: User-Agent
+      operator:
+        name: rx
+        value: (?i)nikto
+      actions:
+        disruptive:
+          type: deny
+        data:
+          - type: status
+            value: "403"
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecRule
+metadata:
+  name: block-nessus
+  namespace: security-team
+spec:
+  order: 30
+  metadata:
+    id: 910003
+    phase: 1
+    message: nessus scanner
+  chain:
+    - targets:
+        - name: REQUEST_HEADERS
+          selector: User-Agent
+      operator:
+        name: rx
+        value: (?i)nessus
+      actions:
+        disruptive:
+          type: deny
+        data:
+          - type: status
+            value: "403"
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: RuleSet
+metadata:
+  name: scanners
+  namespace: security-team
+spec:
+  ruleRefs:
+    - group: seclang.kubewaf.io
+      kind: SecRule
+      name: block-sqlmap
+    - group: seclang.kubewaf.io
+      kind: SecRule
+      name: block-nikto
+    - group: seclang.kubewaf.io
+      kind: SecRule
+      name: block-nessus
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: feature-team-scanners
+  namespace: security-team
+spec:
+  from:
+    - group: seclang.kubewaf.io
+      kind: SecPolicy
+      namespace: feature-team
+  to:
+    - group: seclang.kubewaf.io
+      kind: RuleSet
+      name: scanners
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecPolicy
+metadata:
+  name: edge
+  namespace: feature-team
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: app
+  engine: "On"
+  inspection: RequestOnly
+  requestBodyAccess: true
+  responseBodyAccess: false
+  ruleSetRefs:
+    - group: seclang.kubewaf.io
+      kind: RuleSet
+      name: scanners
+      namespace: security-team

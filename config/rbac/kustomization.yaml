@@ -1,12 +1,11 @@
 resources:
+- v1alpha1_role.yaml
 # All RBAC will be applied under this service account in
 # the deployment namespace. You may comment out this resource
 # if your manager will use a service account that exists at
 # runtime. Be sure to update RoleBinding and ClusterRoleBinding
 # subjects if changing service account names.
 - service_account.yaml
-- role.yaml
-- role_binding.yaml
 - leader_election_role.yaml
 - leader_election_role_binding.yaml
 # The following RBAC configurations are used to protect
@@ -22,16 +21,4 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the kubewaf itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
-- waf_waf_admin_role.yaml
-- waf_waf_editor_role.yaml
-- waf_waf_viewer_role.yaml
-- seclang_secaction_admin_role.yaml
-- seclang_secaction_editor_role.yaml
-- seclang_secaction_viewer_role.yaml
-- waf_ruleset_admin_role.yaml
-- waf_ruleset_editor_role.yaml
-- waf_ruleset_viewer_role.yaml
-- secrule_admin_role.yaml
-- secrule_editor_role.yaml
-- secrule_viewer_role.yaml
 

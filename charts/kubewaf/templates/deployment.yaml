@@ -1,174 +1,94 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "helm.fullname" . }}
+  name: {{ include "kubewaf.fullname" . }}
   labels:
-    {{- include "helm.labels" . | nindent 4 }}
+    {{- include "kubewaf.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
-  {{- if gt (int .Values.replicaCount) 1 }}
-  # Prefer rolling updates that keep at least one ready pod for ECDS/wasm.
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
-  {{- end }}
   selector:
     matchLabels:
-      {{- include "helm.selectorLabels" . | nindent 6 }}
+      {{- include "kubewaf.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      annotations:
+      labels:
+        {{- include "kubewaf.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.podAnnotations }}
+      annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.crds.install }}
-        kubewaf-io/crds-size-hash: {{ include "helm.crdsSizeHash" . | quote }}
-      {{- end }}
-      labels:
-        {{- include "helm.selectorLabels" . | nindent 8 }}
-        {{- with .Values.podLabels }}
-          {{- toYaml . | nindent 8 }}
-        {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "helm.serviceAccountName" . }}
-      {{- if $.Values.podSecurityContext.enabled }}
-      securityContext: {{- omit $.Values.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      serviceAccountName: {{ include "kubewaf.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: {{ .Chart.Name }}
-          {{- if $.Values.securityContext.enabled }}
-          securityContext: {{- omit $.Values.securityContext "enabled" | toYaml | nindent 12 }}
-          {{- end }}
-          image: "{{ .Values.image.registry | trimSuffix "/" }}/{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        - name: operator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - --zap-log-level={{ default 4 .Values.args.logLevel }}
-            - --enable-pprof={{ .Values.args.pprof }}
-            - --leader-elect={{ .Values.leaderElection.enabled | default true }}
-            - --enable-webhooks={{ .Values.webhooks.enabled | default false }}
+            - --leader-elect={{ .Values.leaderElection.enabled }}
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+            - --proxy-namespace={{ .Values.proxyNamespace }}
+            - --enable-webhooks={{ .Values.webhooks.enabled }}
             {{- if .Values.webhooks.enabled }}
             - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
             {{- end }}
-            - --ecds-bind-address=:{{ .Values.dataplane.ecds.port | default 18001 }}
-            - --extension-server-bind-address=:{{ .Values.dataplane.extensionServer.port | default 5005 }}
-            - --ecds-service-host={{ .Values.dataplane.ecds.serviceHost | default (printf "%s-ecds.%s.svc.cluster.local" (include "helm.fullname" .) .Release.Namespace) }}
-            - --ecds-service-port={{ .Values.dataplane.ecds.port | default 18001 }}
-            - --wasm-serve-bind-address=:{{ .Values.dataplane.wasmServe.port | default 18002 }}
-            - --wasm-serve-port={{ .Values.dataplane.wasmServe.port | default 18002 }}
-            {{- if .Values.observability.managed.enabled }}
-            - --otel-service-host={{ include "kubewaf.otelHost" . }}
-            - --otel-service-port=4317
-            - --telemetry-profile={{ .Values.observability.managed.profile | default "lite" }}
-            - --telemetry-sample-non-disruptive={{ .Values.observability.managed.traces.sampleNonDisruptive | default "0.25" }}
-            - --telemetry-sample-disruptive={{ .Values.observability.managed.traces.sampleDisruptive | default "1.0" }}
-            - --telemetry-redact={{ .Values.observability.managed.traces.redact }}
-            - --telemetry-include-match-data={{ .Values.observability.managed.traces.includeMatchDataDefault }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+            {{- if .Values.webhooks.enabled }}
+            - name: webhook
+              containerPort: 9443
             {{- end }}
-          {{- with .Values.args.extraArgs }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          {{- with .Values.resources }}
+          resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          env:
-          - name: NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-          {{- with .Values.env }}
-            {{- toYaml . | nindent 10 }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
-          ports:
-          - name: ecds
-            containerPort: {{ .Values.dataplane.ecds.port | default 18001 }}
-            protocol: TCP
-          - name: extension
-            containerPort: {{ .Values.dataplane.extensionServer.port | default 5005 }}
-            protocol: TCP
-          - name: wasm
-            containerPort: {{ .Values.dataplane.wasmServe.port | default 18002 }}
-            protocol: TCP
           {{- if .Values.webhooks.enabled }}
-          - name: webhook
-            containerPort: 9443
-            protocol: TCP
-          {{- end }}
-          {{- if .Values.args.pprof }}
-          - name: pprof
-            containerPort: 8082
-            protocol: TCP
-          {{- end }}
-          {{- if $.Values.monitoring.enabled }}
-          - name: metrics
-            containerPort: 8080
-            protocol: TCP
-          {{- end }}
-          livenessProbe:
-            {{- toYaml .Values.livenessProbe | nindent 12}}
-          readinessProbe:
-            {{- toYaml .Values.readinessProbe | nindent 12}}
-          resources:
-            {{- toYaml .Values.resources | nindent 12 }}
-          {{- $needVolumes := or .Values.webhooks.enabled .Values.dataplane.wasmVolume .Values.volumeMounts }}
-          {{- if $needVolumes }}
           volumeMounts:
-            {{- if .Values.webhooks.enabled }}
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
-            {{- end }}
-            {{- if .Values.dataplane.wasmVolume }}
-            - name: wasm
-              mountPath: {{ .Values.dataplane.wasmMountPath | default "/wasm" }}
-              readOnly: true
-            {{- end }}
-            {{- with .Values.volumeMounts }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
           {{- end }}
-      {{- if or .Values.webhooks.enabled .Values.dataplane.wasmVolume .Values.volumes }}
+      {{- if .Values.webhooks.enabled }}
       volumes:
-        {{- if .Values.webhooks.enabled }}
         - name: webhook-certs
           secret:
-            secretName: {{ include "helm.fullname" . }}-webhook-certs
-        {{- end }}
-        {{- if .Values.dataplane.wasmVolume }}
-        - name: wasm
-          {{- toYaml .Values.dataplane.wasmVolume | nindent 10 }}
-        {{- end }}
-        {{- with .Values.volumes }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
+            secretName: {{ include "kubewaf.fullname" . }}-webhook-certs
       {{- end }}
-      priorityClassName: {{ .Values.priorityClassName }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
-      tolerations:
+      {{- with .Values.affinity }}
+      affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.affinity }}
-      affinity:
-        {{- toYaml .Values.affinity | nindent 8 }}
-      {{- else if gt (int .Values.replicaCount) 1 }}
-      # Default soft anti-affinity so HA replicas spread across nodes.
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    {{- include "helm.selectorLabels" . | nindent 20 }}
-                topologyKey: kubernetes.io/hostname
-      {{- end }}
-      {{- with .Values.topologySpreadConstraints }}
-      topologySpreadConstraints:
+      {{- with .Values.tolerations }}
+      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}

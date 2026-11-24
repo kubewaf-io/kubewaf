@@ -1,0 +1,1 @@
+SecRule REQUEST_URI "@verifyCPF 1" "id:100001,phase:1,pass"
