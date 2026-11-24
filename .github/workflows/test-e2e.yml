@@ -32,7 +32,7 @@ jobs:
 
       - name: Install kind
         run: |
-          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-$(go env GOARCH)"
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-$(go env GOARCH)"
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
           kind version
@@ -47,20 +47,8 @@ jobs:
         with:
           version: v1.32.0
 
-      - name: Unit tests (quick sanity before e2e)
-        run: |
-          go mod tidy
-          go test ./internal/webhook/ ./internal/dataplane/config/ -count=1
-
-      - name: Envoy Gateway e2e
-        env:
-          E2E_PROVIDER: envoy-gateway
-          # No full CRS go-ftw on PR gate (too slow); smoke only.
-          E2E_FTW: "false"
-          E2E_FTW_PATH_B: "false"
-        run: |
-          go mod tidy
-          make test-e2e-envoy-gateway
+      - name: v1alpha1 Kind e2e
+        run: bash test/e2e/v1alpha1/run.sh
 
       - name: Collect diagnostics on failure
         if: failure()

@@ -1,0 +1,1 @@
+SecRule REQUEST_URI "@ipMatch 192.168.0.0/16" "id:100001,phase:1,pass"
