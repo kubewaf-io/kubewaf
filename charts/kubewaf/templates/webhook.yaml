@@ -1,159 +1,66 @@
 {{- if .Values.webhooks.enabled }}
-{{- $fullName := include "helm.fullname" . }}
+{{- $fullName := include "kubewaf.fullname" . }}
 {{- $ns := .Release.Namespace }}
 {{- $svcName := printf "%s-webhook" $fullName }}
 {{- $dns := printf "%s.%s.svc" $svcName $ns }}
 {{- $dnsCluster := printf "%s.%s.svc.cluster.local" $svcName $ns }}
-{{- /* Reuse existing TLS secret on upgrade so caBundle stays valid */ -}}
-{{- $caCert := "" -}}
-{{- $tlsCrt := "" -}}
-{{- $tlsKey := "" -}}
-{{- $secretName := printf "%s-webhook-certs" $fullName -}}
-{{- $existing := lookup "v1" "Secret" $ns $secretName -}}
-{{- if and $existing $existing.data }}
-  {{- $caCert = index $existing.data "ca.crt" -}}
-  {{- $tlsCrt = index $existing.data "tls.crt" -}}
-  {{- $tlsKey = index $existing.data "tls.key" -}}
-{{- else }}
-  {{- $ca := genCA (printf "%s-webhook-ca" $fullName) 3650 -}}
-  {{- $cert := genSignedCert $dns nil (list $dns $dnsCluster "localhost") 3650 $ca -}}
-  {{- $caCert = $ca.Cert | b64enc -}}
-  {{- $tlsCrt = $cert.Cert | b64enc -}}
-  {{- $tlsKey = $cert.Key | b64enc -}}
-{{- end }}
----
+{{- $ca := genCA (printf "%s-webhook-ca" $fullName) 3650 }}
+{{- $cert := genSignedCert $dns nil (list $dns $dnsCluster "localhost") 3650 $ca }}
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ $secretName }}
-  namespace: {{ $ns }}
+  name: {{ $fullName }}-webhook-certs
   labels:
-    {{- include "helm.labels" . | nindent 4 }}
-    app.kubernetes.io/component: webhook
+    {{- include "kubewaf.labels" . | nindent 4 }}
 type: kubernetes.io/tls
 data:
-  ca.crt: {{ $caCert }}
-  tls.crt: {{ $tlsCrt }}
-  tls.key: {{ $tlsKey }}
+  ca.crt: {{ $ca.Cert | b64enc }}
+  tls.crt: {{ $cert.Cert | b64enc }}
+  tls.key: {{ $cert.Key | b64enc }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ $svcName }}
-  namespace: {{ $ns }}
   labels:
-    {{- include "helm.labels" . | nindent 4 }}
-    app.kubernetes.io/component: webhook
+    {{- include "kubewaf.labels" . | nindent 4 }}
 spec:
   ports:
-    - port: 443
+    - name: https
+      port: 443
       targetPort: webhook
-      protocol: TCP
-      name: https
   selector:
-    {{- include "helm.selectorLabels" . | nindent 4 }}
+    {{- include "kubewaf.selectorLabels" . | nindent 4 }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
   name: {{ $fullName }}-validating
   labels:
-    {{- include "helm.labels" . | nindent 4 }}
+    {{- include "kubewaf.labels" . | nindent 4 }}
 webhooks:
-  - name: vsecrule.kubewaf.io
+  {{- range $hook := list
+      (dict "name" "v1a1secrule.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-secrule" "resource" "secrules" "group" "seclang.kubewaf.io")
+      (dict "name" "v1a1secaction.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-secaction" "resource" "secactions" "group" "seclang.kubewaf.io")
+      (dict "name" "v1a1include.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-include" "resource" "includes" "group" "seclang.kubewaf.io")
+      (dict "name" "v1a1secpolicy.kubewaf.io" "path" "/validate-seclang-kubewaf-io-v1alpha1-secpolicy" "resource" "secpolicies" "group" "seclang.kubewaf.io")
+      (dict "name" "v1a1protection.kubewaf.io" "path" "/validate-waf-kubewaf-io-v1alpha1-protection" "resource" "protections" "group" "waf.kubewaf.io") }}
+  - name: {{ $hook.name }}
     admissionReviewVersions: ["v1"]
     sideEffects: None
-    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
+    timeoutSeconds: 30
+    failurePolicy: {{ $.Values.webhooks.failurePolicy }}
     clientConfig:
       service:
         name: {{ $svcName }}
         namespace: {{ $ns }}
-        path: /validate-seclang-kubewaf-io-v1beta1-secrule
-      caBundle: {{ $caCert }}
+        path: {{ $hook.path }}
+      caBundle: {{ $ca.Cert | b64enc }}
     rules:
-      - apiGroups: ["seclang.kubewaf.io"]
-        apiVersions: ["v1beta1"]
+      - apiGroups: ["{{ $hook.group }}"]
+        apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
-        resources: ["secrules"]
+        resources: ["{{ $hook.resource }}"]
         scope: Namespaced
-  - name: vsecaction.kubewaf.io
-    admissionReviewVersions: ["v1"]
-    sideEffects: None
-    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
-    clientConfig:
-      service:
-        name: {{ $svcName }}
-        namespace: {{ $ns }}
-        path: /validate-seclang-kubewaf-io-v1beta1-secaction
-      caBundle: {{ $caCert }}
-    rules:
-      - apiGroups: ["seclang.kubewaf.io"]
-        apiVersions: ["v1beta1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["secactions"]
-        scope: Namespaced
-  - name: vphraselist.kubewaf.io
-    admissionReviewVersions: ["v1"]
-    sideEffects: None
-    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
-    clientConfig:
-      service:
-        name: {{ $svcName }}
-        namespace: {{ $ns }}
-        path: /validate-seclang-kubewaf-io-v1beta1-phraselist
-      caBundle: {{ $caCert }}
-    rules:
-      - apiGroups: ["seclang.kubewaf.io"]
-        apiVersions: ["v1beta1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["phraselists"]
-        scope: Namespaced
-  - name: viplist.kubewaf.io
-    admissionReviewVersions: ["v1"]
-    sideEffects: None
-    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
-    clientConfig:
-      service:
-        name: {{ $svcName }}
-        namespace: {{ $ns }}
-        path: /validate-seclang-kubewaf-io-v1beta1-iplist
-      caBundle: {{ $caCert }}
-    rules:
-      - apiGroups: ["seclang.kubewaf.io"]
-        apiVersions: ["v1beta1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["iplists"]
-        scope: Namespaced
-  - name: vruleset.kubewaf.io
-    admissionReviewVersions: ["v1"]
-    sideEffects: None
-    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
-    clientConfig:
-      service:
-        name: {{ $svcName }}
-        namespace: {{ $ns }}
-        path: /validate-waf-kubewaf-io-v1beta1-ruleset
-      caBundle: {{ $caCert }}
-    rules:
-      - apiGroups: ["waf.kubewaf.io"]
-        apiVersions: ["v1beta1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["rulesets"]
-        scope: Namespaced
-  - name: vwaf.kubewaf.io
-    admissionReviewVersions: ["v1"]
-    sideEffects: None
-    failurePolicy: {{ .Values.webhooks.failurePolicy | default "Fail" }}
-    clientConfig:
-      service:
-        name: {{ $svcName }}
-        namespace: {{ $ns }}
-        path: /validate-waf-kubewaf-io-v1beta1-waf
-      caBundle: {{ $caCert }}
-    rules:
-      - apiGroups: ["waf.kubewaf.io"]
-        apiVersions: ["v1beta1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["wafs"]
-        scope: Namespaced
+  {{- end }}
 {{- end }}

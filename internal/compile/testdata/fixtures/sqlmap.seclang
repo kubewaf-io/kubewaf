@@ -1,0 +1,1 @@
+SecRule REQUEST_HEADERS:User-Agent "@rx (?i)sqlmap" "id:100001,phase:1,deny,status:403,msg:'scanner user-agent',severity:CRITICAL,tag:scanner,tag:sqlmap,log,auditlog"

@@ -1,0 +1,5 @@
+# Static image for cmd/operator. The e2e builds the binary on the host
+# and copies it in, so this file has no toolchain.
+FROM scratch
+COPY operator /operator
+ENTRYPOINT ["/operator"]

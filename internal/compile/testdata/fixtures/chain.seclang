@@ -1,0 +1,3 @@
+SecRule REQUEST_METHOD "@rx ^POST$" "id:100010,phase:1,chain,deny,status:403,msg:'POST missing content type'"
+SecRule &REQUEST_HEADERS:Content-Type "@eq 0"
+SecMarker END_METHOD
