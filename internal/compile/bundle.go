@@ -82,11 +82,16 @@ type piece struct {
 	kind      string
 	placement seclangv1alpha1.Placement
 	text      string
+	// lead is the embedded CRS rule include. It is emitted before every other
+	// AfterCRS piece, including a custom rule with the same order.
+	lead bool
 }
 
 // Build writes the before and after documents, data files, and the SecMarker hash.
 // Include lines are sorted with rules by order, then name, then kind.
-// @crs-setup.conf and @owasp_crs globs are ordinary Include lines. There is no crs.bundle flag.
+// The @owasp_crs include is placed before every other AfterCRS piece, so a
+// custom rule cannot sort ahead of the CRS rules. @crs-setup.conf and the
+// @owasp_crs glob are ordinary Include lines. There is no crs.bundle flag.
 func Build(in Input) (Bundle, error) {
 	if in.Policy.Namespace == "" || in.Policy.Name == "" {
 		return Bundle{}, fmt.Errorf("policy namespace and name are required")
@@ -122,7 +127,7 @@ func Build(in Input) (Bundle, error) {
 		if err != nil {
 			return Bundle{}, fmt.Errorf("SecRule %s: %w", rule.Name, err)
 		}
-		pieces = append(pieces, piece{rule.Spec.Order, rule.Name, "rule", place(rule.Spec.Placement), text})
+		pieces = append(pieces, piece{rule.Spec.Order, rule.Name, "rule", place(rule.Spec.Placement), text, false})
 	}
 	for i := range in.Actions {
 		action := in.Actions[i]
@@ -130,7 +135,7 @@ func Build(in Input) (Bundle, error) {
 		if err != nil {
 			return Bundle{}, fmt.Errorf("SecAction %s: %w", action.Name, err)
 		}
-		pieces = append(pieces, piece{action.Spec.Order, action.Name, "action", place(action.Spec.Placement), text})
+		pieces = append(pieces, piece{action.Spec.Order, action.Name, "action", place(action.Spec.Placement), text, false})
 	}
 	for _, inc := range in.Includes {
 		path, err := includePath(&inc.Include, "")
@@ -149,10 +154,17 @@ func Build(in Input) (Bundle, error) {
 		if err := checkMarker(inc.Include.Spec.MarkerAfter); err != nil {
 			return Bundle{}, err
 		}
-		pieces = append(pieces, piece{inc.Include.Spec.Order, inc.Include.Name, "include", place(inc.Include.Spec.Placement), withMarker(text, inc.Include.Spec.MarkerAfter)})
+		lead := inc.Include.Spec.VirtualPath == "@owasp_crs/*.conf"
+		pieces = append(pieces, piece{inc.Include.Spec.Order, inc.Include.Name, "include", place(inc.Include.Spec.Placement), withMarker(text, inc.Include.Spec.MarkerAfter), lead})
 	}
 
 	slices.SortStableFunc(pieces, func(a, c piece) int {
+		if a.lead != c.lead {
+			if a.lead {
+				return -1
+			}
+			return 1
+		}
 		if a.order != c.order {
 			return cmp.Compare(a.order, c.order)
 		}

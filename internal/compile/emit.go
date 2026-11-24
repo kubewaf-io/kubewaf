@@ -46,7 +46,11 @@ func EmitAction(action *seclangv1alpha1.SecAction) (string, error) {
 	if body == "" {
 		return "", fmt.Errorf("SecAction has no actions")
 	}
-	return withMarker("SecAction "+quoteDirectiveArg(body), action.Spec.MarkerAfter), nil
+	quoted, err := quoteDirectiveArg(body)
+	if err != nil {
+		return "", err
+	}
+	return withMarker("SecAction "+quoted, action.Spec.MarkerAfter), nil
 }
 
 // EmitInclude renders one Include.
@@ -119,7 +123,11 @@ func emitLink(first, chained bool, meta seclangv1alpha1.Metadata, link seclangv1
 	}
 	line := "SecRule " + strings.Join(targets, "|") + " " + op
 	if body != "" {
-		line += " " + quoteDirectiveArg(body)
+		quoted, err := quoteDirectiveArg(body)
+		if err != nil {
+			return "", err
+		}
+		line += " " + quoted
 	}
 	return line, nil
 }
@@ -172,9 +180,9 @@ func emitOperator(op seclangv1alpha1.Operator, files map[string]string) (string,
 		neg = "!"
 	}
 	if value == "" {
-		return quoteDirectiveArg(neg + "@" + token), nil
+		return quoteDirectiveArg(neg + "@" + token)
 	}
-	return quoteDirectiveArg(neg + "@" + token + " " + value), nil
+	return quoteDirectiveArg(neg + "@" + token + " " + value)
 }
 
 func actionList(first bool, meta seclangv1alpha1.Metadata, trans []seclangv1alpha1.Transformation, chained bool, actions *seclangv1alpha1.Actions) (string, error) {
