@@ -1,0 +1,1 @@
+SecRule REQUEST_URI "@validateByteRange 1,255" "id:100001,phase:1,pass"
