@@ -100,9 +100,17 @@ func main() {
 		setupLog.Error(err, "Include")
 		os.Exit(1)
 	}
+	grants, err := v1alpha1.ReferenceGrantV1Served(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "ReferenceGrant discovery")
+		os.Exit(1)
+	}
+	if !grants {
+		setupLog.Info("gateway.networking.k8s.io/v1 referencegrants is not served; cross-namespace RuleSet refs stay denied")
+	}
 	if err := (&v1alpha1.SecPolicyReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Registry: reg,
-		ProxyNamespace: proxyNamespace,
+		ProxyNamespace: proxyNamespace, WatchReferenceGrants: grants,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "SecPolicy")
 		os.Exit(1)

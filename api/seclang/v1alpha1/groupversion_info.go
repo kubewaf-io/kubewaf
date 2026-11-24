@@ -46,6 +46,10 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&IncludeList{},
 		&SecPolicy{},
 		&SecPolicyList{},
+		&RuleSet{},
+		&RuleSetList{},
+		&ClusterRuleSet{},
+		&ClusterRuleSetList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil

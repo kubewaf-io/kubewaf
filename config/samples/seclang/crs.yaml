@@ -1,8 +1,9 @@
-# Same CRS bundle as config/samples/waf/crs.yaml, written as SecLang objects.
-# SecRuleEngine On is spec.engine. The setup action uses id 900991: 900990 is
-# already inside @crs-setup.conf, and repeating it is rejected. Order 30 places
-# that action after Include @crs-setup.conf so the setvar wins.
-# Do not apply this to HTTPRoute backend while Protection crs targets it.
+# Full OWASP CRS as a RuleSet. This is what hack/local-e2e.sh --crs applies.
+# The set names the two embedded includes and the paranoia SecAction. SecPolicy
+# selects that set with ruleSetRefs. engine On is SecRuleEngine On.
+# SecAction id is 900991 because 900990 is already inside @crs-setup.conf.
+# Order 30 places the action after Include @crs-setup.conf so the setvar wins.
+# Do not also apply config/samples/waf/crs.yaml to HTTPRoute backend.
 apiVersion: seclang.kubewaf.io/v1alpha1
 kind: Include
 metadata:
@@ -49,6 +50,26 @@ spec:
       #   value: tx.outbound_anomaly_score_threshold=4
 ---
 apiVersion: seclang.kubewaf.io/v1alpha1
+kind: RuleSet
+metadata:
+  name: owasp-crs
+  namespace: default
+spec:
+  ruleRefs:
+    - group: seclang.kubewaf.io
+      kind: Include
+      name: crs-setup
+    - group: seclang.kubewaf.io
+      kind: Include
+      name: owasp-crs
+    - group: seclang.kubewaf.io
+      kind: SecAction
+      name: crs-paranoia
+    # - group: seclang.kubewaf.io
+    #   kind: SecAction
+    #   name: paranoia-2
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
 kind: SecPolicy
 metadata:
   name: crs
@@ -62,12 +83,9 @@ spec:
   inspection: RequestOnly
   requestBodyAccess: true
   responseBodyAccess: false
-  rules:
-    - kind: Include
-      name: crs-setup
-    - kind: Include
+  ruleSetRefs:
+    - group: seclang.kubewaf.io
+      kind: RuleSet
       name: owasp-crs
-    - kind: SecAction
-      name: crs-paranoia
   # postDirectives:
   #   - SecRuleRemoveById 920350

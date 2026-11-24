@@ -26,6 +26,7 @@ import (
 	"github.com/kubewaf-io/kubewaf/internal/compile"
 	"github.com/kubewaf-io/kubewaf/internal/provider"
 	"github.com/kubewaf-io/kubewaf/internal/provider/registry"
+	"github.com/kubewaf-io/kubewaf/internal/resolve"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -70,6 +71,9 @@ type SecPolicyReconciler struct {
 	Registry *registry.Registry
 	// ProxyNamespace is where data files are written when a policy has them.
 	ProxyNamespace string
+	// WatchReferenceGrants is set when gateway.networking.k8s.io/v1 ReferenceGrant is served.
+	// The operator still starts when it is not, and cross-namespace refs stay denied.
+	WatchReferenceGrants bool
 }
 
 // +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secpolicies,verbs=get;list;watch
@@ -78,12 +82,15 @@ type SecPolicyReconciler struct {
 // +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secrules,verbs=get;list;watch
 // +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=secactions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=includes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=rulesets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=seclang.kubewaf.io,resources=clusterrulesets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=envoyextensionpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=envoyproxies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gatewayclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch
 
 // Reconcile runs the SecPolicy algorithm. A failure to resolve rules leaves the last good ConfigMap in place.
 func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -117,6 +124,12 @@ func (r *SecPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	input, resolved, reason, message := r.resolve(ctx, policy)
 	if !resolved {
 		setCondition(&policy.Status.Conditions, policy.Generation, conditionRulesResolved, metav1.ConditionFalse, reason, message)
+		if reason == resolve.ReasonRefNotPermitted || reason == resolve.ReasonReferenceGrantUnavailable {
+			if err := p.Retract(ctx, r.Client, policy.Namespace, policy.Name); err != nil {
+				return ctrl.Result{}, err
+			}
+			setCondition(&policy.Status.Conditions, policy.Generation, conditionProgrammed, metav1.ConditionFalse, reason, "extension policy removed because the reference is not permitted")
+		}
 		return ctrl.Result{}, r.writeStatus(ctx, policy)
 	}
 	setCondition(&policy.Status.Conditions, policy.Generation, conditionRulesResolved, metav1.ConditionTrue, reasonReady, "rules are ready")
@@ -238,71 +251,13 @@ func (r *SecPolicyReconciler) writeStatus(ctx context.Context, policy *seclangv1
 }
 
 func (r *SecPolicyReconciler) resolve(ctx context.Context, policy *seclangv1alpha1.SecPolicy) (compile.Input, bool, string, string) {
-	in := compile.Input{Policy: *policy}
-	seenID := map[int]string{}
-	var matched bool
-	for _, sel := range policy.Spec.Rules {
-		switch sel.Kind {
-		case "SecRule":
-			rules, ok, reason, message := listRules(ctx, r.Client, policy.Namespace, sel)
-			if !ok {
-				return in, false, reason, message
-			}
-			if len(rules) == 0 && sel.Selector != nil {
-				return in, false, reasonSelectorEmpty, "selector matched no SecRule"
-			}
-			for _, rule := range rules {
-				if !ready(rule.Status.Conditions) {
-					return in, false, reasonNotReady, fmt.Sprintf("SecRule %s is not Ready", rule.Name)
-				}
-				if prev, ok := seenID[rule.Spec.Metadata.ID]; ok {
-					return in, false, reasonDuplicateID, fmt.Sprintf("id %d is used by %s and %s", rule.Spec.Metadata.ID, prev, rule.Name)
-				}
-				seenID[rule.Spec.Metadata.ID] = rule.Name
-				in.Rules = append(in.Rules, rule)
-				matched = true
-			}
-		case "SecAction":
-			actions, ok, reason, message := listActions(ctx, r.Client, policy.Namespace, sel)
-			if !ok {
-				return in, false, reason, message
-			}
-			if len(actions) == 0 && sel.Selector != nil {
-				return in, false, reasonSelectorEmpty, "selector matched no SecAction"
-			}
-			for _, action := range actions {
-				if !ready(action.Status.Conditions) {
-					return in, false, reasonNotReady, fmt.Sprintf("SecAction %s is not Ready", action.Name)
-				}
-				if prev, ok := seenID[action.Spec.Metadata.ID]; ok {
-					return in, false, reasonDuplicateID, fmt.Sprintf("id %d is used by %s and %s", action.Spec.Metadata.ID, prev, action.Name)
-				}
-				seenID[action.Spec.Metadata.ID] = action.Name
-				in.Actions = append(in.Actions, action)
-				matched = true
-			}
-		case "Include":
-			includes, ok, reason, message := listIncludes(ctx, r.Client, policy.Namespace, sel)
-			if !ok {
-				return in, false, reason, message
-			}
-			if len(includes) == 0 && sel.Selector != nil {
-				return in, false, reasonSelectorEmpty, "selector matched no Include"
-			}
-			for _, inc := range includes {
-				if !ready(inc.Status.Conditions) {
-					return in, false, reasonNotReady, fmt.Sprintf("Include %s is not Ready", inc.Name)
-				}
-				content, err := includeContent(ctx, r.Client, policy.Namespace, inc)
-				if err != nil {
-					return in, false, reasonNotFound, err.Error()
-				}
-				in.Includes = append(in.Includes, compile.IncludeInput{Include: inc, Content: content})
-				matched = true
-			}
-		default:
-			return in, false, reasonNotFound, fmt.Sprintf("unknown kind %s", sel.Kind)
+	in, err := resolve.New(r.Client).Policy(ctx, policy)
+	if err != nil {
+		var re *resolve.Error
+		if errors.As(err, &re) {
+			return in, false, re.Reason, re.Message
 		}
+		return in, false, reasonNotFound, err.Error()
 	}
 	for i, file := range policy.Spec.DataFiles {
 		content := file.Content
@@ -318,9 +273,6 @@ func (r *SecPolicyReconciler) resolve(ctx context.Context, policy *seclangv1alph
 			}
 		}
 		in.Data = append(in.Data, compile.DataInput{File: policy.Spec.DataFiles[i], Content: content})
-	}
-	if !matched {
-		return in, false, reasonNotFound, "policy selected no objects"
 	}
 	return in, true, "", ""
 }
@@ -429,11 +381,16 @@ func (r *SecPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&seclangv1alpha1.SecRule{}, handler.EnqueueRequestsFromMapFunc(r.requestsFor("SecRule"))).
 		Watches(&seclangv1alpha1.SecAction{}, handler.EnqueueRequestsFromMapFunc(r.requestsFor("SecAction"))).
 		Watches(&seclangv1alpha1.Include{}, handler.EnqueueRequestsFromMapFunc(r.requestsFor("Include"))).
+		Watches(&seclangv1alpha1.RuleSet{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
+		Watches(&seclangv1alpha1.ClusterRuleSet{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.requestsForConfigMap)).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.requestsInNamespace)).
 		Watches(&gatewayv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll)).
 		Watches(&gatewayv1.HTTPRoute{}, handler.EnqueueRequestsFromMapFunc(r.requestsInNamespace)).
 		Watches(&wafv1alpha1.Protection{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll))
+	if r.WatchReferenceGrants {
+		b = b.Watches(&gatewayv1.ReferenceGrant{}, handler.EnqueueRequestsFromMapFunc(r.requestsAll))
+	}
 	if p, ok := r.Registry.Get(provider.NameEnvoyGateway); ok {
 		for _, obj := range p.WatchObjects() {
 			b = b.Watches(obj, handler.EnqueueRequestsFromMapFunc(r.requestsAll))
@@ -466,19 +423,30 @@ func (r *SecPolicyReconciler) requestsFor(kind string) handler.MapFunc {
 		}
 		seen := map[string]struct{}{}
 		var out []reconcile.Request
-		add := func(name string) {
-			if _, ok := seen[name]; ok {
+		add := func(namespace, name string) {
+			key := namespace + "/" + name
+			if _, ok := seen[key]; ok {
 				return
 			}
-			seen[name] = struct{}{}
-			out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: obj.GetNamespace(), Name: name}})
+			seen[key] = struct{}{}
+			out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}})
 		}
 		for _, p := range indexed.Items {
-			add(p.Name)
+			add(obj.GetNamespace(), p.Name)
 		}
 		for _, p := range all.Items {
 			if selectorMatches(p, kind, obj) {
-				add(p.Name)
+				add(obj.GetNamespace(), p.Name)
+			}
+		}
+		// A RuleSet in this namespace may be named by a SecPolicy elsewhere.
+		var cluster seclangv1alpha1.SecPolicyList
+		if err := r.List(ctx, &cluster); err != nil {
+			return out
+		}
+		for _, p := range cluster.Items {
+			if len(p.Spec.RuleSetRefs) > 0 {
+				add(p.Namespace, p.Name)
 			}
 		}
 		return out
