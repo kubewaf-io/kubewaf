@@ -7,6 +7,7 @@
 #   hack/local-e2e.sh                # create/reuse cluster, install everything, test
 #   hack/local-e2e.sh --fresh        # delete the cluster first, then run
 #   hack/local-e2e.sh --protection   # also test the Protection API afterwards
+#   hack/local-e2e.sh --crs          # full OWASP CRS on the quickstart route (SQLi, XSS, traversal, scanner)
 #   hack/local-e2e.sh --runtime podman  # force Podman (default: docker if it answers, else podman)
 #   hack/local-e2e.sh --cleanup      # delete the Kind cluster and exit
 #
@@ -33,6 +34,7 @@ OPERATOR_REPO="${OPERATOR_REPO:-kubewaf-operator}"   # tag = hash of the built b
 KEEP="${KEEP:-true}"        # keep the cluster after the run (false = delete on exit)
 REUSE="${REUSE:-true}"      # reuse an existing cluster with CLUSTER_NAME
 PROTECTION="${PROTECTION:-false}"
+CRS="${CRS:-false}"
 LOCAL_PORT="${LOCAL_PORT:-18080}"   # port-forward fallback port on localhost
 REACH="${REACH:-auto}"      # auto | nodeport | port-forward
 
@@ -43,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --fresh) REUSE=false ;;
     --no-keep) KEEP=false ;;
     --protection) PROTECTION=true ;;
+    --crs) CRS=true ;;
     --port-forward) REACH=port-forward ;;
     --runtime)
       shift
@@ -50,7 +53,7 @@ while [[ $# -gt 0 ]]; do
       RUNTIME_CLI="$1"
       ;;
     --runtime=*) RUNTIME_CLI="${1#--runtime=}" ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -362,6 +365,10 @@ kubectl rollout status deployment/kubewaf -n kubewaf-system --timeout=180s
 # ---------------------------------------------------------------- 6 test
 log "6/6 SecPolicy probes and live rule edit"
 FIX="$ROOT/test/e2e/v1alpha1/block-sqlmap.yaml"
+if kubectl get protection crs -n default >/dev/null 2>&1; then
+  info "removing leftover Protection crs so the gateway SecPolicy covers the quickstart route"
+  kubectl delete protection crs -n default --wait=true
+fi
 ok=false
 for _ in $(seq 1 12); do   # webhook may need a few seconds after rollout
   if out="$(kubectl apply -f "$FIX" 2>&1)"; then echo "$out"; ok=true; break; fi
@@ -457,9 +464,38 @@ if [[ "$PROTECTION" == true ]]; then
   kubectl apply -f "$FIX" >/dev/null   # back to the SecPolicy fixture (rule matches sqlmap again)
 fi
 
+CRS_SUMMARY=""
+if [[ "$CRS" == true ]]; then
+  log "optional: full OWASP CRS on HTTPRoute backend"
+  kubectl apply -f "$ROOT/config/samples/waf/crs.yaml"
+  ok=false
+  for _ in $(seq 1 48); do
+    line="$(kubectl get protection crs -n default -o jsonpath='{range .status.conditions[*]}{.type}={.status}/{.reason} {end}' 2>/dev/null || true)"
+    info "protection crs: $line"
+    [[ " $line" == *" Ready=True/"* && "$line" == *"EngineReady=True"* && "$line" == *"Programmed=True"* ]] && { ok=true; break; }
+    sleep 5
+  done
+  $ok || die "Protection crs did not reach Ready/EngineReady/Programmed=True"
+  C_CLEAN=""; C_SQLI=""; C_XSS=""; C_TRAV=""; C_SCAN=""
+  for _ in $(seq 1 30); do
+    C_CLEAN="$(probe)"
+    C_SQLI="$(probe -G --data-urlencode "id=1' OR '1'='1")"
+    C_XSS="$(probe -G --data-urlencode "q=<script>alert(1)</script>")"
+    C_TRAV="$(probe -G --data-urlencode "file=../../etc/passwd")"
+    C_SCAN="$(probe -H 'User-Agent: sqlmap/1.0')"
+    info "probe crs clean=$C_CLEAN sqli=$C_SQLI xss=$C_XSS traversal=$C_TRAV scanner=$C_SCAN"
+    [[ "$C_CLEAN" == 200 && "$C_SQLI" == 403 && "$C_XSS" == 403 && "$C_TRAV" == 403 && "$C_SCAN" == 403 ]] && break
+    sleep 3
+  done
+  [[ "$C_CLEAN" == 200 && "$C_SQLI" == 403 && "$C_XSS" == 403 && "$C_TRAV" == 403 && "$C_SCAN" == 403 ]] \
+    || die "want crs clean=200 sqli=403 xss=403 traversal=403 scanner=403, got clean=$C_CLEAN sqli=$C_SQLI xss=$C_XSS traversal=$C_TRAV scanner=$C_SCAN"
+  CRS_SUMMARY=" crs clean=$C_CLEAN sqli=$C_SQLI xss=$C_XSS traversal=$C_TRAV scanner=$C_SCAN"
+  kubectl delete protection crs -n default --wait=true >/dev/null
+fi
+
 RESULT=PASS
-printf '\n\033[1;32mPASS\033[0m clean=%s sqlmap=%s after_edit sqlmap=%s badbot=%s edit_applied=%ss%s\n' \
-  "$CLEAN" "$SQLMAP" "$E_SQL" "$E_BOT" "$EDIT_S" "$PROT_SUMMARY"
+printf '\n\033[1;32mPASS\033[0m clean=%s sqlmap=%s after_edit sqlmap=%s badbot=%s edit_applied=%ss%s%s\n' \
+  "$CLEAN" "$SQLMAP" "$E_SQL" "$E_BOT" "$EDIT_S" "$PROT_SUMMARY" "$CRS_SUMMARY"
 cat <<EOF
 
 Try it yourself:

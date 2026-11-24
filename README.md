@@ -80,6 +80,8 @@ spec:
 - `@crs-setup.conf`, placement `BeforeCRS`, order 20
 - `@owasp_crs/*.conf`, placement `AfterCRS`, order 10
 
+`config/samples/waf/crs.yaml` is that ruleset as a Protection on the quickstart HTTPRoute: paranoia 1, Blocking, RequestOnly. Comments in that file show `paranoia: 2`, `inboundAnomalyThreshold`, and `removeIds`. `config/samples/seclang/crs.yaml` is the same bundle as Include plus a SecAction id 900991 (`engine: "On"`). Apply only one of them to a given route.
+
 A ConfigMap include is mounted under `/etc/kubewaf/seclang`. `@coraza.conf` stays in the filter preamble.
 
 An HTTPRoute `SecPolicy` replaces the Gateway policy for that route. It does not stack a second filter.
@@ -98,11 +100,12 @@ bash test/e2e/v1alpha1/run.sh
 
 The CI Kind script needs Docker, kind, kubectl, and Helm. It installs Envoy Gateway v1.10.0 and expects a clean GET to return 200 and `User-Agent: sqlmap/1.0` to return 403.
 
-`hack/local-e2e.sh` is the same stack for a machine you can reuse. Run it from anywhere inside the checkout (`make local-e2e` does the same). It keeps the Kind cluster unless you pass `--no-keep`. `--fresh` deletes that cluster first, `--protection` adds the Protection 200/403 case, `--port-forward` reaches the Gateway through kubectl, and `--cleanup` deletes the cluster and exits. The runtime is Docker when `docker info` succeeds, otherwise Podman (`KIND_EXPERIMENTAL_PROVIDER=podman`). Override with `--runtime docker|podman` or `CONTAINER_RUNTIME`. Rootless Podman uses port-forward, same as rootless Docker. On NixOS, `nix-shell -p podman` supplies a missing runtime. Kind on rootless Podman needs cgroup v2 delegated to the user; if create fails, rerun under `systemd-run --scope --user`.
+`hack/local-e2e.sh` is the same stack for a machine you can reuse. Run it from anywhere inside the checkout (`make local-e2e` does the same). It keeps the Kind cluster unless you pass `--no-keep`. `--fresh` deletes that cluster first, `--protection` adds the Protection 200/403 case, `--crs` applies `config/samples/waf/crs.yaml` to the quickstart route and expects a clean GET 200 and SQLi, XSS, path traversal, and a scanner User-Agent to return 403, `--port-forward` reaches the Gateway through kubectl, and `--cleanup` deletes the cluster and exits. The runtime is Docker when `docker info` succeeds, otherwise Podman (`KIND_EXPERIMENTAL_PROVIDER=podman`). Override with `--runtime docker|podman` or `CONTAINER_RUNTIME`. Rootless Podman uses port-forward, same as rootless Docker. On NixOS, `nix-shell -p podman` supplies a missing runtime. Kind on rootless Podman needs cgroup v2 delegated to the user; if create fails, rerun under `systemd-run --scope --user`.
 
 ```bash
 hack/local-e2e.sh
 hack/local-e2e.sh --fresh --protection
+hack/local-e2e.sh --crs
 hack/local-e2e.sh --runtime podman
-CONTAINER_RUNTIME=podman make local-e2e ARGS='--protection'
+CONTAINER_RUNTIME=podman make local-e2e ARGS='--crs'
 ```
