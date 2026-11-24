@@ -1,0 +1,49 @@
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecRule
+metadata:
+  name: block-sqlmap
+  namespace: default
+spec:
+  order: 10
+  metadata:
+    id: 100001
+    phase: 1
+    message: scanner user-agent
+    severity: CRITICAL
+    tags:
+      - scanner
+      - sqlmap
+  chain:
+    - targets:
+        - name: REQUEST_HEADERS
+          selector: User-Agent
+      operator:
+        name: rx
+        value: (?i)sqlmap
+      actions:
+        disruptive:
+          type: deny
+        data:
+          - type: status
+            value: "403"
+        nonDisruptive:
+          - type: log
+          - type: auditlog
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecPolicy
+metadata:
+  name: edge
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: eg
+  rules:
+    - kind: SecRule
+      name: block-sqlmap
+  engine: "On"
+  inspection: RequestOnly
+  requestBodyAccess: true
+  responseBodyAccess: false

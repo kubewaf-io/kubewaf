@@ -19,12 +19,23 @@ spec:
     singular: secaction
   scope: Namespaced
   versions:
-  - name: v1beta1
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.metadata.id
+      name: ID
+      type: integer
+    - jsonPath: .spec.metadata.phase
+      name: Phase
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: |-
-          SecAction is the Schema for the secactions API.
-          SecAction defines an unconditional action (like a global SecAction) in the WAF.
+        description: SecAction is an unconditional SecAction directive.
         properties:
           apiVersion:
             description: |-
@@ -44,292 +55,249 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of SecAction.
+            description: SecActionSpec is one unconditional SecAction.
             properties:
-              data:
+              actions:
                 description: |-
-                  DataActionTypes are not executed themselves; they provide parameters or values
-                  that other actions use.
-
-                  The only commonly seen one is status (e.g., status:403 or status:429),
-                  which specifies the HTTP response code for blocking/redirect actions.
-                items:
-                  properties:
-                    dataActionType:
-                      description: |-
-                        DataActionType specifies actions that deal with data manipulation, response control,
-                        or namespace registration — typically used in very specific contexts.
-
-                        These are less common than disruptive or non-disruptive actions.
-
-                        ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
-                        Coraza:     https://coraza.io/docs/seclang/actions
-
-                        Allowed values:
-
-                          - status  : sets the HTTP response status code when a disruptive action is triggered
-                          - xlmns   : registers an XML namespace prefix for XPath expressions
-                      enum:
-                      - status
-                      - xmlns
-                      type: string
-                    value:
-                      type: string
-                  required:
-                  - dataActionType
-                  type: object
-                type: array
-              disruptive:
-                description: |-
-                  DisruptiveAction specifies an action that interrupts, blocks, allows, or otherwise alters
-                  the normal flow of the HTTP transaction when a rule matches.
-
-                  These are the core "decision" actions in ModSecurity/Coraza rulesets.
-                  Only one disruptive action is allowed per rule/chain (the last one specified wins).
-
-                  omitempty: chain children must omit this field entirely. Emitting
-                  `disruptive: null` fails OpenAPI validation (type object, not nullable).
+                  Actions is the SecLang action list minus metadata (those are Metadata)
+                  and minus chain (the chain structure emits that).
                 properties:
-                  disruptiveActionType:
-                    description: |-
-                      DisruptiveActionType specifies an action that interrupts, blocks, allows, or otherwise alters
-                      the normal flow of the HTTP transaction when a rule matches.
-
-                      These are the core "decision" actions in ModSecurity/Coraza rulesets.
-                      Only one disruptive action is allowed per rule/chain (the last one specified wins).
-
-                      ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
-                      Coraza:     https://coraza.io/docs/seclang/actions
-
-                      Allowed values:
-
-                        - allow     : explicitly allows the transaction (whitelisting / bypass)
-                        - block     : applies the default blocking behavior (SecDefaultAction, usually deny/403)
-                        - deny      : blocks with an error response (e.g. 403)
-                        - drop      : silently drops the TCP connection (no response sent)
-                        - pass      : continues processing without blocking (match logged/scored but no interrupt)
-                        - pause     : delays processing for milliseconds (throttling/testing, rarely used)
-                        - proxy     : proxies/redirects request to another backend (limited support)
-                        - redirect  : issues an HTTP redirect to a new URL
-                    enum:
-                    - allow
-                    - block
-                    - deny
-                    - drop
-                    - pass
-                    - pause
-                    - proxy
-                    - redirect
-                    type: string
-                  value:
-                    type: string
-                required:
-                - disruptiveActionType
+                  data:
+                    items:
+                      properties:
+                        type:
+                          enum:
+                          - status
+                          - xmlns
+                          type: string
+                        value:
+                          maxLength: 512
+                          type: string
+                      required:
+                      - type
+                      type: object
+                      x-kubernetes-validations:
+                      - message: status takes an HTTP code and xmlns takes prefix=url
+                        rule: (self.type == 'status' && self.value.matches('^[1-5][0-9]{2}$'))
+                          || (self.type == 'xmlns' && self.value.matches('^[^=]+=.+$'))
+                    maxItems: 8
+                    type: array
+                  disruptive:
+                    properties:
+                      type:
+                        enum:
+                        - allow
+                        - block
+                        - deny
+                        - drop
+                        - pass
+                        - pause
+                        - proxy
+                        - redirect
+                        type: string
+                      value:
+                        description: |-
+                          Value is the argument: allow:phase, allow:request, pause:<ms>,
+                          proxy:<url>, redirect:<url>. Empty for deny, drop, block, pass.
+                        maxLength: 2048
+                        type: string
+                    required:
+                    - type
+                    type: object
+                    x-kubernetes-validations:
+                    - message: disruptive action value does not match the action type
+                      rule: (self.type in ['deny','drop','block','pass'] && (!has(self.value)
+                        || size(self.value) == 0)) || (self.type == 'allow' && (!has(self.value)
+                        || size(self.value) == 0 || self.value == 'phase' || self.value
+                        == 'request')) || (self.type == 'pause' && has(self.value)
+                        && self.value.matches('^[0-9]+$')) || (self.type in ['proxy','redirect']
+                        && has(self.value) && size(self.value) > 0)
+                  flow:
+                    items:
+                      properties:
+                        type:
+                          description: chain is rejected. skip and skipAfter are the
+                            accepted types.
+                          enum:
+                          - skip
+                          - skipAfter
+                          - chain
+                          type: string
+                        value:
+                          maxLength: 64
+                          type: string
+                      required:
+                      - type
+                      - value
+                      type: object
+                      x-kubernetes-validations:
+                      - message: skip takes a positive integer and skipAfter takes
+                          a marker name
+                        rule: (self.type == 'skip' && self.value.matches('^[1-9][0-9]*$'))
+                          || (self.type == 'skipAfter' && self.value.matches('^[A-Za-z_][A-Za-z0-9_-]*$'))
+                          || self.type == 'chain'
+                    maxItems: 8
+                    type: array
+                  nonDisruptive:
+                    items:
+                      properties:
+                        type:
+                          enum:
+                          - append
+                          - prepend
+                          - auditlog
+                          - capture
+                          - ctl
+                          - deprecatevar
+                          - exec
+                          - expirevar
+                          - initcol
+                          - log
+                          - logdata
+                          - multiMatch
+                          - noauditlog
+                          - nolog
+                          - sanitiseArg
+                          - sanitizeArg
+                          - sanitiseMatched
+                          - sanitizeMatched
+                          - sanitiseMatchedBytes
+                          - sanitizeMatchedBytes
+                          - sanitiseRequestHeader
+                          - sanitizeRequestHeader
+                          - sanitiseResponseHeader
+                          - sanitizeResponseHeader
+                          - setenv
+                          - setrsc
+                          - setsid
+                          - setuid
+                          - setvar
+                          type: string
+                        value:
+                          maxLength: 2048
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    maxItems: 32
+                    type: array
                 type: object
-              flow:
-                description: |-
-                  FlowActionTypes control how rule evaluation proceeds within the current processing phase.
-
-                  The most frequently used is chain, which links multiple conditions together
-                  (creating AND logic across rules). In chained rules, only the first rule should
-                  contain a disruptive action.
-
-                  Other examples: skip (skip the next N rules), skipAfter (jump to a marker).
-                items:
-                  properties:
-                    flowActionType:
-                      description: |-
-                        FlowActionType specifies a flow-control (rule chaining / skipping) action as defined in ModSecurity / Coraza.
-
-                        These actions influence rule evaluation order and chaining rather than directly blocking or logging.
-
-                        ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
-                        Coraza:     https://coraza.io/docs/seclang/actions
-
-                        Allowed values:
-
-                          - chain     : links this rule to the next one(s), creating AND logic (only first rule in chain can be disruptive)
-                          - skip      : skips the next N rules in the current phase on match
-                          - skipAfter : jumps forward to after a SecMarker with the given label on match
-                      enum:
-                      - chain
-                      - skip
-                      - skipAfter
-                      type: string
-                    value:
-                      type: string
-                  required:
-                  - flowActionType
-                  - value
-                  type: object
-                type: array
+                x-kubernetes-validations:
+                - message: chain is emitted from the chain list, not from a flow action
+                  rule: '!has(self.flow) || self.flow.all(f, f.type != ''chain'')'
+                - message: action value does not match the action type
+                  rule: '!has(self.nonDisruptive) || self.nonDisruptive.all(a, (a.type
+                    in [''auditlog'',''capture'',''log'',''multiMatch'',''noauditlog'',''nolog'',''sanitiseMatched'',''sanitizeMatched'']
+                    && (!has(a.value) || size(a.value) == 0)) || a.type in [''sanitiseMatchedBytes'',''sanitizeMatchedBytes'']
+                    || (a.type in [''append'',''prepend'',''ctl'',''deprecatevar'',''exec'',''expirevar'',''initcol'',''logdata'',''sanitiseArg'',''sanitizeArg'',''sanitiseRequestHeader'',''sanitizeRequestHeader'',''sanitiseResponseHeader'',''sanitizeResponseHeader'',''setenv'',''setrsc'',''setsid'',''setuid'',''setvar'']
+                    && has(a.value) && size(a.value) > 0))'
+              markerAfter:
+                maxLength: 64
+                pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+                type: string
               metadata:
-                description: Metadata holds phase, comment and other identification
-                  for the SecAction.
+                description: |-
+                  Metadata maps onto SecLang metadata actions.
+                  id and phase are emitted first. The rest follow in the canonical order.
                 properties:
-                  comment:
-                    description: |-
-                      Comment is an arbitrary human-readable note attached to the rule.
-                      Not sent to the engine; used only for documentation and tooling.
-
-                      Example: comment:'This rule protects against CVE-2023-1234'
+                  accuracy:
                     type: string
                   id:
-                    description: |-
-                      Id is the unique numeric identifier of the rule.
-                      Used for rule updates, removal, and referencing (SecRuleRemoveById, …).
-
-                      Optional: when omitted (or 0), the SecRule controller allocates a cluster-unique
-                      id from the SecRuleIDPool singleton (default range 100000–999999) and records it
-                      on status.ruleId / status.assignedIds. Prefer explicit ids for CRS/shared rules;
-                      omit for custom rules and let the pool assign.
-
-                      Example: id:900100
+                    maximum: 2147483647
+                    minimum: 1
                     type: integer
                   maturity:
-                    description: |-
-                      Maturity indicates the maturity level of the rule (CRS-specific).
-                      Range: 0–9 (9 = production-ready, extensively tested).
-                      Used by OWASP Core Rule Set to manage rule stability and false-positive risk.
-
-                      Example: maturity:9
                     type: string
                   message:
-                    description: |-
-                      Msg is the human-readable message describing what the rule detects.
-                      Appears in audit logs and alerts when the rule matches.
-
-                      Example: msg:'SQL Injection Attempt'
+                    maxLength: 2048
                     type: string
                   phase:
                     description: |-
-                      Phase defines in which processing phase the rule executes.
-                      Valid values: 1 (Request Headers), 2 (Request Body),
-                      3 (Response Headers), 4 (Response Body), 5 (Logging).
-
-                      Example: phase:2
-                    type: string
+                      Phase is 1 request headers, 2 request body, 3 response headers,
+                      4 response body, 5 logging.
+                    maximum: 5
+                    minimum: 1
+                    type: integer
                   revision:
-                    description: |-
-                      Rev is the revision of this specific rule (CRS-specific).
-                      Allows the same id to be updated over time while tracking changes.
-
-                      Example: rev:'2.1.3'
                     type: string
                   severity:
-                    description: |-
-                      Severity defines how serious a match is (used for alert prioritization).
-                      Can be numeric (0–7) or text (CRITICAL, ERROR, WARNING, NOTICE, INFO).
-
-                      Example: severity:CRITICAL or severity:2
+                    pattern: ^([0-7]|EMERGENCY|ALERT|CRITICAL|ERROR|WARNING|NOTICE|INFO|DEBUG)$
                     type: string
                   tags:
-                    description: |-
-                      Tags categorise the rule (multiple allowed). Used for filtering,
-                      grouping, and removal (SecRuleRemoveByTag).
-                      Common CRS tags: WEB_ATTACK/XSS, OWASP_CRS, paranoia-level/1, etc.
-
-                      The SecRule controller also mirrors each tag onto the CR's Kubernetes
-                      labels as seclang.kubewaf.io/tag.<sanitized>=true for RuleSet selectors.
-
-                      Example: tag:'WEB_ATTACK/SQL_INJECTION', tag:'paranoia-level/1'
                     items:
                       type: string
+                    maxItems: 32
                     type: array
                   version:
-                    description: |-
-                      Ver is the version of the rule set this rule belongs to (CRS-specific).
-
-                      Example: ver:'CRS/4.0.0'
                     type: string
+                required:
+                - id
+                - phase
                 type: object
-              non-disruptive:
+              order:
+                default: 100
+                format: int32
+                type: integer
+              placement:
+                default: AfterCRS
                 description: |-
-                  NonDisruptiveActionTypes are side-effect actions that run whenever a rule matches,
-                  without ever changing the rule evaluation flow or transaction outcome.
-
-                  These actions always execute — including inside chained rules and in detection-only mode.
-                  They handle logging, scoring, tagging, variable updates, transformations, metadata,
-                  and other utility tasks.
-
-                  Most real-world rules contain many of these (often the majority of the action list).
-                  Common examples: msg, tag, severity, setvar, capture, log / nolog, t:*, ctl, initcol, exec.
-                items:
-                  properties:
-                    nonDisruptiveActionType:
-                      description: |-
-                        NonDisruptiveActionType specifies a non-disruptive action as defined in ModSecurity / Coraza.
-
-                        ModSecurity: https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29#actions
-                        Coraza:     https://coraza.io/docs/seclang/actions
-
-                        Allowed values:
-
-                          - append          : appends a value to a collection variable (TX, SESSION, IP, ...)
-                          - auditlog        : forces logging of the rule match to the audit log
-                          - capture         : stores regex capture groups into TX.0 … TX.9
-                          - ctl             : runtime control (ruleEngine, auditEngine, requestBodyAccess, …)
-                          - deprecatevar    : marks a persistent variable for removal at end of phase
-                          - exec            : executes an external script/binary
-                          - expirevar       : sets expiration time on a persistent collection variable
-                          - initcol         : initializes a persistent collection (IP, SESSION, …)
-                          - log             : enables normal (non-audit) logging
-                          - logdata         : adds custom data to the audit log entry
-                          - multimatch      : tests every occurrence of a variable (instead of stopping at first match)
-                          - noauditlog      : prevents this rule from being written to the audit log
-                          - nolog           : prevents normal logging of this rule
-                          - sanitiseArg / sanitiseMatched / sanitiseMatchedBytes / sanitiseRequestHeader / sanitiseResponseHeader : various sanitization actions
-                          - setenv          : sets an environment variable
-                          - setrsc          : sets the RESOURCE collection identifier
-                          - setsid          : sets the session identifier
-                          - setuid          : sets the user identifier
-                          - setvar          : creates, modifies, increments or deletes variables
-                      enum:
-                      - append
-                      - auditlog
-                      - capture
-                      - ctl
-                      - deprecatevar
-                      - exec
-                      - expirevar
-                      - initcol
-                      - log
-                      - logdata
-                      - multiMatch
-                      - noauditlog
-                      - nolog
-                      - sanitiseArg
-                      - sanitiseMatched
-                      - sanitiseMatchedBytes
-                      - sanitiseRequestHeader
-                      - sanitiseResponseHeader
-                      - setenv
-                      - setrsc
-                      - setsid
-                      - setuid
-                      - setvar
-                      type: string
-                    value:
-                      type: string
-                  required:
-                  - nonDisruptiveActionType
-                  type: object
-                type: array
+                  Placement selects which file a SecPolicy writes the object into.
+                  BeforeCRS is included first. AfterCRS is included second.
+                  CRS itself is an Include object, not a boolean on the policy.
+                enum:
+                - BeforeCRS
+                - AfterCRS
+                type: string
               transformations:
-                description: Transformations to apply before other processing.
                 items:
-                  description: |-
-                    Transformation represents a data transformation function applied to variables
-                    before the operator is evaluated. Transformations can be chained.
+                  enum:
+                  - base64Decode
+                  - base64DecodeExt
+                  - base64Encode
+                  - cmdLine
+                  - compressWhitespace
+                  - cssDecode
+                  - escapeSeqDecode
+                  - hexDecode
+                  - hexEncode
+                  - htmlEntityDecode
+                  - jsDecode
+                  - length
+                  - lowercase
+                  - md5
+                  - none
+                  - normalisePath
+                  - normalizePath
+                  - normalisePathWin
+                  - normalizePathWin
+                  - parityEven7bit
+                  - parityOdd7bit
+                  - parityZero7bit
+                  - removeComments
+                  - removeCommentsChar
+                  - removeNulls
+                  - removeWhitespace
+                  - replaceComments
+                  - replaceNulls
+                  - sha1
+                  - sqlHexDecode
+                  - trim
+                  - trimLeft
+                  - trimRight
+                  - uppercase
+                  - urlDecode
+                  - urlDecodeUni
+                  - urlEncode
+                  - utf8toUnicode
                   type: string
                 type: array
+            required:
+            - metadata
             type: object
           status:
-            description: status defines the observed state of SecAction.
+            description: SecLangStatus is the compiled text of one object.
             properties:
               conditions:
-                description: Conditions represent the current state of the SecAction
-                  resource.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -388,37 +356,18 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              ruleSetRefs:
-                description: RuleSetRefs tracks which RuleSets reference this SecAction.
-                items:
-                  description: RuleSetRef identifies a RuleSet or a SecRule.
-                  properties:
-                    group:
-                      type: string
-                    kind:
-                      type: string
-                    name:
-                      type: string
-                    namespace:
-                      type: string
-                    version:
-                      type: string
-                  required:
-                  - group
-                  - kind
-                  - name
-                  - namespace
-                  - version
-                  type: object
-                type: array
-              secRuleString:
-                description: SecRuleString contains the rendered SecLang string for
-                  this action.
+              secLang:
+                description: SecLang is the rendered directive text, including a trailing
+                  SecMarker line.
                 type: string
             type: object
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: chain is not valid on SecAction
+          rule: '!has(self.spec.actions) || !has(self.spec.actions.flow) || self.spec.actions.flow.all(f,
+            f.type != ''chain'')'
     served: true
     storage: true
     subresources:

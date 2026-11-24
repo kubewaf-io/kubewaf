@@ -1,0 +1,1 @@
+SecRule INBOUND_DATA_ERROR "@rx x" "id:100001,phase:1,pass"

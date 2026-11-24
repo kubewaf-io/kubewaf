@@ -1,0 +1,1 @@
+SecRule &ARGS "@eq 0" "id:100001,phase:1,pass"

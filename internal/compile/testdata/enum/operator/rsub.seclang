@@ -1,0 +1,1 @@
+SecRule REQUEST_URI "@rsub x" "id:100001,phase:1,pass"

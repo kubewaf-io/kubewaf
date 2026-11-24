@@ -2,299 +2,112 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/)
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-%23161616.svg?logo=kubernetes&logoColor=white)](https://kubernetes.io/)
-[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/kubewaf)](https://artifacthub.io/packages/search?repo=kubewaf)
-[![Go Reference](https://pkg.go.dev/badge/github.com/kubewaf-io/kubewaf.svg)](https://pkg.go.dev/github.com/kubewaf-io/kubewaf)
-[![CI/CD](https://github.com/kubewaf-io/kubewaf/actions/workflows/test.yml/badge.svg)](https://github.com/kubewaf-io/kubewaf/actions/workflows/test.yml)
 
-**Kubernetes-native Web Application Firewall**
+Kubernetes operator that compiles `SecRule`, `SecAction`, and `Include` objects into SecLang and attaches them to Envoy Gateway with a dynamic module.
 
-Protect your Kubernetes workloads with ModSecurity-compatible rules and OWASP Core Rule Set (CRS) using native Kubernetes CRDs.
+The platform team owns the Envoy proxy. kubeWAF does not install Composer, patch `EnvoyProxy`, or patch `Gateway.spec.infrastructure.parametersRef`. It writes one `EnvoyExtensionPolicy` per `SecPolicy`, with the SecLang inline in the filter config. Data files for `@pmFromFile` still go in ConfigMap `kubewaf-seclang`.
 
-**Website:** [kubewaf.io](https://kubewaf.io)  
-**Contact:** [hello@kubewaf.io](mailto:hello@kubewaf.io)  
-**GitHub:** [kubewaf-io/kubewaf](https://github.com/kubewaf-io/kubewaf)
+This is a breaking replacement of the 0.1.x / `v1beta1` operator. There is no conversion webhook.
 
-## Overview
+## Install
 
-kubeWAF is a Kubernetes operator that lets you define, manage, and apply Web Application Firewall (WAF) rules directly through Kubernetes Custom Resources.
-
-It provides structured CRDs for SecRules and SecActions, converts them to ModSecurity SecLang, supports the OWASP CRS, and integrates with modern Kubernetes ingress and gateway solutions like Envoy Gateway.
-
-The project is currently **beta** (`v0.1.0-beta.1` chart; APIs are `v1beta1` and may still change). Prefer Helm installs and treat this as early production-preview, not a frozen GA. See [CHANGELOG.md](CHANGELOG.md) and [TODO.md](TODO.md).
-
-## Architecture
-
-kubeWAF consists of the following components:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      kubeWAF Operator                               │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
-│  │ SecRule Reconciler│  │ RuleSet Reconciler│  │  WAF Reconciler  │   │
-│  └──────────────────┘  └──────────────────┘  └──────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
-          │                    │                    │
-          ▼                    ▼                    ▼
-   ┌────────────┐       ┌────────────┐       ┌────────────┐
-   │  SecRule   │       │  RuleSet   │       │    WAF     │
-   │ (WAF rules)│       │  (groups)  │       │ (providers)│
-   └────────────┘       └────────────┘       └────────────┘
-                                                  │
-                                                  ▼
-                                    ┌──────────────────────────┐
-                                    │  modsecurity-proxy-wasm  │
-                                    │  (Envoy Wasm filter)     │
-                                    └──────────────────────────┘
-```
-
-### Key Components
-
-| Component | Description |
-|-----------|-------------|
-| **SecRule CRD** | Defines individual WAF rules with ModSecurity syntax in Kubernetes YAML |
-| **RuleSet CRD** | Groups multiple SecRules using label selectors for deployment |
-| **WAF CRD** | Attaches RuleSets to Envoy Gateway, Istio, or Cilium via ECDS |
-| **CRS Converter** | Tool to import OWASP CRS rules into kubeWAF CRs |
-
-## Features
-
-### Current Features
-
-- **Structured SecRule CRD** (`seclang.kubewaf.io/v1beta1`): Define complex security rules using Kubernetes YAML with:
-  - Variables, operators, and actions in structured format
-  - Metadata (phase, severity, message, tags)
-  - Chaining support for multi-condition rules
-  - SecMarker support for flow control
-
-- **RuleSet CRD** (`waf.kubewaf.io/v1beta1`): Aggregate rules with:
-  - Label selector-based rule referencing
-  - Cross-namespace rule references
-  - Automatic finalizer management
-
-- **Automatic SecLang Generation**: Controllers convert CRs to valid ModSecurity SecLang strings stored in `.status.secRuleString`
-
-- **OWASP CRS Support**: 
-  - Tooling in `cmd/crs-converter` to convert OWASP Core Rule Set v4.x to kubeWAF CRs
-  - Pre-converted CRS sample rules in `config/samples/crs/`
-  - Full CRS rule compatibility (phase 1-5, transformations, chaining)
-
-- **Envoy Gateway Integration**: 
-  - WAF CRD for Kubernetes Gateway API integration
-  - Support for HTTPRoute, TCPRoute, and Gateway routing
-  - WebAssembly (Wasm) proxy integration with **modsecurity-proxy-wasm** (optional PoW via **pow-proxy-wasm**)
-
-- **Status & Conditions**: Proper Kubernetes status reporting with conditions (e.g., `Ready`, `ReferencesResolved`)
-
-- **Helm Chart**: Operator Helm chart (versioned pre-release; see `charts/kubewaf`)
-
-- **CI/CD Pipeline**: GitHub Actions workflows for testing, building, and releasing
-
-### Under Development / Beta gaps
-
-- Full HA/ops hardening (metrics TLS via cert-manager, coverage gates)
-- cert-manager-managed webhook cert rotation (Helm self-signed today)
-- Optional: release FTW with `E2E_FTW_INCLUDE=all` (full CRS corpus; very slow)
-
-## Documentation
-
-Product documentation is **not** in this monorepo. It lives in a separate docs
-repo ([kubewaf-io/website](https://github.com/kubewaf-io/website)) and publishes to
-**[kubewaf.io](https://kubewaf.io)**.
-
-| Topic | Link |
-|-------|------|
-| Docs portal | [kubewaf.io/docs/home/](https://kubewaf.io/docs/home/) |
-| Beta status | [Beta status](https://kubewaf.io/docs/get-started/beta/) |
-| Install (Helm) | [Installation](https://kubewaf.io/docs/platform/installation/) |
-| Quick start | [Quick start](https://kubewaf.io/docs/get-started/quickstart/) |
-| Engine matrix | [WAF engine](https://kubewaf.io/docs/platform/engine/) |
-| Contributing | [Contributing](https://kubewaf.io/docs/contribute/contributing/) · root stub [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Security reports | [Security](https://kubewaf.io/docs/contribute/security/) · root stub [SECURITY.md](SECURITY.md) |
-
-Local docs preview (optional):
+1. Install [Envoy Gateway v1.10](https://gateway.envoyproxy.io/).
+2. Apply the platform `EnvoyProxy` and point the Gateway at it. The sample is `config/samples/envoygateway/platform-envoyproxy.yaml`. It registers `composer` from `ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0` (copied by an init container that has `cp`) and sets `GODEBUG=cgocheck=0` and `doNotClose: true`. Mount ConfigMap `kubewaf-seclang` at `/etc/kubewaf/seclang` only when a policy uses `@pmFromFile` or `@ipMatchFromFile`.
+3. Install this chart:
 
 ```bash
-git clone https://github.com/kubewaf-io/website.git website2   # or your docs checkout path
-cd website2 && make serve
+helm install kubewaf charts/kubewaf -n kubewaf-system --create-namespace
 ```
 
-## Quick Start (TL;DR)
+The Deployment runs `cmd/operator`. Metrics are on 8080 and health probes on 8081. It does not listen on 18001, 18002, or 5005.
 
-### 1. Install the Operator (Helm)
+### Hard upgrade from 0.1.x
 
-```bash
-helm repo add kubewaf https://kubewaf-io.github.io/charts
-helm repo update
-helm install kubewaf kubewaf/kubewaf -n kubewaf-system --create-namespace --version 0.1.0-beta.1
-# or from this repo: helm install kubewaf ./charts/kubewaf -n kubewaf-system --create-namespace
+`secrules.seclang.kubewaf.io` and `secactions.seclang.kubewaf.io` cannot serve v1beta1 and v1alpha1 together.
+
+1. Save `kubectl get secrules,secactions -A -o yaml`. On v1beta1 the rendered text is `status.secRuleString`.
+2. `helm uninstall` the 0.1.x release.
+3. Delete CRDs `secrules`, `secactions`, `phraselists`, `iplists`, `secruleidpools` (`seclang.kubewaf.io`) and `rulesets`, `wafs` (`waf.kubewaf.io`).
+4. Delete objects of those kinds. They are not converted.
+5. Install this chart and re-author rules as v1alpha1. `RuleSet`, `PhraseList`, `IPList`, `SecRuleIDPool`, and the Wasm / ECDS / extension-server ports are gone.
+
+## Attach a rule
+
+`config/samples/seclang/block-sqlmap.yaml` denies `User-Agent` values that contain `sqlmap`:
+
+```yaml
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecRule
+metadata:
+  name: block-sqlmap
+spec:
+  order: 10
+  metadata:
+    id: 100001
+    phase: 1
+  chain:
+    - targets:
+        - name: REQUEST_HEADERS
+          selector: User-Agent
+      operator:
+        name: rx
+        value: (?i)sqlmap
+      actions:
+        disruptive:
+          type: deny
+        data:
+          - type: status
+            value: "403"
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecPolicy
+metadata:
+  name: edge
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: eg
+  rules:
+    - kind: SecRule
+      name: block-sqlmap
+  engine: "On"
+  inspection: RequestOnly
 ```
 
-### 2. Follow the Full Quick Start
+`Include` is the same shape for files. OWASP CRS is two objects, not a chart:
 
-See the [Quick Start Guide](https://kubewaf.io/docs/get-started/quickstart/) (Envoy Gateway + rules + CRS).
+- `@crs-setup.conf`, placement `BeforeCRS`, order 20
+- `@owasp_crs/*.conf`, placement `AfterCRS`, order 10
 
-## Using the CRS Converter
+`config/samples/waf/crs.yaml` is that ruleset as a Protection on the quickstart HTTPRoute: paranoia 1, Blocking, RequestOnly. Comments in that file show `paranoia: 2`, `inboundAnomalyThreshold`, and `removeIds`. `config/samples/seclang/crs.yaml` is the same bundle as a RuleSet the SecPolicy selects with `ruleSetRefs` (`engine: "On"`). `hack/local-e2e.sh --crs` applies that file. Apply only one of them to a given route.
 
-Convert OWASP Core Rule Set files to kubeWAF SecRule CRs:
+`RuleSet` and `ClusterRuleSet` are ordered references. `SecPolicy.spec.rules` is unchanged. Cross-namespace names need a `gateway.networking.k8s.io/v1` ReferenceGrant in the target namespace; the chart does not install that CRD. `config/samples/seclang/scanners.yaml` is three scanner SecRules, a RuleSet, the grant, and a SecPolicy in another namespace. Decisions are in `docs/rulesets.md`.
 
-```bash
-# Build the converter
-make crs-converter
+A ConfigMap include is mounted under `/etc/kubewaf/seclang`. `@coraza.conf` stays in the filter preamble.
 
-# Convert a directory of CRS rules (default: one SecRule CR per logical rule)
-bin/crs-converter \
-  -input=path/to/coreruleset/rules \
-  -output-dir=config/samples/crs \
-  -crs-version=4.27.0 \
-  -namespace=default \
-  -mode=one
+An HTTPRoute `SecPolicy` replaces the Gateway policy for that route. It does not stack a second filter.
 
-# Convert a single file (legacy multi-rule bag per file: -mode=bag)
-bin/crs-converter \
-  -input=hack/crs-converted/REQUEST-911-METHOD-ENFORCEMENT.conf \
-  -output-dir=config/samples/crs
-```
+## Reload
 
-The converter generates multi-document Kubernetes YAML with:
-- One `SecRule` CR per logical rule (`metadata` + `match[]` + `actions`, `order`/`markerAfter`)
-- Labels: `coreruleset/*`, `seclang.kubewaf.io/id`, tags
-- Chains and SecMarkers preserved from the original CRS files
-
-## Project Structure
-
-```
-kubewaf/
-├── api/                          # CRDs (seclang + waf groups)
-├── cmd/                          # Operator + crs-converter
-├── config/                       # CRDs, RBAC, samples (incl. CRS)
-├── engines/                      # Proxy-Wasm **git submodules**
-│   ├── modsecurity-proxy-wasm/   # → kubewaf-io/modsecurity-proxy-wasm
-│   └── pow-proxy-wasm/           # → kubewaf-io/pow-proxy-wasm
-├── internal/                     # Controllers, dataplane (ECDS/slots), references
-├── charts/kubewaf/               # Helm chart
-├── test/e2e/                     # Provider + FTW e2e
-└── (docs site is a separate repo — see Documentation above)
-```
-
-Wasm engine sources are **submodules** under [`engines/`](engines/). After clone:
-
-```bash
-git submodule update --init --recursive
-# or: make engines-submodules
-make wasm-build   # → dist/wasm/
-```
+The `SecMarker` in the filter config is the hash of the bundle. Envoy re-reads Include files only when that marker changes. If the first load is rejected because kubelet has not projected the ConfigMap yet, the operator appends `rN` to the marker and publishes again. Envoy Gateway keeps the previous listener and does not put that rejection on the Gateway status, so the operator reads it from the envoy container log (and from a Gateway or `EnvoyExtensionPolicy` condition when one is present).
 
 ## Development
 
-### Setup
-
 ```bash
-# Clone the repository (engines/ holds Proxy-Wasm submodules)
-git clone --recurse-submodules https://github.com/kubewaf-io/kubewaf.git
-cd kubewaf
-# If you already cloned without submodules:
-#   git submodule update --init --recursive
-#   # or: make engines-submodules
-
-# Install dependencies
-make install
-make generate
-make fmt
-```
-
-### Running Locally
-
-```bash
-# Local stack: Kind + Envoy Gateway + demo + full CRS (no operator image/Helm)
-make local-demo
-# Optional in-cluster operator:
-make local-demo-with-operator
-# Or process-local operator against the Kind kubeconfig:
-make run
-make local-demo-smoke      # needs a running operator
-make local-demo-teardown
-
-# Run the operator against an existing kubeconfig (no Kind bootstrap)
-make run
-
-# Run tests
 make test
-make test-e2e
-
-# Build container image
-make docker-build
-
-# Push container image
-make docker-push IMG=your-registry/kubewaf:latest
-
-# Generate manifests
-make manifests
+make build
+bash test/e2e/v1alpha1/run.sh
 ```
 
-### Available Make Targets
+The CI Kind script needs Docker, kind, kubectl, and Helm. It installs Envoy Gateway v1.10.0 and expects a clean GET to return 200 and `User-Agent: sqlmap/1.0` to return 403.
 
-| Target | Description |
-|------------|------------------------------------------|
-| `make local-demo` | Kind + EG + demo + full CRS (no operator deploy) |
-| `make local-demo-with-operator` | local-demo + image build/load + Helm install |
-| `make local-demo-smoke` | Curl benign/scanner check against local demo |
-| `make local-demo-teardown` | Delete the local Kind cluster |
-| `make install` | Install CRDs into a cluster |
-| `make generate` | Generate controller code and deepcopies |
-| `make fmt` | Format Go source files |
-| `make vet` | Run Go vet on source files |
-| `make lint` | Run golangci-lint |
-| `make lint-fix` | Auto-fix linting issues |
-| `make test` | Run unit tests |
-| `make test-e2e` | Run end-to-end tests |
-| `make docker-build` | Build Docker image |
-| `make docker-push` | Push Docker image |
-| `make crs-converter` | Build CRS converter binary |
-| `make manifests` | Generate CRDs and manifests |
-| `make deploy` | Deploy operator to cluster |
-| `make undeploy` | Undeploy operator from cluster |
-| `make help` | Show all available targets |
+`hack/local-e2e.sh` is the same stack for a machine you can reuse. Run it from anywhere inside the checkout (`make local-e2e` does the same). It keeps the Kind cluster unless you pass `--no-keep`. `--fresh` deletes that cluster first, `--protection` adds the Protection 200/403 case, `--crs` applies `config/samples/waf/crs.yaml` to the quickstart route and expects a clean GET 200 and SQLi, XSS, path traversal, and a scanner User-Agent to return 403, `--port-forward` reaches the Gateway through kubectl, and `--cleanup` deletes the cluster and exits. The runtime is Docker when `docker info` succeeds, otherwise Podman (`KIND_EXPERIMENTAL_PROVIDER=podman`). Override with `--runtime docker|podman` or `CONTAINER_RUNTIME`. Rootless Podman uses port-forward, same as rootless Docker. On NixOS, `nix-shell -p podman` supplies a missing runtime. Kind on rootless Podman needs cgroup v2 delegated to the user; if create fails, rerun under `systemd-run --scope --user`.
 
-## Contributing
-
-Contributions are welcome. **Canonical guides** are published on kubewaf.io
-(root files are stubs):
-
-- [CONTRIBUTING.md](CONTRIBUTING.md) → [docs/contribute/contributing](https://kubewaf.io/docs/contribute/contributing/)
-- [SECURITY.md](SECURITY.md) → [docs/contribute/security](https://kubewaf.io/docs/contribute/security/)
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) → [docs/contribute/code-of-conduct](https://kubewaf.io/docs/contribute/code-of-conduct/)
-- Roadmap: [TODO.md](TODO.md) · Changelog: [CHANGELOG.md](CHANGELOG.md)
-
-### High-priority Areas
-
-- **Testing**: Expand unit coverage and keep EG e2e green
-- **Webhooks**: Expand validation coverage; cert-manager rotation
-- **Documentation**: improve the separate [website](https://github.com/kubewaf-io/website) repo
-
-### Getting Help
-
-- Open an [issue](https://github.com/kubewaf-io/kubewaf/issues) for bugs or feature requests
-- Join our [Discussions](https://github.com/kubewaf-io/kubewaf/discussions) for questions
-- Check [TODO.md](TODO.md) and [Beta status](https://kubewaf.io/docs/get-started/beta/)
-
-## License
-
-Copyright © 2025 Buzz-IT GmbH.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
----
-
-Made with ❤️ in Bern, Switzerland by [Buzz-IT GmbH](https://buzz-it.ch)
-
+```bash
+hack/local-e2e.sh
+hack/local-e2e.sh --fresh --protection
+hack/local-e2e.sh --crs
+hack/local-e2e.sh --runtime podman
+CONTAINER_RUNTIME=podman make local-e2e ARGS='--crs'
+```

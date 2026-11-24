@@ -1,0 +1,17 @@
+apiVersion: waf.kubewaf.io/v1alpha1
+kind: Protection
+metadata:
+  name: edge
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: eg
+  mode: Blocking
+  inspection: RequestOnly
+  crs:
+    paranoia: 1
+  customRules:
+    - kind: SecRule
+      name: block-sqlmap
