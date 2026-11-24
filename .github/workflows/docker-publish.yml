@@ -10,10 +10,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Publishes every ko image the chart can pull:
-#   ghcr.io/<org>/kubewaf
-#   ghcr.io/<org>/kubewaf-subresource-api
-#   ghcr.io/<org>/kubewaf-probe-test-server
+# Publishes the operator image: ghcr.io/<org>/kubewaf
 jobs:
   publish-images:
     runs-on: ubuntu-latest
@@ -22,8 +19,6 @@ jobs:
       id-token: write
     outputs:
       controller-digest: ${{ steps.publish-controller.outputs.digest }}
-      subresource-api-digest: ${{ steps.publish-subresource-api.outputs.digest }}
-      probe-test-server-digest: ${{ steps.publish-probe-test-server.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -51,41 +46,7 @@ jobs:
           sbom-name: kubewaf
           sbom-repository: ghcr.io/${{ github.repository_owner }}/kubewaf
           signature-repository: ghcr.io/${{ github.repository_owner }}/kubewaf
-          main-path: ./cmd/
-        env:
-          REPOSITORY: ${{ github.repository }}
-      - name: Publish Subresource API
-        id: publish-subresource-api
-        uses: peak-scale/github-actions/make-ko-publish@a441cca016861c546ab7e065277e40ce41a3eb84 # v0.2.0
-        with:
-          makefile-target: ko-publish-subresource-api
-          registry: ghcr.io
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository_owner }}
-          version: ${{ github.ref_name }}
-          sign-image: true
-          sbom-name: kubewaf-subresource-api
-          sbom-repository: ghcr.io/${{ github.repository_owner }}/kubewaf-subresource-api
-          signature-repository: ghcr.io/${{ github.repository_owner }}/kubewaf-subresource-api
-          main-path: ./cmd/subresource-api
-        env:
-          REPOSITORY: ${{ github.repository }}
-      - name: Publish Probe Test Server
-        id: publish-probe-test-server
-        uses: peak-scale/github-actions/make-ko-publish@a441cca016861c546ab7e065277e40ce41a3eb84 # v0.2.0
-        with:
-          makefile-target: ko-publish-probe-test-server
-          registry: ghcr.io
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository_owner }}
-          version: ${{ github.ref_name }}
-          sign-image: true
-          sbom-name: kubewaf-probe-test-server
-          sbom-repository: ghcr.io/${{ github.repository_owner }}/kubewaf-probe-test-server
-          signature-repository: ghcr.io/${{ github.repository_owner }}/kubewaf-probe-test-server
-          main-path: ./cmd/probe-test-server
+          main-path: ./cmd/operator
         env:
           REPOSITORY: ${{ github.repository }}
   generate-provenance:
@@ -98,34 +59,6 @@ jobs:
     with:
       image: ghcr.io/${{ github.repository_owner }}/kubewaf
       digest: "${{ needs.publish-images.outputs.controller-digest }}"
-      registry-username: ${{ github.actor }}
-    secrets:
-      registry-password: ${{ secrets.GITHUB_TOKEN }}
-
-  generate-provenance-subresource-api:
-    needs: publish-images
-    permissions:
-      id-token: write
-      packages: write
-      actions: read
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
-    with:
-      image: ghcr.io/${{ github.repository_owner }}/kubewaf-subresource-api
-      digest: "${{ needs.publish-images.outputs.subresource-api-digest }}"
-      registry-username: ${{ github.actor }}
-    secrets:
-      registry-password: ${{ secrets.GITHUB_TOKEN }}
-
-  generate-provenance-probe-test-server:
-    needs: publish-images
-    permissions:
-      id-token: write
-      packages: write
-      actions: read
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
-    with:
-      image: ghcr.io/${{ github.repository_owner }}/kubewaf-probe-test-server
-      digest: "${{ needs.publish-images.outputs.probe-test-server-digest }}"
       registry-username: ${{ github.actor }}
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,1 @@
+SecRule MULTIPART_CRLF_LF_LINES "@rx x" "id:100001,phase:1,pass"

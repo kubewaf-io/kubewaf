@@ -5,6 +5,10 @@ All notable changes to kubeWAF are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Breaking replacement of the v1beta1 operator. The chart installs `cmd/operator` and the `seclang.kubewaf.io/v1alpha1` CRDs (`SecRule`, `SecAction`, `Include`, `SecPolicy`). Envoy Gateway loads Coraza from a platform-owned `EnvoyProxy`. kubeWAF writes `kubewaf-seclang` and an `EnvoyExtensionPolicy` only. v1beta1, Wasm, ECDS, the extension server, and the Istio and Cilium integrations are removed. Uninstall 0.1.x and delete the old CRDs before installing this chart.
+
 ## [0.1.0-beta.1] - 2026-07-30
 
 First public **beta candidate** packaging cut. APIs remain `v1beta1` and may change.

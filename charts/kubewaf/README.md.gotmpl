@@ -1,72 +1,28 @@
-# kubeWAF Helm Chart
+{{ template "chart.header" . }}
 
-**Kubernetes-native Web Application Firewall Operator**
+This chart installs the `seclang.kubewaf.io/v1alpha1` operator (`cmd/operator`). It is a clean replacement for the 0.1.x chart, not an upgrade of it.
 
-This chart deploys the kubeWAF operator, which enables you to manage ModSecurity-compatible WAF rules using native Kubernetes Custom Resources (`SecRule`, `RuleSet`, `WAF`, etc.).
+`secrules.seclang.kubewaf.io` and `secactions.seclang.kubewaf.io` cannot serve v1beta1 and v1alpha1 without a conversion webhook. This release does not ship one. The 0.1.x chart and this chart must not be installed together.
 
-## Quick Install
+## Hard upgrade
 
-```bash
-helm repo add kubewaf https://kubewaf-io.github.io/charts
-helm repo update
+1. Uninstall the 0.1.x release: `helm uninstall kubewaf -n kubewaf-system`.
+2. Delete the v1beta1 CRDs: `secrules`, `secactions`, `secruleidpools`, `phraselists`, `iplists` in `seclang.kubewaf.io`, and `wafs`, `rulesets` in `waf.kubewaf.io`.
+3. Delete any objects of those kinds. They are not converted.
+4. Install this chart. The platform team applies `config/samples/envoygateway/platform-envoyproxy.yaml` and points the Gateway `spec.infrastructure.parametersRef` at that `EnvoyProxy` before this chart is expected to program filters.
 
-helm install kubewaf kubewaf/kubewaf \
-  --namespace kubewaf-system \
-  --create-namespace
-```
+This chart does not set a Composer image, an init-container command, or a module delivery method. Those belong to the platform `EnvoyProxy`.
 
-## Full Documentation
+Values that exist: `image`, `replicaCount`, `proxyNamespace` (default `envoy-gateway-system`), `webhooks.enabled`, `leaderElection.enabled`, `metrics.enabled`.
 
-Please see the official documentation site:
+The Deployment runs `/operator` from `cmd/operator`. It does not listen on 18001, 18002, or 5005.
 
-- [Installation Guide](https://kubewaf.io/getting-started/installation/)
-- [Quick Start](https://kubewaf.io/getting-started/quickstart/)
-- [Observability & Metrics](https://kubewaf.io/guides/observability/) — Managed path is Envoy OTLP (`kubewaf_otel`) into VictoriaMetrics. DIY scrape of Envoy `/stats` is not the product API. `profile=full` converts access-log records to `waf.eval` traces in VictoriaTraces.
-- [Helm Values Reference](https://kubewaf.io/) (values are documented via Artifact Hub schema)
+Rules are inline in the EnvoyExtensionPolicy `directives` list, so a rule edit is an xDS update and does not need a ConfigMap mount. `@pmFromFile` and `@ipMatchFromFile` bodies are still written to ConfigMap `kubewaf-seclang` in `proxyNamespace`, and that is the only reason to mount it. `Programmed` follows the EnvoyExtensionPolicy status. The chart does not grant `pods/log` and does not run a projection agent.
 
-## Values
+`Protection` (`waf.kubewaf.io/v1alpha1`) is the higher-level attachment. It always includes the embedded CRS, emits paranoia and exclusion directives, and can select existing SecRule objects. It does not create those objects. A sample is `config/samples/waf/protection-edge.yaml`. The extension policy name is `kubewaf-p-<name>`. A `rateLimit` entry creates a local Envoy Gateway `BackendTrafficPolicy` named `kubewaf-ratelimit-<protection>-<name>`. A Protection and a SecPolicy cannot target the same Gateway or HTTPRoute.
 
-The table below is generated from `values.schema.json`. The most important ones are shown here for convenience.
+{{ template "chart.requirementsSection" . }}
 
-The following Values are available for this chart.
+{{ template "chart.valuesSection" . }}
 
-### Global Values
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-{{- range .Values }}
-  {{- if (hasPrefix "global" .Key)  }}
-| {{ .Key }} | {{ .Type }} | {{ if .Default }}{{ .Default }}{{ else }}{{ .AutoDefault }}{{ end }} | {{ if .Description }}{{ .Description }}{{ else }}{{ .AutoDescription }}{{ end }} |
-  {{- end }}
-{{- end }}
-
-
-### CustomResourceDefinition Lifecycle
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-{{- range .Values }}
-  {{- if (hasPrefix "crds" .Key)  }}
-| {{ .Key }} | {{ .Type }} | {{ if .Default }}{{ .Default }}{{ else }}{{ .AutoDefault }}{{ end }} | {{ if .Description }}{{ .Description }}{{ else }}{{ .AutoDescription }}{{ end }} |
-  {{- end }}
-{{- end }}
-
-### General Parameters
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-{{- range .Values }}
-  {{- if not (or (hasPrefix "monitoring" .Key) (hasPrefix "proxy" .Key) (hasPrefix "global" .Key) (hasPrefix "crds" .Key) (hasPrefix "serviceMonitor" .Key))  }}
-| {{ .Key }} | {{ .Type }} | {{ if .Default }}{{ .Default }}{{ else }}{{ .AutoDefault }}{{ end }} | {{ if .Description }}{{ .Description }}{{ else }}{{ .AutoDescription }}{{ end }} |
-  {{- end }}
-{{- end }}
-
-### Monitoring Parameters
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-{{- range .Values }}
-  {{- if hasPrefix "monitoring" .Key }}
-| {{ .Key }} | {{ .Type }} | {{ if .Default }}{{ .Default }}{{ else }}{{ .AutoDefault }}{{ end }} | {{ if .Description }}{{ .Description }}{{ else }}{{ .AutoDescription }}{{ end }} |
-  {{- end }}
-{{- end }}
+{{ template "helm-docs.versionFooter" . }}

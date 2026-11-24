@@ -1,0 +1,40 @@
+# Protection compiles to the same SecLang bundle as a SecPolicy.
+# Paranoia is a SecAction id 900991 after Include @crs-setup.conf.
+# Id 900990 is already inside that file, so repeating it is rejected.
+# It always includes the embedded CRS. Custom rules are optional.
+# The platform EnvoyProxy in config/samples/envoygateway/platform-envoyproxy.yaml
+# must already register composer. Data files are the only reason to mount kubewaf-seclang.
+apiVersion: waf.kubewaf.io/v1alpha1
+kind: Protection
+metadata:
+  name: edge
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: eg
+  mode: Blocking
+  inspection: RequestOnly
+  crs:
+    paranoia: 2
+    inboundAnomalyThreshold: 5
+    removeIds:
+      - 942100
+    removeTags:
+      - attack-xss
+    updateTargets:
+      - id: 942100
+        remove:
+          - ARGS:password
+  customRules:
+    - kind: SecRule
+      name: block-sqlmap
+  rateLimit:
+    - name: login
+      targetRef:
+        group: gateway.networking.k8s.io
+        kind: HTTPRoute
+        name: login
+      requests: 10
+      unit: Second

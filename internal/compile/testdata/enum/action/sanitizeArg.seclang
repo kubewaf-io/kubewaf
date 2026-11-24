@@ -1,0 +1,1 @@
+SecRule REQUEST_URI "@rx x" "id:100001,phase:1,pass,sanitiseArg:tx.a=1"
