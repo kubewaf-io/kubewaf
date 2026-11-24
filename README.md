@@ -96,4 +96,12 @@ make build
 bash test/e2e/v1alpha1/run.sh
 ```
 
-The Kind script needs Docker, kind, kubectl, and Helm. It installs Envoy Gateway v1.10.0 and expects a clean GET to return 200 and `User-Agent: sqlmap/1.0` to return 403.
+The CI Kind script needs Docker, kind, kubectl, and Helm. It installs Envoy Gateway v1.10.0 and expects a clean GET to return 200 and `User-Agent: sqlmap/1.0` to return 403.
+
+`hack/local-e2e.sh` is the same stack for a machine you can reuse. Run it from anywhere inside the checkout (`make local-e2e` does the same). It keeps the Kind cluster unless you pass `--no-keep`. `--fresh` deletes that cluster first, `--protection` adds the Protection 200/403 case, `--port-forward` reaches the Gateway through kubectl, and `--cleanup` deletes the cluster and exits.
+
+```bash
+hack/local-e2e.sh
+hack/local-e2e.sh --fresh --protection
+make local-e2e ARGS='--protection'
+```

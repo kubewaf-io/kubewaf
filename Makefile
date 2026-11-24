@@ -95,6 +95,11 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Fast unit gate. Kind e2e is test/e2e/v1alpha1/run.sh.
+# Local interactive Kind run (cluster reuse, rule-edit timing): hack/local-e2e.sh.
+.PHONY: local-e2e
+local-e2e: ## Local Kind e2e. Extra flags: make local-e2e ARGS='--fresh --protection'
+	bash hack/local-e2e.sh $(ARGS)
+
 .PHONY: test-unit-smoke
 test-unit-smoke: setup-envtest ## Controller, webhook, and provider packages
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
