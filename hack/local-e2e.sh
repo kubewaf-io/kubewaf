@@ -369,6 +369,7 @@ if kubectl get protection crs -n default >/dev/null 2>&1; then
   info "removing leftover Protection crs so the gateway SecPolicy covers the quickstart route"
   kubectl delete protection crs -n default --wait=true
 fi
+kubectl delete -f "$ROOT/config/samples/seclang/crs.yaml" --ignore-not-found=true --wait=true >/dev/null 2>&1 || true
 ok=false
 for _ in $(seq 1 12); do   # webhook may need a few seconds after rollout
   if out="$(kubectl apply -f "$FIX" 2>&1)"; then echo "$out"; ok=true; break; fi
@@ -466,16 +467,16 @@ fi
 
 CRS_SUMMARY=""
 if [[ "$CRS" == true ]]; then
-  log "optional: full OWASP CRS on HTTPRoute backend"
-  kubectl apply -f "$ROOT/config/samples/waf/crs.yaml"
+  log "optional: full OWASP CRS RuleSet on HTTPRoute backend"
+  kubectl apply -f "$ROOT/config/samples/seclang/crs.yaml"
   ok=false
   for _ in $(seq 1 48); do
-    line="$(kubectl get protection crs -n default -o jsonpath='{range .status.conditions[*]}{.type}={.status}/{.reason} {end}' 2>/dev/null || true)"
-    info "protection crs: $line"
+    line="$(kubectl get secpolicy crs -n default -o jsonpath='{range .status.conditions[*]}{.type}={.status}/{.reason} {end}' 2>/dev/null || true)"
+    info "secpolicy crs: $line"
     [[ " $line" == *" Ready=True/"* && "$line" == *"EngineReady=True"* && "$line" == *"Programmed=True"* ]] && { ok=true; break; }
     sleep 5
   done
-  $ok || die "Protection crs did not reach Ready/EngineReady/Programmed=True"
+  $ok || die "SecPolicy crs did not reach Ready/EngineReady/Programmed=True"
   C_CLEAN=""; C_SQLI=""; C_XSS=""; C_TRAV=""; C_SCAN=""
   for _ in $(seq 1 30); do
     C_CLEAN="$(probe)"
@@ -490,7 +491,7 @@ if [[ "$CRS" == true ]]; then
   [[ "$C_CLEAN" == 200 && "$C_SQLI" == 403 && "$C_XSS" == 403 && "$C_TRAV" == 403 && "$C_SCAN" == 403 ]] \
     || die "want crs clean=200 sqli=403 xss=403 traversal=403 scanner=403, got clean=$C_CLEAN sqli=$C_SQLI xss=$C_XSS traversal=$C_TRAV scanner=$C_SCAN"
   CRS_SUMMARY=" crs clean=$C_CLEAN sqli=$C_SQLI xss=$C_XSS traversal=$C_TRAV scanner=$C_SCAN"
-  kubectl delete protection crs -n default --wait=true >/dev/null
+  kubectl delete -f "$ROOT/config/samples/seclang/crs.yaml" --wait=true >/dev/null
 fi
 
 RESULT=PASS

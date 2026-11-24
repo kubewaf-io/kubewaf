@@ -29,7 +29,9 @@ import (
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="self.spec.targetRefs.all(t, t.group == 'gateway.networking.k8s.io' && t.kind in ['Gateway', 'HTTPRoute'])",message="targetRefs must be a Gateway or HTTPRoute in gateway.networking.k8s.io"
-// +kubebuilder:validation:XValidation:rule="self.spec.rules.all(r, (has(r.name) && size(r.name) > 0 && !has(r.selector)) || ((!has(r.name) || size(r.name) == 0) && has(r.selector)))",message="each rule selector sets name or selector, not both"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.rules) || self.spec.rules.all(r, (has(r.name) && size(r.name) > 0 && !has(r.selector)) || ((!has(r.name) || size(r.name) == 0) && has(r.selector)))",message="each rule selector sets name or selector, not both"
+// +kubebuilder:validation:XValidation:rule="(has(self.spec.rules) && size(self.spec.rules) > 0) || (has(self.spec.ruleSetRefs) && size(self.spec.ruleSetRefs) > 0)",message="set rules or ruleSetRefs"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.ruleSetRefs) || self.spec.ruleSetRefs.all(r, r.group == 'seclang.kubewaf.io' && r.kind in ['RuleSet', 'ClusterRuleSet'] && ((has(r.name) && size(r.name) > 0 && !has(r.selector)) || ((!has(r.name) || size(r.name) == 0) && has(r.selector))) && (r.kind != 'ClusterRuleSet' || ((!has(r.namespace) || size(r.namespace) == 0) && !has(r.selector))) && (!has(r.selector) || !has(r.namespace) || size(r.namespace) == 0))",message="ruleSetRefs are RuleSet or ClusterRuleSet, name or selector, selector only in this namespace, ClusterRuleSet has no namespace"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.dataFiles) || self.spec.dataFiles.all(f, (has(f.content) && !has(f.configMapRef)) || (!has(f.content) && has(f.configMapRef)))",message="each data file sets content or configMapRef, not both"
 type SecPolicy struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -48,9 +50,19 @@ type SecPolicySpec struct {
 	TargetRefs []gatewayv1.LocalPolicyTargetReference `json:"targetRefs"`
 
 	// Rules selects SecRule, SecAction, and Include objects in this namespace.
-	// Each entry is a name or a label selector.
-	// +kubebuilder:validation:MinItems=1
-	Rules []RuleSelector `json:"rules"`
+	// Each entry is a name or a label selector. A policy may set rules, ruleSetRefs, or both.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	Rules []RuleSelector `json:"rules,omitempty"`
+
+	// RuleSetRefs selects RuleSet and ClusterRuleSet objects.
+	// A selector is only evaluated in this policy's namespace. A name may set
+	// namespace to reference another namespace, which requires a ReferenceGrant
+	// in the target namespace. ClusterRuleSet has no namespace.
+	// There is no version field.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	RuleSetRefs []ObjectRef `json:"ruleSetRefs,omitempty"`
 
 	// Engine maps to SecRuleEngine.
 	// +optional

@@ -312,6 +312,71 @@ func TestFinalizerDeletesExtensionPolicy(t *testing.T) {
 	}
 }
 
+func TestGrantRemovalRetractsTheExtensionPolicy(t *testing.T) {
+	rule := readyRule()
+	rule.Namespace = "security-team"
+	set := &seclangv1alpha1.RuleSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "scanners", Namespace: "security-team"},
+		Spec: seclangv1alpha1.RuleSetSpec{RuleRefs: []seclangv1alpha1.ObjectRef{{
+			Group: seclangv1alpha1.GroupName, Kind: "SecRule", Name: "block-sqlmap",
+		}}},
+	}
+	name := gatewayv1.ObjectName("scanners")
+	allow := &gatewayv1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "feature-team-scanners", Namespace: "security-team"},
+		Spec: gatewayv1.ReferenceGrantSpec{
+			From: []gatewayv1.ReferenceGrantFrom{{
+				Group: seclangv1alpha1.GroupName, Kind: "SecPolicy", Namespace: "feature-team",
+			}},
+			To: []gatewayv1.ReferenceGrantTo{{
+				Group: seclangv1alpha1.GroupName, Kind: "RuleSet", Name: &name,
+			}},
+		},
+	}
+	gw := platformGateway()
+	gw.Namespace = "feature-team"
+	proxy := platformProxy()
+	proxy.Namespace = "feature-team"
+	pol := policy("edge", "block-sqlmap")
+	pol.Namespace = "feature-team"
+	pol.Spec.Rules = nil
+	pol.Spec.RuleSetRefs = []seclangv1alpha1.ObjectRef{{
+		Group: seclangv1alpha1.GroupName, Kind: "RuleSet", Name: "scanners", Namespace: "security-team",
+	}}
+	c := testClient(t, rule, set, allow, gw, proxy, pol)
+	ctx := context.Background()
+	r := newPolicyReconciler(c)
+	if _, err := r.Reconcile(ctx, req("feature-team", "edge")); err != nil {
+		t.Fatal(err)
+	}
+	got := &seclangv1alpha1.SecPolicy{}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "feature-team", Name: "edge"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if !meta.IsStatusConditionTrue(got.Status.Conditions, conditionRulesResolved) {
+		t.Fatalf("resolved %+v", got.Status.Conditions)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "feature-team", Name: "kubewaf-edge"}, &egv1a1.EnvoyExtensionPolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Delete(ctx, allow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, req("feature-team", "edge")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "feature-team", Name: "edge"}, got); err != nil {
+		t.Fatal(err)
+	}
+	cond := meta.FindStatusCondition(got.Status.Conditions, conditionRulesResolved)
+	if cond == nil || cond.Reason != "RefNotPermitted" || cond.Status != metav1.ConditionFalse {
+		t.Fatalf("after grant delete %+v", got.Status.Conditions)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "feature-team", Name: "kubewaf-edge"}, &egv1a1.EnvoyExtensionPolicy{}); err == nil {
+		t.Fatal("extension policy still present after the grant was deleted")
+	}
+}
+
 func TestNameAndLabelIndex(t *testing.T) {
 	named := policy("by-name", "block-sqlmap")
 	selected := policy("by-label", "unused")

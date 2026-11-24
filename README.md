@@ -80,7 +80,9 @@ spec:
 - `@crs-setup.conf`, placement `BeforeCRS`, order 20
 - `@owasp_crs/*.conf`, placement `AfterCRS`, order 10
 
-`config/samples/waf/crs.yaml` is that ruleset as a Protection on the quickstart HTTPRoute: paranoia 1, Blocking, RequestOnly. Comments in that file show `paranoia: 2`, `inboundAnomalyThreshold`, and `removeIds`. `config/samples/seclang/crs.yaml` is the same bundle as Include plus a SecAction id 900991 (`engine: "On"`). Apply only one of them to a given route.
+`config/samples/waf/crs.yaml` is that ruleset as a Protection on the quickstart HTTPRoute: paranoia 1, Blocking, RequestOnly. Comments in that file show `paranoia: 2`, `inboundAnomalyThreshold`, and `removeIds`. `config/samples/seclang/crs.yaml` is the same bundle as a RuleSet the SecPolicy selects with `ruleSetRefs` (`engine: "On"`). `hack/local-e2e.sh --crs` applies that file. Apply only one of them to a given route.
+
+`RuleSet` and `ClusterRuleSet` are ordered references. `SecPolicy.spec.rules` is unchanged. Cross-namespace names need a `gateway.networking.k8s.io/v1` ReferenceGrant in the target namespace; the chart does not install that CRD. `config/samples/seclang/scanners.yaml` is three scanner SecRules, a RuleSet, the grant, and a SecPolicy in another namespace. Decisions are in `docs/rulesets.md`.
 
 A ConfigMap include is mounted under `/etc/kubewaf/seclang`. `@coraza.conf` stays in the filter preamble.
 

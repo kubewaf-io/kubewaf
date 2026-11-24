@@ -153,10 +153,106 @@ spec:
                   ResponseBodyAccess emits SecResponseBodyAccess.
                   Default false. Full inspection still needs this for phase 4.
                 type: boolean
+              ruleSetRefs:
+                description: |-
+                  RuleSetRefs selects RuleSet and ClusterRuleSet objects.
+                  A selector is only evaluated in this policy's namespace. A name may set
+                  namespace to reference another namespace, which requires a ReferenceGrant
+                  in the target namespace. ClusterRuleSet has no namespace.
+                  There is no version field.
+                items:
+                  description: |-
+                    ObjectRef is one ordered entry in RuleSet.spec.ruleRefs or SecPolicy.spec.ruleSetRefs.
+                    Group and kind are an allow-list. There is no apiVersion or version.
+                    Exactly one of name or selector is set.
+                    A selector is evaluated only in the containing object's own namespace, so it
+                    cannot set namespace and a ClusterRuleSet cannot use one.
+                    Namespace on a named ref defaults to the referrer's namespace. It is required
+                    when a ClusterRuleSet names a namespaced kind, and it must be empty for a
+                    ClusterRuleSet target.
+                  properties:
+                    group:
+                      enum:
+                      - seclang.kubewaf.io
+                      type: string
+                    kind:
+                      enum:
+                      - RuleSet
+                      - ClusterRuleSet
+                      - SecRule
+                      - SecAction
+                      - Include
+                      type: string
+                    name:
+                      description: Name and Selector are mutually exclusive.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    namespace:
+                      description: |-
+                        Namespace is the target namespace for a named namespaced object.
+                        Empty means the referrer's namespace. ClusterRuleSet targets leave it empty.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    selector:
+                      description: Selector matches labels in the containing object's
+                        namespace only.
+                      properties:
+                        matchExpressions:
+                          description: matchExpressions is a list of label selector
+                            requirements. The requirements are ANDed.
+                          items:
+                            description: |-
+                              A label selector requirement is a selector that contains values, a key, and an operator that
+                              relates the key and values.
+                            properties:
+                              key:
+                                description: key is the label key that the selector
+                                  applies to.
+                                type: string
+                              operator:
+                                description: |-
+                                  operator represents a key's relationship to a set of values.
+                                  Valid operators are In, NotIn, Exists and DoesNotExist.
+                                type: string
+                              values:
+                                description: |-
+                                  values is an array of string values. If the operator is In or NotIn,
+                                  the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                  the values array must be empty. This array is replaced during a strategic
+                                  merge patch.
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                            required:
+                            - key
+                            - operator
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        matchLabels:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                            map is equivalent to an element of matchExpressions, whose key field is "key", the
+                            operator is "In", and the values array contains only "value". The requirements are ANDed.
+                          type: object
+                      type: object
+                      x-kubernetes-map-type: atomic
+                  required:
+                  - group
+                  - kind
+                  type: object
+                maxItems: 32
+                type: array
               rules:
                 description: |-
                   Rules selects SecRule, SecAction, and Include objects in this namespace.
-                  Each entry is a name or a label selector.
+                  Each entry is a name or a label selector. A policy may set rules, ruleSetRefs, or both.
                 items:
                   description: RuleSelector picks objects in the policy namespace.
                   properties:
@@ -222,7 +318,7 @@ spec:
                   required:
                   - kind
                   type: object
-                minItems: 1
+                maxItems: 64
                 type: array
               targetRefs:
                 description: |-
@@ -261,7 +357,6 @@ spec:
                 minItems: 1
                 type: array
             required:
-            - rules
             - targetRefs
             type: object
           status:
@@ -363,8 +458,19 @@ spec:
           rule: self.spec.targetRefs.all(t, t.group == 'gateway.networking.k8s.io'
             && t.kind in ['Gateway', 'HTTPRoute'])
         - message: each rule selector sets name or selector, not both
-          rule: self.spec.rules.all(r, (has(r.name) && size(r.name) > 0 && !has(r.selector))
-            || ((!has(r.name) || size(r.name) == 0) && has(r.selector)))
+          rule: '!has(self.spec.rules) || self.spec.rules.all(r, (has(r.name) && size(r.name)
+            > 0 && !has(r.selector)) || ((!has(r.name) || size(r.name) == 0) && has(r.selector)))'
+        - message: set rules or ruleSetRefs
+          rule: (has(self.spec.rules) && size(self.spec.rules) > 0) || (has(self.spec.ruleSetRefs)
+            && size(self.spec.ruleSetRefs) > 0)
+        - message: ruleSetRefs are RuleSet or ClusterRuleSet, name or selector, selector
+            only in this namespace, ClusterRuleSet has no namespace
+          rule: '!has(self.spec.ruleSetRefs) || self.spec.ruleSetRefs.all(r, r.group
+            == ''seclang.kubewaf.io'' && r.kind in [''RuleSet'', ''ClusterRuleSet'']
+            && ((has(r.name) && size(r.name) > 0 && !has(r.selector)) || ((!has(r.name)
+            || size(r.name) == 0) && has(r.selector))) && (r.kind != ''ClusterRuleSet''
+            || ((!has(r.namespace) || size(r.namespace) == 0) && !has(r.selector)))
+            && (!has(r.selector) || !has(r.namespace) || size(r.namespace) == 0))'
         - message: each data file sets content or configMapRef, not both
           rule: '!has(self.spec.dataFiles) || self.spec.dataFiles.all(f, (has(f.content)
             && !has(f.configMapRef)) || (!has(f.content) && has(f.configMapRef)))'

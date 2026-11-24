@@ -6,7 +6,7 @@ metadata:
     {{- include "kubewaf.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["seclang.kubewaf.io"]
-    resources: ["secrules", "secactions", "includes"]
+    resources: ["secrules", "secactions", "includes", "rulesets", "clusterrulesets"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["waf.kubewaf.io"]
     resources: ["protections"]
@@ -38,7 +38,7 @@ rules:
     resources: ["envoyproxies"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways", "gatewayclasses", "httproutes"]
+    resources: ["gateways", "gatewayclasses", "httproutes", "referencegrants"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["events"]
