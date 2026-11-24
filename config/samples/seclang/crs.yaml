@@ -1,0 +1,73 @@
+# Same CRS bundle as config/samples/waf/crs.yaml, written as SecLang objects.
+# SecRuleEngine On is spec.engine. The setup action uses id 900991: 900990 is
+# already inside @crs-setup.conf, and repeating it is rejected. Order 30 places
+# that action after Include @crs-setup.conf so the setvar wins.
+# Do not apply this to HTTPRoute backend while Protection crs targets it.
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: Include
+metadata:
+  name: crs-setup
+  namespace: default
+spec:
+  order: 20
+  placement: BeforeCRS
+  virtualPath: "@crs-setup.conf"
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: Include
+metadata:
+  name: owasp-crs
+  namespace: default
+spec:
+  order: 10
+  placement: AfterCRS
+  virtualPath: "@owasp_crs/*.conf"
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecAction
+metadata:
+  name: crs-paranoia
+  namespace: default
+spec:
+  order: 30
+  placement: BeforeCRS
+  metadata:
+    id: 900991
+    phase: 1
+  actions:
+    disruptive:
+      type: pass
+    nonDisruptive:
+      - type: nolog
+      - type: setvar
+        value: tx.blocking_paranoia_level=1
+      - type: setvar
+        value: tx.detection_paranoia_level=1
+      # - type: setvar
+      #   value: tx.inbound_anomaly_score_threshold=5
+      # - type: setvar
+      #   value: tx.outbound_anomaly_score_threshold=4
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecPolicy
+metadata:
+  name: crs
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: backend
+  engine: "On"
+  inspection: RequestOnly
+  requestBodyAccess: true
+  responseBodyAccess: false
+  rules:
+    - kind: Include
+      name: crs-setup
+    - kind: Include
+      name: owasp-crs
+    - kind: SecAction
+      name: crs-paranoia
+  # postDirectives:
+  #   - SecRuleRemoveById 920350

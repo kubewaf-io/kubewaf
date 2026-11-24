@@ -98,7 +98,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # Local interactive Kind run (cluster reuse, rule-edit timing): hack/local-e2e.sh.
 # Runtime: Docker if it answers, else Podman. Override with CONTAINER_RUNTIME=podman or ARGS='--runtime podman'.
 .PHONY: local-e2e
-local-e2e: ## Local Kind e2e. ARGS='--fresh --protection' or CONTAINER_RUNTIME=podman
+local-e2e: ## Local Kind e2e. ARGS='--fresh --protection' or ARGS='--crs'
 	bash hack/local-e2e.sh $(ARGS)
 
 .PHONY: test-unit-smoke
