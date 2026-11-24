@@ -7,7 +7,15 @@
 #   hack/local-e2e.sh                # create/reuse cluster, install everything, test
 #   hack/local-e2e.sh --fresh        # delete the cluster first, then run
 #   hack/local-e2e.sh --protection   # also test the Protection API afterwards
+#   hack/local-e2e.sh --runtime podman  # force Podman (default: docker if it answers, else podman)
 #   hack/local-e2e.sh --cleanup      # delete the Kind cluster and exit
+#
+# Runtime: Docker when `docker info` succeeds, otherwise Podman
+# (KIND_EXPERIMENTAL_PROVIDER=podman). Override with --runtime docker|podman
+# or CONTAINER_RUNTIME. Rootless Podman uses port-forward, same as rootless Docker.
+# On NixOS, nix-shell -p podman supplies a missing runtime. Kind on rootless
+# Podman needs cgroup v2 delegated to the user; if create fails, rerun under
+# systemd-run --scope --user (https://kind.sigs.k8s.io/docs/user/rootless/).
 #
 # Steps follow test/e2e/v1alpha1/run.sh and .github/workflows/test-e2e.yml:
 #   1 Kind cluster   2 images   3 Envoy Gateway + quickstart   4 platform EnvoyProxy
@@ -28,16 +36,24 @@ PROTECTION="${PROTECTION:-false}"
 LOCAL_PORT="${LOCAL_PORT:-18080}"   # port-forward fallback port on localhost
 REACH="${REACH:-auto}"      # auto | nodeport | port-forward
 
-for arg in "$@"; do
-  case "$arg" in
+RUNTIME_CLI=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --cleanup) MODE=cleanup ;;
     --fresh) REUSE=false ;;
     --no-keep) KEEP=false ;;
     --protection) PROTECTION=true ;;
     --port-forward) REACH=port-forward ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
-    *) echo "unknown argument: $arg" >&2; exit 2 ;;
+    --runtime)
+      shift
+      [[ $# -gt 0 ]] || { echo "--runtime needs docker or podman" >&2; exit 2; }
+      RUNTIME_CLI="$1"
+      ;;
+    --runtime=*) RUNTIME_CLI="${1#--runtime=}" ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 MODE="${MODE:-run}"
 
@@ -84,6 +100,53 @@ mkdir -p "$ROOT/bin"
 [[ -f "$ROOT/test/e2e/v1alpha1/block-sqlmap.yaml" && -f "$ROOT/config/samples/envoygateway/platform-envoyproxy.yaml" ]] \
   || { echo "this checkout has no v1alpha1 e2e fixtures; use branch cursor/m5-inline-directives-1bfe (PR #154) or later" >&2; exit 1; }
 
+# Docker when the daemon answers, otherwise Podman. --runtime and
+# CONTAINER_RUNTIME override that. Kind's Podman provider is opt-in.
+RUNTIME=""
+if [[ -n "$RUNTIME_CLI" ]]; then
+  RUNTIME="$RUNTIME_CLI"
+elif [[ -n "${CONTAINER_RUNTIME:-}" ]]; then
+  RUNTIME="$CONTAINER_RUNTIME"
+elif docker info >/dev/null 2>&1; then
+  RUNTIME=docker
+elif command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+  RUNTIME=podman
+fi
+case "$RUNTIME" in
+  docker|podman) ;;
+  "")
+    if [[ "$MODE" != cleanup ]]; then
+      echo "no container runtime: docker info and podman info both failed." >&2
+      echo "on NixOS: nix-shell -p docker   or   nix-shell -p podman" >&2
+      echo "then re-run, or pass --runtime docker|podman / CONTAINER_RUNTIME=docker|podman" >&2
+      DIAG_DONE=1; exit 1
+    fi
+    ;;
+  *)
+    echo "runtime must be docker or podman (got: $RUNTIME)" >&2
+    DIAG_DONE=1; exit 2
+    ;;
+esac
+if [[ -n "$RUNTIME" ]] && ! command -v "$RUNTIME" >/dev/null 2>&1; then
+  echo "missing $RUNTIME" >&2
+  echo "on NixOS: nix-shell -p $RUNTIME --run '$0'" >&2
+  DIAG_DONE=1; exit 1
+fi
+if [[ "$RUNTIME" == docker ]]; then
+  unset KIND_EXPERIMENTAL_PROVIDER
+  docker info >/dev/null 2>&1 || {
+    echo "docker daemon not reachable (is it running? is your user in the docker group / DOCKER_HOST set for rootless?)" >&2
+    DIAG_DONE=1; exit 1
+  }
+elif [[ "$RUNTIME" == podman ]]; then
+  podman info >/dev/null 2>&1 || {
+    echo "podman is installed but not usable (podman info failed)." >&2
+    echo "on NixOS: nix-shell -p podman" >&2
+    DIAG_DONE=1; exit 1
+  }
+  export KIND_EXPERIMENTAL_PROVIDER=podman
+fi
+
 if [[ "$MODE" == cleanup ]]; then
   command -v kind >/dev/null || { echo "missing kind" >&2; exit 1; }
   kind delete cluster --name "$CLUSTER_NAME"
@@ -92,28 +155,50 @@ fi
 
 log "prerequisites"
 missing=()
-for t in docker kind kubectl helm go curl git; do command -v "$t" >/dev/null || missing+=("$t"); done
+for t in kind kubectl helm go curl git; do command -v "$t" >/dev/null || missing+=("$t"); done
 if (( ${#missing[@]} )); then
   echo "missing tools: ${missing[*]}" >&2
   nixpkgs="$(printf '%s\n' "${missing[@]}" | sed -e 's/^helm$/kubernetes-helm/' -e 's/^go$/go_1_26/' | tr '\n' ' ')"
-  echo "on NixOS e.g.: nix-shell -p ${nixpkgs}python3 --run $0" >&2
+  echo "on NixOS e.g.: nix-shell -p ${nixpkgs}${RUNTIME} python3 --run '$0'" >&2
   DIAG_DONE=1; exit 1
 fi
-docker info >/dev/null 2>&1 || { echo "docker daemon not reachable (is it running? is your user in the docker group / DOCKER_HOST set for rootless?)" >&2; exit 1; }
 HAVE_PY="${HAVE_PY:-}"; [[ -z "$HAVE_PY" ]] && { HAVE_PY=false; command -v python3 >/dev/null && HAVE_PY=true; }
-info "docker  $(docker version --format '{{.Server.Version}}' 2>/dev/null)"
+if [[ "$RUNTIME" == docker ]]; then
+  info "docker  $(docker version --format '{{.Server.Version}}' 2>/dev/null)"
+else
+  info "podman  $(podman version --format '{{.Version}}' 2>/dev/null) (KIND_EXPERIMENTAL_PROVIDER=podman)"
+fi
 info "kind    $(kind version | awk '{print $2}')"
 info "kubectl $(kubectl version --client -o yaml 2>/dev/null | awk '/gitVersion/{print $2; exit}')"
 info "helm    $(helm version --short)"
 info "go      $(go version | awk '{print $3}') (go.mod wants $(awk '/^go /{print $2}' go.mod))"
 info "curl    $(curl --version | awk 'NR==1{print $2}')"
-info "python3 $($HAVE_PY && python3 --version | awk '{print $2}' || echo 'not found (uses nix-shell -p python3, else docker save | ctr import)')"
+if [[ "$RUNTIME" == docker ]]; then
+  info "python3 $($HAVE_PY && python3 --version | awk '{print $2}' || echo 'not found (uses nix-shell -p python3, else docker save | ctr import)')"
+else
+  info "python3 unused (podman save | kind load image-archive)"
+fi
 info "repo    $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
 ARCH="$(go env GOARCH)"
 [[ "$ARCH" == amd64 ]] || info "WARNING: host arch $ARCH; the repo e2e only pins/tests linux/amd64 images"
-if docker info 2>/dev/null | grep -qi rootless; then
+if [[ "$RUNTIME" == docker ]] && docker info 2>/dev/null | grep -qi rootless; then
   info "rootless docker detected: node IP is not reachable from the host, using port-forward"
   [[ "$REACH" == auto ]] && REACH=port-forward
+fi
+if [[ "$RUNTIME" == podman ]]; then
+  rootless="$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || echo false)"
+  if [[ "$rootless" == true ]]; then
+    if [[ "$REACH" == auto ]]; then
+      info "rootless Podman: node IP is not reachable from the host, using port-forward"
+      REACH=port-forward
+    fi
+    info "Kind on rootless Podman needs cgroup v2 delegated to your user."
+    info "If kind create fails on cgroups, rerun inside: systemd-run --scope --user"
+    info "Delegate=cpu cpuset io memory pids on user@.service (https://kind.sigs.k8s.io/docs/user/rootless/)."
+    if [[ ! -e /sys/fs/cgroup/cgroup.controllers ]]; then
+      info "warning: /sys/fs/cgroup/cgroup.controllers is missing; cgroup v2 is not visible here"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------- 1 kind
@@ -141,9 +226,39 @@ kubectl wait --for=condition=Ready node --all --timeout=180s
 
 # ---------------------------------------------------------------- 2 images
 log "2/6 build operator + composer-cp and load images into Kind"
-node_has() { docker exec "$NODE" ctr -n k8s.io images ls -q 2>/dev/null | grep -qx "$1"; }
+node_has() { "$RUNTIME" exec "$NODE" ctr -n k8s.io images ls -q 2>/dev/null | grep -qx "$1"; }
 full_ref() { case "$1" in docker.io/*|*.*/*|localhost/*) echo "$1";; */*) echo "docker.io/$1";; *) echo "docker.io/library/$1";; esac; }
+# Podman stores a local build as localhost/<name>:<tag>. Tag the docker.io name
+# kubelet pulls, then save an archive and load it into the Kind node.
+podman_import() {
+  local img="$1" canon src=""
+  canon="$(full_ref "$img")"
+  if podman image exists "$canon"; then
+    src="$canon"
+  elif podman image exists "localhost/${img#localhost/}"; then
+    podman tag "localhost/${img#localhost/}" "$canon"
+    src="$canon"
+  elif podman image exists "$img"; then
+    podman tag "$img" "$canon"
+    src="$canon"
+  else
+    echo "podman has no image $img (also tried localhost/ and $canon)" >&2
+    return 1
+  fi
+  local archive="$ROOT/bin/kind-image.tar"
+  podman save -o "$archive" "$src"
+  if ! kind load image-archive "$archive" --name "$CLUSTER_NAME"; then
+    info "kind load image-archive failed; importing with ctr"
+    podman save "$src" | podman exec -i "$NODE" ctr -n k8s.io images import -
+  fi
+  rm -f "$archive"
+  if ! node_has "$canon"; then
+    echo "image $canon is not in the Kind node after podman load" >&2
+    return 1
+  fi
+}
 import_img() {   # repo helper (fixes multi-arch docker save); fallbacks if python3 is missing
+  if [[ "$RUNTIME" == podman ]]; then podman_import "$1"; return; fi
   if $HAVE_PY; then python3 "$ROOT/test/e2e/v1alpha1/load_image.py" "$1" "$CLUSTER_NAME"; return; fi
   if command -v nix-shell >/dev/null; then
     nix-shell -p python3 --run "python3 '$ROOT/test/e2e/v1alpha1/load_image.py' '$1' '$CLUSTER_NAME'" && return
@@ -154,12 +269,16 @@ import_img() {   # repo helper (fixes multi-arch docker save); fallbacks if pyth
 load() {   # pull (amd64 like CI) and import into the node, skip if already there
   local img="$1"
   if node_has "$(full_ref "$img")"; then info "already in node: $img"; return 0; fi
-  docker pull -q --platform "linux/$ARCH" "$img" >/dev/null || docker pull -q "$img" >/dev/null
+  if [[ "$RUNTIME" == docker ]]; then
+    docker pull -q --platform "linux/$ARCH" "$img" >/dev/null || docker pull -q "$img" >/dev/null
+  else
+    podman pull -q --platform "linux/$ARCH" "$img" >/dev/null 2>&1 || podman pull -q "$img" >/dev/null
+  fi
   import_img "$img"
 }
 CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -o "$ROOT/bin/operator" "$ROOT/cmd/operator"
 OPERATOR_IMAGE="${OPERATOR_REPO}:local-$(sha256sum "$ROOT/bin/operator" | cut -c1-12)"
-docker build -q -t "$OPERATOR_IMAGE" -f "$ROOT/Dockerfile.operator" "$ROOT/bin" >/dev/null
+"$RUNTIME" build -q -t "$OPERATOR_IMAGE" -f "$ROOT/Dockerfile.operator" "$ROOT/bin" >/dev/null
 node_has "$(full_ref "$OPERATOR_IMAGE")" || import_img "$OPERATOR_IMAGE"
 info "operator image $OPERATOR_IMAGE"
 
@@ -170,7 +289,7 @@ COPY --from=src /libcomposer.so /libcomposer.so
 ENTRYPOINT ["cp", "/libcomposer.so", "/modules/libcomposer.so"]
 EOF
 if ! node_has "docker.io/library/composer-cp:${COMPOSER_VERSION}"; then
-  docker build -q -t "composer-cp:${COMPOSER_VERSION}" -f "$ROOT/bin/Dockerfile.composer-cp" "$ROOT/bin" >/dev/null
+  "$RUNTIME" build -q -t "composer-cp:${COMPOSER_VERSION}" -f "$ROOT/bin/Dockerfile.composer-cp" "$ROOT/bin" >/dev/null
   import_img "composer-cp:${COMPOSER_VERSION}"
 fi
 load "docker.io/envoyproxy/gateway:${EG_VERSION}"
@@ -203,7 +322,12 @@ for _ in $(seq 1 60); do
 done
 [[ -n "$SVC" ]] || die "envoy service for Gateway eg did not appear"
 # Kind has no load balancer: give the service the node IP so the Gateway is Programmed (as run.sh does).
-NODE_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$NODE")"
+if [[ "$RUNTIME" == docker ]]; then
+  NODE_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$NODE")"
+else
+  # Rootless Podman leaves .NetworkSettings.IPAddress empty; the kind network IP is on the map.
+  NODE_IP="$(podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' "$NODE" | awk 'NF {print; exit}')"
+fi
 kubectl patch svc "$SVC" -n envoy-gateway-system --subresource=status --type merge \
   -p '{"status":{"loadBalancer":{"ingress":[{"ip":"'"$NODE_IP"'"}]}}}' >/dev/null || true
 DEP="$(kubectl get deploy -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=eg -o jsonpath='{.items[0].metadata.name}')"
