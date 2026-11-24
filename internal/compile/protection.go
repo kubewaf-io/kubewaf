@@ -145,16 +145,21 @@ func ParseProtection(bundle Bundle) error {
 	if err := ParseFiles(bundle.Before, bundle.Files); err != nil {
 		return err
 	}
+	var exclusions []string
 	for _, line := range strings.Split(bundle.After, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "SecRuleRemove") || strings.HasPrefix(line, "SecRuleUpdate") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "SecRuleRemove") || strings.HasPrefix(line, "SecRuleUpdate") {
+			exclusions = append(exclusions, line)
 			continue
 		}
 		if err := ParseFiles(line, bundle.Files); err != nil {
 			return err
 		}
 	}
-	return nil
+	return checkExclusionOrder(exclusions)
 }
 
 // ProtectionLines returns the SecLang lines a Protection emits besides selected objects.
@@ -179,6 +184,19 @@ func ProtectionLines(spec wafv1alpha1.ProtectionSpec) ([]string, error) {
 func protectionLines(crs *wafv1alpha1.CRSSpec, extra []string) ([]string, error) {
 	var lines []string
 	if crs != nil {
+		// Update a target while the CRS rule still exists. Removing it first makes
+		// Coraza reject SecRuleUpdateTargetById with "rule not found".
+		for _, update := range crs.UpdateTargets {
+			if update.ID < 1 {
+				return nil, fmt.Errorf("updateTargets.id must be positive")
+			}
+			for _, target := range update.Remove {
+				if !safeToken(target) {
+					return nil, fmt.Errorf("updateTargets remove %q is not a single token", target)
+				}
+				lines = append(lines, fmt.Sprintf("SecRuleUpdateTargetById %d \"!%s\"", update.ID, target))
+			}
+		}
 		for _, id := range crs.RemoveIDs {
 			if id < 1 {
 				return nil, fmt.Errorf("removeIds must be positive")
@@ -191,17 +209,6 @@ func protectionLines(crs *wafv1alpha1.CRSSpec, extra []string) ([]string, error)
 			}
 			lines = append(lines, "SecRuleRemoveByTag "+tag)
 		}
-		for _, update := range crs.UpdateTargets {
-			if update.ID < 1 {
-				return nil, fmt.Errorf("updateTargets.id must be positive")
-			}
-			for _, target := range update.Remove {
-				if !safeToken(target) {
-					return nil, fmt.Errorf("updateTargets remove %q is not a single token", target)
-				}
-				lines = append(lines, fmt.Sprintf("SecRuleUpdateTargetById %d \"!%s\"", update.ID, target))
-			}
-		}
 	}
 	for _, line := range extra {
 		if strings.TrimSpace(line) == "" || strings.ContainsAny(line, "\n\r") {
@@ -212,7 +219,44 @@ func protectionLines(crs *wafv1alpha1.CRSSpec, extra []string) ([]string, error)
 	if len(lines) > 64 {
 		return nil, fmt.Errorf("protection emits more than 64 exclusion lines")
 	}
+	if err := checkExclusionOrder(lines); err != nil {
+		return nil, err
+	}
 	return lines, nil
+}
+
+// checkExclusionOrder rejects an update of a rule id that an earlier
+// SecRuleRemoveById already dropped. postDirectives are included.
+func checkExclusionOrder(lines []string) error {
+	removed := map[string]struct{}{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if id, ok := exclusionID(line, "SecRuleRemoveById"); ok {
+			removed[id] = struct{}{}
+			continue
+		}
+		if id, ok := exclusionID(line, "SecRuleUpdateTargetById"); ok {
+			if _, gone := removed[id]; gone {
+				return fmt.Errorf("SecRuleUpdateTargetById %s follows SecRuleRemoveById %s", id, id)
+			}
+		}
+	}
+	return nil
+}
+
+func exclusionID(line, directive string) (string, bool) {
+	if !strings.HasPrefix(line, directive+" ") && line != directive {
+		return "", false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(line, directive))
+	if rest == "" {
+		return "", false
+	}
+	id, _, _ := strings.Cut(rest, " ")
+	if id == "" || strings.Trim(id, "0123456789") != "" {
+		return "", false
+	}
+	return id, true
 }
 
 func safeToken(s string) bool {

@@ -3,6 +3,7 @@ module github.com/kubewaf-io/kubewaf
 go 1.26.5
 
 require (
+	github.com/corazawaf/coraza-coreruleset v0.0.0-20240226094324-415b1017abdc
 	github.com/corazawaf/coraza/v3 v3.8.1
 	github.com/envoyproxy/gateway v1.8.3
 	github.com/onsi/ginkgo/v2 v2.32.0
