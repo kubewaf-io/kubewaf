@@ -48,7 +48,7 @@ jobs:
           chmod +x kind
           sudo mv kind /usr/local/bin/kind
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.18.4
       - name: v1alpha1 Kind e2e
