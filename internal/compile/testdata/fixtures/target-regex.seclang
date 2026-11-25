@@ -1,0 +1,1 @@
+SecRule !ARGS:/^id_/ "@rx x" "id:100001,phase:1,pass"

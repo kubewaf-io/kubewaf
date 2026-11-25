@@ -1,0 +1,91 @@
+# Full OWASP CRS as a RuleSet. This is what hack/local-e2e.sh --crs applies.
+# The set names the two embedded includes and the paranoia SecAction. SecPolicy
+# selects that set with ruleSetRefs. engine On is SecRuleEngine On.
+# SecAction id is 900991 because 900990 is already inside @crs-setup.conf.
+# Order 30 places the action after Include @crs-setup.conf so the setvar wins.
+# Do not also apply config/samples/waf/crs.yaml to HTTPRoute backend.
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: Include
+metadata:
+  name: crs-setup
+  namespace: default
+spec:
+  order: 20
+  placement: BeforeCRS
+  virtualPath: "@crs-setup.conf"
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: Include
+metadata:
+  name: owasp-crs
+  namespace: default
+spec:
+  order: 10
+  placement: AfterCRS
+  virtualPath: "@owasp_crs/*.conf"
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecAction
+metadata:
+  name: crs-paranoia
+  namespace: default
+spec:
+  order: 30
+  placement: BeforeCRS
+  metadata:
+    id: 900991
+    phase: 1
+  actions:
+    disruptive:
+      type: pass
+    nonDisruptive:
+      - type: nolog
+      - type: setvar
+        value: tx.blocking_paranoia_level=1
+      - type: setvar
+        value: tx.detection_paranoia_level=1
+      # - type: setvar
+      #   value: tx.inbound_anomaly_score_threshold=5
+      # - type: setvar
+      #   value: tx.outbound_anomaly_score_threshold=4
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: RuleSet
+metadata:
+  name: owasp-crs
+  namespace: default
+spec:
+  ruleRefs:
+    - group: seclang.kubewaf.io
+      kind: Include
+      name: crs-setup
+    - group: seclang.kubewaf.io
+      kind: Include
+      name: owasp-crs
+    - group: seclang.kubewaf.io
+      kind: SecAction
+      name: crs-paranoia
+    # - group: seclang.kubewaf.io
+    #   kind: SecAction
+    #   name: paranoia-2
+---
+apiVersion: seclang.kubewaf.io/v1alpha1
+kind: SecPolicy
+metadata:
+  name: crs
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: backend
+  engine: "On"
+  inspection: RequestOnly
+  requestBodyAccess: true
+  responseBodyAccess: false
+  ruleSetRefs:
+    - group: seclang.kubewaf.io
+      kind: RuleSet
+      name: owasp-crs
+  # postDirectives:
+  #   - SecRuleRemoveById 920350

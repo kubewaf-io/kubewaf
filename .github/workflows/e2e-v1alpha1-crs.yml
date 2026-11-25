@@ -1,0 +1,36 @@
+name: E2E v1alpha1 CRS nightly
+
+# Non-gating. CRS scoring can change across Composer releases.
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  crs:
+    name: CRS Include 403
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install kind
+        run: |
+          curl -fsSL -o kind "https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-$(go env GOARCH)"
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+      - name: Install Helm
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.18.4
+      - name: CRS Kind e2e
+        env:
+          E2E_CRS: "true"
+          E2E_KEEP: "false"
+        run: bash test/e2e/v1alpha1/run.sh

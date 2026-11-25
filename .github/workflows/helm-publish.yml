@@ -12,7 +12,6 @@ concurrency:
 
 # Publishes every chart under charts/ to GHCR OCI:
 #   oci://ghcr.io/<org>/charts/kubewaf:<tag>
-#   oci://ghcr.io/<org>/charts/kubewaf-crs:<tag>
 jobs:
   publish-helm-oci:
     runs-on: ubuntu-24.04
@@ -28,10 +27,6 @@ jobs:
           - name: kubewaf
             path: charts/kubewaf
             app-version-from-tag: "true"
-          # CRS content chart: keep Chart.yaml appVersion (CRS sample version).
-          - name: kubewaf-crs
-            path: charts/kubewaf-crs
-            app-version-from-tag: "false"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
@@ -81,7 +76,6 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       kubewaf: ${{ steps.read.outputs.kubewaf }}
-      kubewaf-crs: ${{ steps.read.outputs.kubewaf-crs }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -91,7 +85,7 @@ jobs:
       - id: read
         run: |
           set -euo pipefail
-          for name in kubewaf kubewaf-crs; do
+          for name in kubewaf; do
             f="digests/${name}.digest"
             test -f "$f"
             d=$(tr -d '[:space:]' < "$f")
@@ -106,24 +100,10 @@ jobs:
       id-token: write
       packages: write
       actions: read
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
     with:
       image: ghcr.io/${{ github.repository_owner }}/charts/kubewaf
       digest: ${{ needs.collect-digests.outputs.kubewaf }}
-      registry-username: ${{ github.actor }}
-    secrets:
-      registry-password: ${{ secrets.GITHUB_TOKEN }}
-
-  helm-provenance-kubewaf-crs:
-    needs: collect-digests
-    permissions:
-      id-token: write
-      packages: write
-      actions: read
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
-    with:
-      image: ghcr.io/${{ github.repository_owner }}/charts/kubewaf-crs
-      digest: ${{ needs.collect-digests.outputs.kubewaf-crs }}
       registry-username: ${{ github.actor }}
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

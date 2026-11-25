@@ -1,16 +1,8 @@
-{{/*
-Expand the name of the chart.
-*/}}
-{{- define "helm.name" -}}
+{{- define "kubewaf.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/*
-Create a default fully qualified app name.
-We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-If release name contains chart name it will be used as a full name.
-*/}}
-{{- define "helm.fullname" -}}
+{{- define "kubewaf.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -23,84 +15,25 @@ If release name contains chart name it will be used as a full name.
 {{- end }}
 {{- end }}
 
-{{/*
-Create chart name and version as used by the chart label.
-*/}}
-{{- define "helm.chart" -}}
+{{- define "kubewaf.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/*
-Common labels
-*/}}
-{{- define "helm.labels" -}}
-helm.sh/chart: {{ include "helm.chart" . }}
-{{ include "helm.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
+{{- define "kubewaf.labels" -}}
+helm.sh/chart: {{ include "kubewaf.chart" . }}
+{{ include "kubewaf.selectorLabels" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{/*
-Selector labels
-*/}}
-{{- define "helm.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "helm.name" . }}
+{{- define "kubewaf.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "kubewaf.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "helm.serviceAccountName" -}}
+{{- define "kubewaf.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "helm.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "kubewaf.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
-
-{{/* Plugin Config-Name */}}
-{{- define "config.name" -}}
-{{ default "default" $.Values.config.name }}
-{{- end }}
-
-
-{{/*
-Determine the Kubernetes version to use for jobsFullyQualifiedDockerImage tag
-*/}}
-{{- define "helm.jobsTagKubeVersion" -}}
-{{- if contains "-eks-" .Capabilities.KubeVersion.GitVersion }}
-{{- print "v" .Capabilities.KubeVersion.Major "." (.Capabilities.KubeVersion.Minor | replace "+" "") -}}
-{{- else }}
-{{- print "v" .Capabilities.KubeVersion.Major "." .Capabilities.KubeVersion.Minor -}}
-{{- end }}
-{{- end }}
-
-{{/*
-Create the jobs fully-qualified Docker image to use
-*/}}
-{{- define "helm.jobsFullyQualifiedDockerImage" -}}
-{{- if .Values.global.jobs.kubectl.image.tag }}
-{{- printf "%s/%s:%s" .Values.global.jobs.kubectl.image.registry .Values.global.jobs.kubectl.image.repository .Values.global.jobs.kubectl.image.tag -}}
-{{- else }}
-{{- printf "%s/%s:%s" .Values.global.jobs.kubectl.image.registry .Values.global.jobs.kubectl.image.repository (include "helm.jobsTagKubeVersion" .) -}}
-{{- end }}
-{{- end }}
-
-{{- define "helm.crdsSizeHash" -}}
-{{- $paths := list -}}
-{{- range $p, $_ := .Files.Glob "crds/**.yaml" }}
-  {{- $paths = append $paths $p -}}
-{{- end -}}
-{{- $paths = sortAlpha $paths -}}
-
-{{- $sizes := list -}}
-{{- range $paths }}
-  {{- $sizes = append $sizes (len ($.Files.Get .)) -}}
-{{- end -}}
-
-{{- $joined := join "," $sizes -}}
-{{- sha256sum $joined -}}
-{{- end -}}

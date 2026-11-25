@@ -1,0 +1,30 @@
+# Full OWASP CRS on the quickstart HTTPRoute, as a Protection.
+# Protection always emits Include @crs-setup.conf and Include @owasp_crs/*.conf.
+# The same bundle as a RuleSet is config/samples/seclang/crs.yaml, which
+# hack/local-e2e.sh --crs applies. Do not apply both to HTTPRoute backend.
+# Paranoia 1 is the default. One critical finding scores 5, and the CRS inbound
+# threshold stays at that default, so these probes block: SQLi, XSS, path
+# traversal, and a scanner User-Agent. Inspection stays RequestOnly because
+# those checks are request phases.
+# Apply with: kubectl apply -f config/samples/waf/crs.yaml
+apiVersion: waf.kubewaf.io/v1alpha1
+kind: Protection
+metadata:
+  name: crs
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: backend
+  mode: Blocking
+  inspection: RequestOnly
+  requestBodyAccess: true
+  responseBodyAccess: false
+  crs:
+    paranoia: 1
+    # paranoia: 2
+    # inboundAnomalyThreshold: 5
+    # outboundAnomalyThreshold: 4
+    # removeIds:
+    #   - 920350
