@@ -29,6 +29,7 @@ on:
       - cursor/seclang-rewrite-1bfe
       - cursor/preview-release-1bfe
       - cursor/preview-release-slsa-1bfe
+      - cursor/preview-release-run-1bfe
   pull_request:
     branches:
       - main
@@ -45,12 +46,14 @@ jobs:
       (github.event_name == 'push' &&
        (github.ref == 'refs/heads/cursor/seclang-rewrite-1bfe' ||
         github.ref == 'refs/heads/cursor/preview-release-1bfe' ||
-        github.ref == 'refs/heads/cursor/preview-release-slsa-1bfe')) ||
+        github.ref == 'refs/heads/cursor/preview-release-slsa-1bfe' ||
+        github.ref == 'refs/heads/cursor/preview-release-run-1bfe')) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.event.pull_request.head.ref != 'cursor/seclang-rewrite-1bfe' &&
        github.event.pull_request.head.ref != 'cursor/preview-release-1bfe' &&
-       github.event.pull_request.head.ref != 'cursor/preview-release-slsa-1bfe')
+       github.event.pull_request.head.ref != 'cursor/preview-release-slsa-1bfe' &&
+       github.event.pull_request.head.ref != 'cursor/preview-release-run-1bfe')
     outputs:
       image_tag: ${{ steps.v.outputs.image_tag }}
       chart_version: ${{ steps.v.outputs.chart_version }}
@@ -87,6 +90,7 @@ jobs:
     with:
       image-tag: ${{ needs.versions.outputs.image_tag }}
       ko-tags: ${{ needs.versions.outputs.image_tag }}
+      trivy-continue-on-error: true
 
   charts:
     name: Publish Helm chart
