@@ -96,7 +96,9 @@ jobs:
       id-token: write
       packages: write
       actions: read
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+    # Tag, not the commit SHA. builder-fetch.sh rejects a SHA ref (exit 2) and
+    # only accepts refs/tags/vX.Y.Z. v2.1.0 is f7dd8c54c2067bafc12ca7a55595d5ee9b75204a.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
     with:
       image: ghcr.io/${{ github.repository_owner }}/charts/kubewaf
       digest: ${{ needs.collect-digests.outputs.kubewaf }}
