@@ -279,10 +279,16 @@ GOARCH          ?= $(shell go env GOARCH)
 endif
 KO_PLATFORM     ?= $(GOOS)/$(GOARCH)
 KOCACHE         ?= /tmp/ko-cache
+# KO_TAGS_OVERRIDE is the whole tag list. Preview releases set it to the
+# sha tag so "latest" is not pushed. An empty value keeps the release default.
+ifdef KO_TAGS_OVERRIDE
+KO_TAGS         := $(KO_TAGS_OVERRIDE)
+else
 KO_TAGS         ?= "latest"
 
 ifdef VERSION
 KO_TAGS         := $(KO_TAGS),$(VERSION)
+endif
 endif
 
 

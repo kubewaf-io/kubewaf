@@ -10,100 +10,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Publishes every chart under charts/ to GHCR OCI:
-#   oci://ghcr.io/<org>/charts/kubewaf:<tag>
+# Tag release. The OCI tag and appVersion are the git tag (v1.2.3), which is
+# also the operator image tag. Preview releases call publish-charts.yml with a
+# semver prerelease and a matching sha image tag.
 jobs:
-  publish-helm-oci:
-    runs-on: ubuntu-24.04
+  publish:
     permissions:
-      contents: write
-      id-token: write
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Operator chart: appVersion tracks the release tag.
-          - name: kubewaf
-            path: charts/kubewaf
-            app-version-from-tag: "true"
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-      - name: Extract version from tag
-        id: extract_version
-        run: |
-          GIT_TAG=${GITHUB_REF##*/}
-          echo "version=${GIT_TAG}" >> "$GITHUB_OUTPUT"
-      - name: Resolve app-version
-        id: appver
-        run: |
-          if [ "${{ matrix.app-version-from-tag }}" = "true" ]; then
-            echo "app_version=${{ steps.extract_version.outputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            # Empty → helm-oci-chart omits --app-version (uses Chart.yaml appVersion).
-            echo "app_version=" >> "$GITHUB_OUTPUT"
-          fi
-      - name: "Helm | Publish ${{ matrix.name }}"
-        id: helm_publish
-        uses: peak-scale/github-actions/helm-oci-chart@a441cca016861c546ab7e065277e40ce41a3eb84 # v0.2.0
-        with:
-          registry: ghcr.io
-          repository: ${{ github.repository_owner }}/charts
-          name: ${{ matrix.name }}
-          path: ${{ matrix.path }}
-          version: ${{ steps.extract_version.outputs.version }}
-          app-version: ${{ steps.appver.outputs.app_version }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
-          update-dependencies: "true"
-          sign-image: "true"
-          signature-repository: ghcr.io/${{ github.repository_owner }}/charts/${{ matrix.name }}
-      - name: Persist chart digest
-        run: |
-          mkdir -p digests
-          echo -n "${{ steps.helm_publish.outputs.digest }}" > "digests/${{ matrix.name }}.digest"
-          echo "Published oci://ghcr.io/${{ github.repository_owner }}/charts/${{ matrix.name }}:${{ steps.extract_version.outputs.version }}"
-          echo "digest=$(cat digests/${{ matrix.name }}.digest)"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: chart-digest-${{ matrix.name }}
-          path: digests/${{ matrix.name }}.digest
-          if-no-files-found: error
-
-  collect-digests:
-    needs: publish-helm-oci
-    runs-on: ubuntu-24.04
-    outputs:
-      kubewaf: ${{ steps.read.outputs.kubewaf }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: chart-digest-*
-          merge-multiple: true
-          path: digests
-      - id: read
-        run: |
-          set -euo pipefail
-          for name in kubewaf; do
-            f="digests/${name}.digest"
-            test -f "$f"
-            d=$(tr -d '[:space:]' < "$f")
-            test -n "$d"
-            echo "${name}=${d}" >> "$GITHUB_OUTPUT"
-            echo "${name} digest=${d}"
-          done
-
-  helm-provenance-kubewaf:
-    needs: collect-digests
-    permissions:
+      contents: read
       id-token: write
       packages: write
       actions: read
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+    uses: ./.github/workflows/publish-charts.yml
     with:
-      image: ghcr.io/${{ github.repository_owner }}/charts/kubewaf
-      digest: ${{ needs.collect-digests.outputs.kubewaf }}
-      registry-username: ${{ github.actor }}
-    secrets:
-      registry-password: ${{ secrets.GITHUB_TOKEN }}
+      chart-version: ${{ github.ref_name }}
+      app-version: ${{ github.ref_name }}

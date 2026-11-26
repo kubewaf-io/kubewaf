@@ -10,55 +10,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Publishes the operator image: ghcr.io/<org>/kubewaf
+# Tag release. KO_TAGS_OVERRIDE is left empty, so the image is tagged with the
+# git tag and latest. Preview releases call publish-images.yml directly.
 jobs:
-  publish-images:
-    runs-on: ubuntu-latest
+  publish:
     permissions:
       packages: write
       id-token: write
-    outputs:
-      controller-digest: ${{ steps.publish-controller.outputs.digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Run Trivy vulnerability (Repo)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: "fs"
-          ignore-unfixed: true
-          format: "sarif"
-          output: "trivy-results.sarif"
-          severity: "CRITICAL,HIGH"
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
-      - name: Publish Controller
-        id: publish-controller
-        uses: peak-scale/github-actions/make-ko-publish@a441cca016861c546ab7e065277e40ce41a3eb84 # v0.2.0
-        with:
-          makefile-target: ko-publish-controller
-          registry: ghcr.io
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository_owner }}
-          version: ${{ github.ref_name }}
-          sign-image: true
-          sbom-name: kubewaf
-          sbom-repository: ghcr.io/${{ github.repository_owner }}/kubewaf
-          signature-repository: ghcr.io/${{ github.repository_owner }}/kubewaf
-          main-path: ./cmd/operator
-        env:
-          REPOSITORY: ${{ github.repository }}
-  generate-provenance:
-    needs: publish-images
-    permissions:
-      id-token: write # To sign the provenance.
-      packages: write # To upload assets to release.
-      actions: read # To read the workflow path.
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+      contents: read
+      actions: read
+    uses: ./.github/workflows/publish-images.yml
     with:
-      image: ghcr.io/${{ github.repository_owner }}/kubewaf
-      digest: "${{ needs.publish-images.outputs.controller-digest }}"
-      registry-username: ${{ github.actor }}
-    secrets:
-      registry-password: ${{ secrets.GITHUB_TOKEN }}
+      image-tag: ${{ github.ref_name }}

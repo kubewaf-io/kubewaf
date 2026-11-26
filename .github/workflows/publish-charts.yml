@@ -1,0 +1,105 @@
+name: Publish charts (reusable)
+
+# Publishes charts/kubewaf to oci://ghcr.io/<org>/charts/kubewaf:<chart-version>,
+# signs it, and emits SLSA provenance. app-version is the image tag the chart
+# pulls when image.tag is empty.
+permissions: {}
+
+on:
+  workflow_call:
+    inputs:
+      chart-version:
+        description: "Helm chart version. Must be semver. This is the OCI tag."
+        required: true
+        type: string
+      app-version:
+        description: "Chart appVersion. The operator image tag."
+        required: true
+        type: string
+
+jobs:
+  publish-helm-oci:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: kubewaf
+            path: charts/kubewaf
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.18.4
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+      - name: "Helm | Publish ${{ matrix.name }}"
+        id: helm_publish
+        uses: peak-scale/github-actions/helm-oci-chart@a441cca016861c546ab7e065277e40ce41a3eb84 # v0.2.0
+        with:
+          registry: ghcr.io
+          repository: ${{ github.repository_owner }}/charts
+          name: ${{ matrix.name }}
+          path: ${{ matrix.path }}
+          version: ${{ inputs.chart-version }}
+          app-version: ${{ inputs.app-version }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          update-dependencies: "true"
+          sign-image: "true"
+          signature-repository: ghcr.io/${{ github.repository_owner }}/charts/${{ matrix.name }}
+      - name: Persist chart digest
+        run: |
+          mkdir -p digests
+          echo -n "${{ steps.helm_publish.outputs.digest }}" > "digests/${{ matrix.name }}.digest"
+          echo "Published oci://ghcr.io/${{ github.repository_owner }}/charts/${{ matrix.name }}:${{ inputs.chart-version }}"
+          echo "appVersion=${{ inputs.app-version }}"
+          echo "digest=$(cat digests/${{ matrix.name }}.digest)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chart-digest-${{ matrix.name }}
+          path: digests/${{ matrix.name }}.digest
+          if-no-files-found: error
+
+  collect-digests:
+    needs: publish-helm-oci
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      kubewaf: ${{ steps.read.outputs.kubewaf }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chart-digest-*
+          merge-multiple: true
+          path: digests
+      - id: read
+        run: |
+          set -euo pipefail
+          for name in kubewaf; do
+            f="digests/${name}.digest"
+            test -f "$f"
+            d=$(tr -d '[:space:]' < "$f")
+            test -n "$d"
+            echo "${name}=${d}" >> "$GITHUB_OUTPUT"
+            echo "${name} digest=${d}"
+          done
+
+  helm-provenance-kubewaf:
+    needs: collect-digests
+    permissions:
+      id-token: write
+      packages: write
+      actions: read
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+    with:
+      image: ghcr.io/${{ github.repository_owner }}/charts/kubewaf
+      digest: ${{ needs.collect-digests.outputs.kubewaf }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}

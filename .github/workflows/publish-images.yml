@@ -1,0 +1,77 @@
+name: Publish images (reusable)
+
+# Publishes the operator image ghcr.io/<org>/kubewaf, then signs it, attaches
+# the CycloneDX SBOM, and emits SLSA provenance. Called by the v* tag workflow
+# and by the preview release. ko-tags empty keeps the Makefile default, which
+# is "latest" plus the version. Preview passes only the sha tag.
+permissions: {}
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: "Image tag passed to ko as VERSION."
+        required: true
+        type: string
+      ko-tags:
+        description: "KO_TAGS_OVERRIDE. Empty keeps latest plus the version."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  publish-images:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+      contents: read
+    outputs:
+      controller-digest: ${{ steps.publish-controller.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Run Trivy vulnerability (Repo)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: "fs"
+          ignore-unfixed: true
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+        env:
+          # The public Trivy DB returns TOOMANYREQUESTS often enough to fail the job.
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+      - name: Publish Controller
+        id: publish-controller
+        uses: peak-scale/github-actions/make-ko-publish@a441cca016861c546ab7e065277e40ce41a3eb84 # v0.2.0
+        with:
+          makefile-target: ko-publish-controller
+          registry: ghcr.io
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository_owner }}
+          version: ${{ inputs.image-tag }}
+          sign-image: true
+          sbom-name: kubewaf
+          sbom-repository: ghcr.io/${{ github.repository_owner }}/kubewaf
+          signature-repository: ghcr.io/${{ github.repository_owner }}/kubewaf
+          main-path: ./cmd/operator
+        env:
+          REPOSITORY: ${{ github.repository }}
+          KO_TAGS_OVERRIDE: ${{ inputs.ko-tags }}
+  generate-provenance:
+    needs: publish-images
+    permissions:
+      id-token: write
+      packages: write
+      actions: read
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+    with:
+      image: ghcr.io/${{ github.repository_owner }}/kubewaf
+      digest: "${{ needs.publish-images.outputs.controller-digest }}"
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
