@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: ""
+      trivy-continue-on-error:
+        description: "Preview publishes even if the Trivy DB is rate limited."
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   publish-images:
@@ -32,6 +37,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Run Trivy vulnerability (Repo)
+        continue-on-error: ${{ inputs.trivy-continue-on-error }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: "fs"
@@ -39,9 +45,6 @@ jobs:
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH"
-        env:
-          # The public Trivy DB returns TOOMANYREQUESTS often enough to fail the job.
-          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
       - name: Install Cosign
         uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
       - name: Publish Controller
