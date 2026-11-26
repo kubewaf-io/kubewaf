@@ -1,0 +1,127 @@
+name: Preview release
+
+# Immutable preview of the tag release for the SecLang rewrite branch.
+# Publishes the operator image and the Helm chart with the same Cosign
+# signature, CycloneDX SBOM, and SLSA provenance as the v* workflows.
+#
+# Tags are derived from the commit. There is no "latest" image tag, no major
+# or minor moving tag, and no GitHub Release. A GitHub Release is skipped on
+# purpose: GoReleaser's release is the v* tag release, its notes advertise
+# :latest, and its build still points at ./cmd/, which is not a main package
+# on this branch. The install path is the chart and the operator image.
+#
+# This repository does not build Envoy or the Coraza dynamic module. Those
+# stay on the upstream image the platform already pins
+# (ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0).
+#
+# push runs the publish. pull_request is accepted for a same-repo PR so a
+# fork never receives credentials. Branches listed under push are published by
+# that event; their pull_request event is skipped so the same commit is not
+# published twice (the chart version is immutable). A workflow file that is
+# not on the default branch only starts on push. cursor/preview-release-1bfe
+# is included because the ruleset rejects a second push to
+# cursor/seclang-rewrite-1bfe.
+permissions: {}
+
+on:
+  push:
+    branches:
+      - cursor/seclang-rewrite-1bfe
+      - cursor/preview-release-1bfe
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: preview-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  versions:
+    name: Preview versions
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/cursor/seclang-rewrite-1bfe' ||
+        github.ref == 'refs/heads/cursor/preview-release-1bfe')) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.head.ref != 'cursor/seclang-rewrite-1bfe' &&
+       github.event.pull_request.head.ref != 'cursor/preview-release-1bfe')
+    outputs:
+      image_tag: ${{ steps.v.outputs.image_tag }}
+      chart_version: ${{ steps.v.outputs.chart_version }}
+    steps:
+      - id: v
+        run: |
+          set -euo pipefail
+          short="${GITHUB_SHA::12}"
+          image_tag="sha-${short}"
+          chart_version="0.0.0-${short}"
+          case "${image_tag}" in
+            latest|main|master) echo "refusing moving tag ${image_tag}" >&2; exit 1 ;;
+          esac
+          case "${chart_version}" in
+            latest|main|master) echo "refusing moving chart tag ${chart_version}" >&2; exit 1 ;;
+          esac
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "chart_version=${chart_version}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/kubewaf:${image_tag}" >> "$GITHUB_STEP_SUMMARY"
+          echo "chart=oci://ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts/kubewaf" >> "$GITHUB_STEP_SUMMARY"
+          echo "chart_version=${chart_version}" >> "$GITHUB_STEP_SUMMARY"
+          echo "app_version=${image_tag}" >> "$GITHUB_STEP_SUMMARY"
+
+  images:
+    name: Publish operator image
+    needs: versions
+    if: needs.versions.result == 'success'
+    permissions:
+      packages: write
+      id-token: write
+      contents: read
+      actions: read
+    uses: ./.github/workflows/publish-images.yml
+    with:
+      image-tag: ${{ needs.versions.outputs.image_tag }}
+      ko-tags: ${{ needs.versions.outputs.image_tag }}
+
+  charts:
+    name: Publish Helm chart
+    needs: versions
+    if: needs.versions.result == 'success'
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+      actions: read
+    uses: ./.github/workflows/publish-charts.yml
+    with:
+      chart-version: ${{ needs.versions.outputs.chart_version }}
+      app-version: ${{ needs.versions.outputs.image_tag }}
+
+  verify:
+    name: Show published refs
+    needs: [versions, images, charts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.18.4
+      - name: Confirm the image tag and chart version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_TAG: ${{ needs.versions.outputs.image_tag }}
+          CHART_VERSION: ${{ needs.versions.outputs.chart_version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/kubewaf:${IMAGE_TAG}"
+          chart="oci://ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts/kubewaf"
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker buildx imagetools inspect "${image}"
+          echo "${GH_TOKEN}" | helm registry login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          helm show chart "${chart}" --version "${CHART_VERSION}"
+          echo "helm install kubewaf ${chart} --version ${CHART_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "image ${image}" >> "$GITHUB_STEP_SUMMARY"
