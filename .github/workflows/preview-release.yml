@@ -15,15 +15,19 @@ name: Preview release
 # (ghcr.io/tetratelabs/built-on-envoy/composer:0.13.0).
 #
 # push runs the publish. pull_request is accepted for a same-repo PR so a
-# fork never receives credentials. The rewrite branch itself is published by
-# push; its pull_request event is skipped so the same commit is not published
-# twice. A workflow file that is not on the default branch only starts on push.
+# fork never receives credentials. Branches listed under push are published by
+# that event; their pull_request event is skipped so the same commit is not
+# published twice (the chart version is immutable). A workflow file that is
+# not on the default branch only starts on push. cursor/preview-release-1bfe
+# is included because the ruleset rejects a second push to
+# cursor/seclang-rewrite-1bfe.
 permissions: {}
 
 on:
   push:
     branches:
       - cursor/seclang-rewrite-1bfe
+      - cursor/preview-release-1bfe
   pull_request:
     branches:
       - main
@@ -37,10 +41,13 @@ jobs:
     name: Preview versions
     runs-on: ubuntu-latest
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/cursor/seclang-rewrite-1bfe') ||
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/cursor/seclang-rewrite-1bfe' ||
+        github.ref == 'refs/heads/cursor/preview-release-1bfe')) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       github.event.pull_request.head.ref != 'cursor/seclang-rewrite-1bfe')
+       github.event.pull_request.head.ref != 'cursor/seclang-rewrite-1bfe' &&
+       github.event.pull_request.head.ref != 'cursor/preview-release-1bfe')
     outputs:
       image_tag: ${{ steps.v.outputs.image_tag }}
       chart_version: ${{ steps.v.outputs.chart_version }}
